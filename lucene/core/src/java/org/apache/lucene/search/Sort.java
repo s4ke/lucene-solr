@@ -127,7 +127,14 @@ public class Sort {
     setSort(field);
   }
 
-  /** Sorts in succession by the criteria in each SortField. */
+  /** Sorts in succession by the criteria in each SortField. <br><br>
+   * "in succession" doesn't mean that the whole resultsset is sorted more 
+   * than once like calling sort multiple times on a regular Java Collection. <br><br>
+   * Instead it means that SortFields with a lower index get consulted first and 
+   * if they (the SortFields) can determine whether one Document comes before another,
+   * no other SortFields are consulted. However, if they return that the compared 
+   * Documents are equal, SortFields with a lower index are consulted to determine the sorting.
+   */
   public Sort(SortField... fields) {
     setSort(fields);
   }
@@ -137,7 +144,14 @@ public class Sort {
     this.fields = new SortField[] { field };
   }
 
-  /** Sets the sort to the given criteria in succession. */
+  /** Sets the sort to the given criteria in succession. <br><br>
+   * "in succession" doesn't mean that the whole resultsset is sorted more 
+   * than once like calling sort multiple times on a regular Java Collection. <br><br>
+   * Instead it means that SortFields with a lower index get consulted first and 
+   * if they (the SortFields) can determine whether one Document comes before another,
+   * no other SortFields are consulted. However, if they return that the compared 
+   * Documents are equal, SortFields with a lower index are consulted to determine the sorting.
+   */
   public void setSort(SortField... fields) {
     this.fields = fields;
   }
