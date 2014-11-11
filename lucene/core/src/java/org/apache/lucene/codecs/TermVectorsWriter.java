@@ -21,7 +21,6 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;
 
-import org.apache.lucene.index.AtomicReader;
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
@@ -33,6 +32,7 @@ import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 
 /**
  * Codec API for writing term vectors:
@@ -124,7 +124,7 @@ public abstract class TermVectorsWriter implements Closeable {
   public void addProx(int numProx, DataInput positions, DataInput offsets) throws IOException {
     int position = 0;
     int lastOffset = 0;
-    BytesRef payload = null;
+    BytesRefBuilder payload = null;
 
     for (int i = 0; i < numProx; i++) {
       final int startOffset;
@@ -142,15 +142,13 @@ public abstract class TermVectorsWriter implements Closeable {
           final int payloadLength = positions.readVInt();
 
           if (payload == null) {
-            payload = new BytesRef();
-            payload.bytes = new byte[payloadLength];
-          } else if (payload.bytes.length < payloadLength) {
-            payload.grow(payloadLength);
+            payload = new BytesRefBuilder();
           }
+          payload.grow(payloadLength);
 
-          positions.readBytes(payload.bytes, 0, payloadLength);
-          payload.length = payloadLength;
-          thisPayload = payload;
+          positions.readBytes(payload.bytes(), 0, payloadLength);
+          payload.setLength(payloadLength);
+          thisPayload = payload.get();
         } else {
           thisPayload = null;
         }
@@ -178,25 +176,34 @@ public abstract class TermVectorsWriter implements Closeable {
    *  merging (bulk-byte copying, etc). */
   public int merge(MergeState mergeState) throws IOException {
     int docCount = 0;
-    for (int i = 0; i < mergeState.readers.size(); i++) {
-      final AtomicReader reader = mergeState.readers.get(i);
-      final int maxDoc = reader.maxDoc();
-      final Bits liveDocs = reader.getLiveDocs();
+    int numReaders = mergeState.maxDocs.length;
+    for (int i = 0; i < numReaders; i++) {
+      int maxDoc = mergeState.maxDocs[i];
+      Bits liveDocs = mergeState.liveDocs[i];
+      TermVectorsReader termVectorsReader = mergeState.termVectorsReaders[i];
+      if (termVectorsReader != null) {
+        termVectorsReader.checkIntegrity();
+      }
 
-      for (int docID = 0; docID < maxDoc; docID++) {
+      for (int docID=0;docID<maxDoc;docID++) {
         if (liveDocs != null && !liveDocs.get(docID)) {
           // skip deleted docs
           continue;
         }
         // NOTE: it's very important to first assign to vectors then pass it to
         // termVectorsWriter.addAllDocVectors; see LUCENE-1282
-        Fields vectors = reader.getTermVectors(docID);
+        Fields vectors;
+        if (termVectorsReader == null) {
+          vectors = null;
+        } else {
+          vectors = termVectorsReader.get(docID);
+        }
         addAllDocVectors(vectors, mergeState);
         docCount++;
         mergeState.checkAbort.work(300);
       }
     }
-    finish(mergeState.fieldInfos, docCount);
+    finish(mergeState.mergeFieldInfos, docCount);
     return docCount;
   }
   
@@ -228,7 +235,7 @@ public abstract class TermVectorsWriter implements Closeable {
     int fieldCount = 0;
     for(String fieldName : vectors) {
       fieldCount++;
-      final FieldInfo fieldInfo = mergeState.fieldInfos.fieldInfo(fieldName);
+      final FieldInfo fieldInfo = mergeState.mergeFieldInfos.fieldInfo(fieldName);
 
       assert lastFieldName == null || fieldName.compareTo(lastFieldName) > 0: "lastFieldName=" + lastFieldName + " fieldName=" + fieldName;
       lastFieldName = fieldName;

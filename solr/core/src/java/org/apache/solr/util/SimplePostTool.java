@@ -18,38 +18,40 @@ package org.apache.solr.util;
  */
 
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileFilter;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.ByteArrayInputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.io.UnsupportedEncodingException;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.ProtocolException;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.HashSet;
 import java.util.TimeZone;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.Inflater;
 import java.util.zip.InflaterInputStream;
-import java.net.HttpURLConnection;
-import java.net.MalformedURLException;
-import java.net.ProtocolException;
-import java.net.URL;
-import java.net.URLEncoder;
 
+import javax.xml.bind.DatatypeConverter;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.xpath.XPath;
@@ -71,7 +73,9 @@ import org.xml.sax.SAXException;
  * jar dependencies.
  */
 public class SimplePostTool {
-  private static final String DEFAULT_POST_URL = "http://localhost:8983/solr/update";
+  private static final String DEFAULT_POST_HOST = "localhost";
+  private static final String DEFAULT_POST_PORT = "8983";
+  private static final String DEFAULT_POST_CORE = "collection1";
   private static final String VERSION_OF_THIS_TOOL = "1.5";
 
   private static final String DEFAULT_COMMIT = "yes";
@@ -108,10 +112,10 @@ public class SimplePostTool {
   static HashMap<String,String> mimeMap;
   GlobFileFilter globFileFilter;
   // Backlog for crawling
-  List<LinkedHashSet<URL>> backlog = new ArrayList<LinkedHashSet<URL>>();
-  Set<URL> visited = new HashSet<URL>();
+  List<LinkedHashSet<URL>> backlog = new ArrayList<>();
+  Set<URL> visited = new HashSet<>();
   
-  static final Set<String> DATA_MODES = new HashSet<String>();
+  static final Set<String> DATA_MODES = new HashSet<>();
   static final String USAGE_STRING_SHORT =
       "Usage: java [SystemProperties] -jar post.jar [-h|-] [<file|folder|url|arg> [<file|folder|url|arg>...]]";
 
@@ -125,7 +129,7 @@ public class SimplePostTool {
     DATA_MODES.add(DATA_MODE_STDIN);
     DATA_MODES.add(DATA_MODE_WEB);
     
-    mimeMap = new HashMap<String,String>();
+    mimeMap = new HashMap<>();
     mimeMap.put("xml", "text/xml");
     mimeMap.put("csv", "text/csv");
     mimeMap.put("json", "application/json");
@@ -212,7 +216,12 @@ public class SimplePostTool {
         fatal("System Property 'data' is not valid for this tool: " + mode);
       }
       String params = System.getProperty("params", "");
-      urlStr = System.getProperty("url", DEFAULT_POST_URL);
+
+      String host = System.getProperty("host", DEFAULT_POST_HOST);
+      String port = System.getProperty("port", DEFAULT_POST_PORT);
+      String core = System.getProperty("c", DEFAULT_POST_CORE);
+
+      urlStr = System.getProperty("url", String.format(Locale.ROOT, "http://%s:%s/solr/%s/update", host, port, core));
       urlStr = SimplePostTool.appendParam(urlStr, params);
       URL url = new URL(urlStr);
       boolean auto = isOn(System.getProperty("auto", DEFAULT_AUTO));
@@ -344,8 +353,8 @@ public class SimplePostTool {
   private void reset() {
     fileTypes = DEFAULT_FILE_TYPES;
     globFileFilter = this.getFileFilterFromFileTypes(fileTypes);
-    backlog = new ArrayList<LinkedHashSet<URL>>();
-    visited = new HashSet<URL>();
+    backlog = new ArrayList<>();
+    visited = new HashSet<>();
   }
 
 
@@ -363,7 +372,10 @@ public class SimplePostTool {
      "Supported System Properties and their defaults:\n"+
      "  -Ddata=files|web|args|stdin (default=" + DEFAULT_DATA_MODE + ")\n"+
      "  -Dtype=<content-type> (default=" + DEFAULT_CONTENT_TYPE + ")\n"+
-     "  -Durl=<solr-update-url> (default=" + DEFAULT_POST_URL + ")\n"+
+     "  -Durl=<solr-update-url> (default=" + String.format(Locale.ROOT, "http://%s:%s/solr/%s/update", DEFAULT_POST_HOST, DEFAULT_POST_PORT, DEFAULT_POST_CORE) + ")\n"+
+     "  -Dhost=<host> (default: " + DEFAULT_POST_HOST+ ")\n"+
+     "  -Dport=<port> (default: " + DEFAULT_POST_PORT+ ")\n"+
+     "  -Dc=<core/collection> (default: " + DEFAULT_POST_CORE+ ")\n"+
      "  -Dauto=yes|no (default=" + DEFAULT_AUTO + ")\n"+
      "  -Drecursive=yes|no|<depth> (default=" + DEFAULT_RECURSIVE + ")\n"+
      "  -Ddelay=<seconds> (default=0 for files, 10 for web)\n"+
@@ -512,7 +524,7 @@ public class SimplePostTool {
    */
   public int postWebPages(String[] args, int startIndexInArgs, OutputStream out) {
     reset();
-    LinkedHashSet<URL> s = new LinkedHashSet<URL>();
+    LinkedHashSet<URL> s = new LinkedHashSet<>();
     for (int j = startIndexInArgs; j < args.length; j++) {
       try {
         URL u = new URL(normalizeUrlEnding(args[j]));
@@ -558,7 +570,7 @@ public class SimplePostTool {
     int rawStackSize = stack.size();
     stack.removeAll(visited);
     int stackSize = stack.size();
-    LinkedHashSet<URL> subStack = new LinkedHashSet<URL>();
+    LinkedHashSet<URL> subStack = new LinkedHashSet<>();
     info("Entering crawl at level "+level+" ("+rawStackSize+" links total, "+stackSize+" new)");
     for(URL u : stack) {
       try {
@@ -812,10 +824,12 @@ public class SimplePostTool {
     try {
       if(mockMode) return;
       HttpURLConnection urlc = (HttpURLConnection) url.openConnection();
-      if (HttpURLConnection.HTTP_OK != urlc.getResponseCode()) {
-        warn("Solr returned an error #" + urlc.getResponseCode() + 
-            " " + urlc.getResponseMessage() + " for url "+url);
+      if (url.getUserInfo() != null) {
+        String encoding = DatatypeConverter.printBase64Binary(url.getUserInfo().getBytes(StandardCharsets.US_ASCII));
+        urlc.setRequestProperty("Authorization", "Basic " + encoding);
       }
+      urlc.connect();
+      checkResponseCode(urlc);
     } catch (IOException e) {
       warn("An error occurred posting data to "+url+". Please check that Solr is running.");
     }
@@ -845,46 +859,67 @@ public class SimplePostTool {
         urlc.setUseCaches(false);
         urlc.setAllowUserInteraction(false);
         urlc.setRequestProperty("Content-type", type);
-
+        if (url.getUserInfo() != null) {
+          String encoding = DatatypeConverter.printBase64Binary(url.getUserInfo().getBytes(StandardCharsets.US_ASCII));
+          urlc.setRequestProperty("Authorization", "Basic " + encoding);
+        }
         if (null != length) urlc.setFixedLengthStreamingMode(length);
-
+        urlc.connect();
       } catch (IOException e) {
         fatal("Connection error (is Solr running at " + solrUrl + " ?): " + e);
         success = false;
       }
       
-      OutputStream out = null;
-      try {
-        out = urlc.getOutputStream();
+      try (final OutputStream out = urlc.getOutputStream()) {
         pipe(data, out);
       } catch (IOException e) {
         fatal("IOException while posting data: " + e);
         success = false;
-      } finally {
-        try { if(out!=null) out.close(); } catch (IOException x) { /*NOOP*/ }
       }
       
-      InputStream in = null;
       try {
-        if (HttpURLConnection.HTTP_OK != urlc.getResponseCode()) {
-          warn("Solr returned an error #" + urlc.getResponseCode() + 
-                " " + urlc.getResponseMessage());
-          success = false;
+        success &= checkResponseCode(urlc);
+        try (final InputStream in = urlc.getInputStream()) {
+          pipe(in, output);
         }
-
-        in = urlc.getInputStream();
-        pipe(in, output);
       } catch (IOException e) {
         warn("IOException while reading response: " + e);
         success = false;
-      } finally {
-        try { if(in!=null) in.close(); } catch (IOException x) { /*NOOP*/ }
       }
-      
     } finally {
-      if(urlc!=null) urlc.disconnect();
+      if (urlc!=null) urlc.disconnect();
     }
     return success;
+  }
+  
+  private static boolean checkResponseCode(HttpURLConnection urlc) throws IOException {
+    if (urlc.getResponseCode() >= 400) {
+      warn("Solr returned an error #" + urlc.getResponseCode() + 
+            " (" + urlc.getResponseMessage() + ") for url: " + urlc.getURL());
+      Charset charset = StandardCharsets.ISO_8859_1;
+      final String contentType = urlc.getContentType();
+      // code cloned from ContentStreamBase, but post.jar should be standalone!
+      if (contentType != null) {
+        int idx = contentType.toLowerCase(Locale.ROOT).indexOf("charset=");
+        if (idx > 0) {
+          charset = Charset.forName(contentType.substring(idx + "charset=".length()).trim());
+        }
+      }
+      // Print the response returned by Solr
+      try (InputStream errStream = urlc.getErrorStream()) {
+        if (errStream != null) {
+          BufferedReader br = new BufferedReader(new InputStreamReader(errStream, charset));
+          final StringBuilder response = new StringBuilder("Response: ");
+          int ch;
+          while ((ch = br.read()) != -1) {
+            response.append((char) ch);
+          }
+          warn(response.toString().trim());
+        }
+      }
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -893,13 +928,7 @@ public class SimplePostTool {
    * @return the input stream
    */
   public static InputStream stringToStream(String s) {
-    InputStream is = null;
-    try {
-      is = new ByteArrayInputStream(s.getBytes("UTF-8"));
-    } catch (UnsupportedEncodingException e) {
-      fatal("Shouldn't happen: UTF-8 not supported?!?!?!");
-    }
-    return is;
+    return new ByteArrayInputStream(s.getBytes(StandardCharsets.UTF_8));
   }
 
   /**
@@ -961,10 +990,9 @@ public class SimplePostTool {
   /**
    * Takes a string as input and returns a DOM 
    */
-  public static Document makeDom(String in, String inputEncoding) throws SAXException, IOException,
+  public static Document makeDom(byte[] in) throws SAXException, IOException,
   ParserConfigurationException {
-    InputStream is = new ByteArrayInputStream(in
-        .getBytes(inputEncoding));
+    InputStream is = new ByteArrayInputStream(in);
     Document dom = DocumentBuilderFactory.newInstance()
         .newDocumentBuilder().parse(is);
     return dom;
@@ -1016,7 +1044,7 @@ public class SimplePostTool {
     final String DISALLOW = "Disallow:";
     
     public PageFetcher() {
-      robotsCache = new HashMap<String,List<String>>();
+      robotsCache = new HashMap<>();
     }
     
     public PageFetcherResult readPageFromUrl(URL u) {
@@ -1074,7 +1102,7 @@ public class SimplePostTool {
       String strRobot = url.getProtocol() + "://" + host + "/robots.txt";
       List<String> disallows = robotsCache.get(host);
       if(disallows == null) {
-        disallows = new ArrayList<String>();
+        disallows = new ArrayList<>();
         URL urlRobot;
         try { 
           urlRobot = new URL(strRobot);
@@ -1104,8 +1132,8 @@ public class SimplePostTool {
      * @throws IOException if problems reading the stream
      */
     protected List<String> parseRobotsTxt(InputStream is) throws IOException {
-      List<String> disallows = new ArrayList<String>();
-      BufferedReader r = new BufferedReader(new InputStreamReader(is, "UTF-8"));
+      List<String> disallows = new ArrayList<>();
+      BufferedReader r = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
       String l;
       while((l = r.readLine()) != null) {
         String[] arr = l.split("#");
@@ -1130,17 +1158,16 @@ public class SimplePostTool {
      * @return a set of URLs parsed from the page
      */
     protected Set<URL> getLinksFromWebPage(URL u, InputStream is, String type, URL postUrl) {
-      Set<URL> l = new HashSet<URL>();
+      Set<URL> l = new HashSet<>();
       URL url = null;
       try {
         ByteArrayOutputStream os = new ByteArrayOutputStream();
         URL extractUrl = new URL(appendParam(postUrl.toString(), "extractOnly=true"));
         boolean success = postData(is, null, os, type, extractUrl);
         if(success) {
-          String rawXml = os.toString("UTF-8");
-          Document d = makeDom(rawXml, "UTF-8");
+          Document d = makeDom(os.toByteArray());
           String innerXml = getXP(d, "/response/str/text()[1]", false);
-          d = makeDom(innerXml, "UTF-8");
+          d = makeDom(innerXml.getBytes(StandardCharsets.UTF_8));
           NodeList links = getNodesFromXP(d, "/html/body//a/@href");
           for(int i = 0; i < links.getLength(); i++) {
             String link = links.item(i).getTextContent();

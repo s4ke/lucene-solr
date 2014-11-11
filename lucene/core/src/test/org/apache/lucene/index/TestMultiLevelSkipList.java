@@ -18,12 +18,10 @@ package org.apache.lucene.index;
  */
 
 import java.io.IOException;
-import java.io.Reader;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.lucene.analysis.*;
 import org.apache.lucene.analysis.tokenattributes.PayloadAttribute;
-import org.apache.lucene.codecs.lucene41.Lucene41PostingsFormat;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.store.Directory;
@@ -33,7 +31,7 @@ import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 import org.junit.Before;
 
 /**
@@ -69,7 +67,9 @@ public class TestMultiLevelSkipList extends LuceneTestCase {
 
   public void testSimpleSkip() throws IOException {
     Directory dir = new CountingRAMDirectory(new RAMDirectory());
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, new PayloadAnalyzer()).setCodec(_TestUtil.alwaysPostingsFormat(new Lucene41PostingsFormat())).setMergePolicy(newLogMergePolicy()));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new PayloadAnalyzer())
+                                                .setCodec(TestUtil.alwaysPostingsFormat(TestUtil.getDefaultPostingsFormat()))
+                                                .setMergePolicy(newLogMergePolicy()));
     Term term = new Term("test", "a");
     for (int i = 0; i < 5000; i++) {
       Document d1 = new Document();
@@ -80,7 +80,7 @@ public class TestMultiLevelSkipList extends LuceneTestCase {
     writer.forceMerge(1);
     writer.close();
 
-    AtomicReader reader = getOnlySegmentReader(DirectoryReader.open(dir));
+    LeafReader reader = getOnlySegmentReader(DirectoryReader.open(dir));
     
     for (int i = 0; i < 2; i++) {
       counter = 0;
@@ -190,5 +190,9 @@ public class TestMultiLevelSkipList extends LuceneTestCase {
       return new CountingStream(this.input.clone());
     }
 
+    @Override
+    public IndexInput slice(String sliceDescription, long offset, long length) throws IOException {
+      return new CountingStream(this.input.slice(sliceDescription, offset, length));
+    }
   }
 }

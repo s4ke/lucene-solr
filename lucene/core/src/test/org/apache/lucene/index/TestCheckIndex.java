@@ -23,8 +23,10 @@ import java.io.PrintStream;
 import java.util.List;
 import java.util.ArrayList;
 
+import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.LockObtainFailedException;
 import org.apache.lucene.analysis.CannedTokenStream;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.analysis.Token;
@@ -32,13 +34,13 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.util.Constants;
 
 public class TestCheckIndex extends LuceneTestCase {
 
   public void testDeletedDocs() throws IOException {
     Directory dir = newDirectory();
-    IndexWriter writer  = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMaxBufferedDocs(2));
+    IndexWriter writer  = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                 .setMaxBufferedDocs(2));
     for(int i=0;i<19;i++) {
       Document doc = new Document();
       FieldType customType = new FieldType(TextField.TYPE_STORED);
@@ -55,12 +57,12 @@ public class TestCheckIndex extends LuceneTestCase {
 
     ByteArrayOutputStream bos = new ByteArrayOutputStream(1024);
     CheckIndex checker = new CheckIndex(dir);
-    checker.setInfoStream(new PrintStream(bos, false, "UTF-8"));
+    checker.setInfoStream(new PrintStream(bos, false, IOUtils.UTF_8));
     if (VERBOSE) checker.setInfoStream(System.out);
     CheckIndex.Status indexStatus = checker.checkIndex();
     if (indexStatus.clean == false) {
       System.out.println("CheckIndex failed");
-      System.out.println(bos.toString("UTF-8"));
+      System.out.println(bos.toString(IOUtils.UTF_8));
       fail();
     }
     
@@ -90,17 +92,18 @@ public class TestCheckIndex extends LuceneTestCase {
     assertEquals(18, seg.termVectorStatus.totVectors);
 
     assertTrue(seg.diagnostics.size() > 0);
-    final List<String> onlySegments = new ArrayList<String>();
+    final List<String> onlySegments = new ArrayList<>();
     onlySegments.add("_0");
     
     assertTrue(checker.checkIndex(onlySegments).clean == true);
+    checker.close();
     dir.close();
   }
   
   // LUCENE-4221: we have to let these thru, for now
   public void testBogusTermVectors() throws IOException {
     Directory dir = newDirectory();
-    IndexWriter iw = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, null));
+    IndexWriter iw = new IndexWriter(dir, newIndexWriterConfig(null));
     Document doc = new Document();
     FieldType ft = new FieldType(TextField.TYPE_NOT_STORED);
     ft.setStoreTermVectors(true);
@@ -114,26 +117,22 @@ public class TestCheckIndex extends LuceneTestCase {
     iw.close();
     dir.close(); // checkindex
   }
-
-  public void testLuceneConstantVersion() throws IOException {
-    // common-build.xml sets lucene.version
-    String version = System.getProperty("lucene.version");
-    assertNotNull( "null version", version);
-    // remove anything after a "-" from the version string:
-    version = version.replaceAll("-.*$", "");
-    final String constantVersion;
-    String parts[] = Constants.LUCENE_MAIN_VERSION.split("\\.");
-    if (parts.length == 4) {
-      // alpha/beta version: pull the real portion
-      assert parts[2].equals("0");
-      constantVersion = parts[0] + "." + parts[1];
-    } else {
-      // normal version
-      constantVersion = Constants.LUCENE_MAIN_VERSION;
+  
+  public void testObtainsLock() throws IOException {
+    Directory dir = newDirectory();
+    IndexWriter iw = new IndexWriter(dir, newIndexWriterConfig(null));
+    iw.addDocument(new Document());
+    iw.commit();
+    
+    // keep IW open...
+    try {
+      new CheckIndex(dir);
+      fail("should not have obtained write lock");
+    } catch (LockObtainFailedException expected) {
+      // ok
     }
-    assertTrue("Invalid version: "+version,
-               version.equals(constantVersion));
-    assertTrue(Constants.LUCENE_VERSION + " should start with: "+version,
-               Constants.LUCENE_VERSION.startsWith(version));
+    
+    iw.close();
+    dir.close();
   }
 }

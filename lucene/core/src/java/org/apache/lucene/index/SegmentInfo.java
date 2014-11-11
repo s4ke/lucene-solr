@@ -18,8 +18,10 @@ package org.apache.lucene.index;
  */
 
 
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -27,6 +29,8 @@ import java.util.regex.Matcher;
 import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.TrackingDirectoryWrapper;
+import org.apache.lucene.util.StringHelper;
+import org.apache.lucene.util.Version;
 
 /**
  * Information about a segment such as it's name, directory, and files related
@@ -55,16 +59,19 @@ public final class SegmentInfo {
 
   private boolean isCompoundFile;
 
+  /** Id that uniquely identifies this segment. */
+  private final byte[] id;
+
   private Codec codec;
 
   private Map<String,String> diagnostics;
-  
+
   // Tracks the Lucene version this segment was created with, since 3.1. Null
   // indicates an older than 3.0 index, and it's used to detect a too old index.
   // The format expected is "x.y" - "2.x" for pre-3.0 indexes (or null), and
-  // specific versions afterwards ("3.0", "3.1" etc.).
-  // see Constants.LUCENE_MAIN_VERSION.
-  private String version;
+  // specific versions afterwards ("3.0.0", "3.1.0" etc.).
+  // see o.a.l.util.Version.
+  private Version version;
 
   void setDiagnostics(Map<String, String> diagnostics) {
     this.diagnostics = diagnostics;
@@ -81,8 +88,9 @@ public final class SegmentInfo {
    * <p>Note: this is public only to allow access from
    * the codecs package.</p>
    */
-  public SegmentInfo(Directory dir, String version, String name, int docCount, 
-                     boolean isCompoundFile, Codec codec, Map<String,String> diagnostics) {
+  public SegmentInfo(Directory dir, Version version, String name, int docCount,
+                     boolean isCompoundFile, Codec codec, Map<String,String> diagnostics,
+                     byte[] id) {
     assert !(dir instanceof TrackingDirectoryWrapper);
     this.dir = dir;
     this.version = version;
@@ -91,6 +99,10 @@ public final class SegmentInfo {
     this.isCompoundFile = isCompoundFile;
     this.codec = codec;
     this.diagnostics = diagnostics;
+    this.id = id;
+    if (id.length != StringHelper.ID_LENGTH) {
+      throw new IllegalArgumentException("invalid id: " + Arrays.toString(id));
+    }
   }
 
   /**
@@ -137,7 +149,7 @@ public final class SegmentInfo {
   // NOTE: leave package private
   void setDocCount(int docCount) {
     if (this.docCount != -1) {
-      throw new IllegalStateException("docCount was already set");
+      throw new IllegalStateException("docCount was already set: this.docCount=" + this.docCount + " vs docCount=" + docCount);
     }
     this.docCount = docCount;
   }
@@ -203,46 +215,39 @@ public final class SegmentInfo {
     return dir.hashCode() + name.hashCode();
   }
 
-  /**
-   * Used by DefaultSegmentInfosReader to upgrade a 3.0 segment to record its
-   * version is "3.0". This method can be removed when we're not required to
-   * support 3x indexes anymore, e.g. in 5.0.
-   * <p>
-   * <b>NOTE:</b> this method is used for internal purposes only - you should
-   * not modify the version of a SegmentInfo, or it may result in unexpected
-   * exceptions thrown when you attempt to open the index.
-   *
-   * @lucene.internal
+  /** Returns the version of the code which wrote the segment.
    */
-  public void setVersion(String version) {
-    this.version = version;
+  public Version getVersion() {
+    return version;
   }
 
-  /** Returns the version of the code which wrote the segment. */
-  public String getVersion() {
-    return version;
+  /** Return the id that uniquely identifies this segment. */
+  public byte[] getId() {
+    return id.clone();
   }
 
   private Set<String> setFiles;
 
   /** Sets the files written for this segment. */
-  public void setFiles(Set<String> files) {
-    checkFileNames(files);
-    setFiles = files;
+  public void setFiles(Collection<String> files) {
+    setFiles = new HashSet<>();
+    addFiles(files);
   }
 
   /** Add these files to the set of files written for this
    *  segment. */
   public void addFiles(Collection<String> files) {
     checkFileNames(files);
-    setFiles.addAll(files);
+    for (String f : files) {
+      setFiles.add(namedForThisSegment(f));
+    }
   }
 
   /** Add this file to the set of files written for this
    *  segment. */
   public void addFile(String file) {
     checkFileNames(Collections.singleton(file));
-    setFiles.add(file);
+    setFiles.add(namedForThisSegment(file));
   }
   
   private void checkFileNames(Collection<String> files) {
@@ -254,5 +259,12 @@ public final class SegmentInfo {
       }
     }
   }
-    
+  
+  /** 
+   * strips any segment name from the file, naming it with this segment
+   * this is because "segment names" can change, e.g. by addIndexes(Dir)
+   */
+  String namedForThisSegment(String file) {
+    return name + IndexFileNames.stripSegmentName(file);
+  }
 }

@@ -57,7 +57,7 @@ public class TestFieldMaskingSpanQuery extends LuceneTestCase {
   @BeforeClass
   public static void beforeClass() throws Exception {
     directory = newDirectory();
-    RandomIndexWriter writer= new RandomIndexWriter(random(), directory, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
+    RandomIndexWriter writer= new RandomIndexWriter(random(), directory, newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
     
     writer.addDocument(doc(new Field[] { field("id", "0")
                                          ,
@@ -138,7 +138,7 @@ public class TestFieldMaskingSpanQuery extends LuceneTestCase {
 
     QueryUtils.checkEqual(q, qr);
 
-    Set<Term> terms = new HashSet<Term>();
+    Set<Term> terms = new HashSet<>();
     qr.extractTerms(terms);
     assertEquals(1, terms.size());
   }
@@ -158,7 +158,7 @@ public class TestFieldMaskingSpanQuery extends LuceneTestCase {
 
     QueryUtils.checkUnequal(q, qr);
 
-    Set<Term> terms = new HashSet<Term>();
+    Set<Term> terms = new HashSet<>();
     qr.extractTerms(terms);
     assertEquals(2, terms.size());
   }
@@ -172,7 +172,7 @@ public class TestFieldMaskingSpanQuery extends LuceneTestCase {
 
     QueryUtils.checkEqual(q, qr);
 
-    HashSet<Term> set = new HashSet<Term>();
+    HashSet<Term> set = new HashSet<>();
     qr.extractTerms(set);
     assertEquals(2, set.size());
   }

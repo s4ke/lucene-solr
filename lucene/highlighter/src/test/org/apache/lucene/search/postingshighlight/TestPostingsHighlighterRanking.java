@@ -28,7 +28,7 @@ import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.RandomIndexWriter;
@@ -43,10 +43,8 @@ import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
-@SuppressCodecs({"MockFixedIntBlock", "MockVariableIntBlock", "MockSep", "MockRandom"})
 public class TestPostingsHighlighterRanking extends LuceneTestCase {
   /** 
    * indexes a bunch of gibberish, and then highlights top(n).
@@ -75,7 +73,7 @@ public class TestPostingsHighlighterRanking extends LuceneTestCase {
     
     for (int i = 0; i < numDocs; i++) {
       StringBuilder bodyText = new StringBuilder();
-      int numSentences = _TestUtil.nextInt(random(), 1, maxNumSentences);
+      int numSentences = TestUtil.nextInt(random(), 1, maxNumSentences);
       for (int j = 0; j < numSentences; j++) {
         bodyText.append(newSentence(random(), maxSentenceLength));
       }
@@ -144,14 +142,14 @@ public class TestPostingsHighlighterRanking extends LuceneTestCase {
    */
   private String newSentence(Random r, int maxSentenceLength) {
     StringBuilder sb = new StringBuilder();
-    int numElements = _TestUtil.nextInt(r, 1, maxSentenceLength);
+    int numElements = TestUtil.nextInt(r, 1, maxSentenceLength);
     for (int i = 0; i < numElements; i++) {
       if (sb.length() > 0) {
         sb.append(' ');
-        sb.append((char)_TestUtil.nextInt(r, 'a', 'z'));
+        sb.append((char) TestUtil.nextInt(r, 'a', 'z'));
       } else {
         // capitalize the first word to help breakiterator
-        sb.append((char)_TestUtil.nextInt(r, 'A', 'Z'));
+        sb.append((char) TestUtil.nextInt(r, 'A', 'Z'));
       }
     }
     sb.append(". "); // finalize sentence
@@ -163,7 +161,7 @@ public class TestPostingsHighlighterRanking extends LuceneTestCase {
    * instead it just collects them for asserts!
    */
   static class FakePassageFormatter extends PassageFormatter {
-    HashSet<Pair> seen = new HashSet<Pair>();
+    HashSet<Pair> seen = new HashSet<>();
     
     @Override
     public String format(Passage passages[], String content) {
@@ -249,7 +247,7 @@ public class TestPostingsHighlighterRanking extends LuceneTestCase {
   /** sets b=0 to disable passage length normalization */
   public void testCustomB() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.SIMPLE, true));
+    IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.SIMPLE, true));
     iwc.setMergePolicy(newLogMergePolicy());
     RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwc);
     
@@ -287,7 +285,7 @@ public class TestPostingsHighlighterRanking extends LuceneTestCase {
   /** sets k1=0 for simple coordinate-level match (# of query terms present) */
   public void testCustomK1() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.SIMPLE, true));
+    IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.SIMPLE, true));
     iwc.setMergePolicy(newLogMergePolicy());
     RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwc);
     

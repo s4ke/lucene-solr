@@ -37,8 +37,6 @@ import org.apache.lucene.facet.Facets;
 import org.apache.lucene.facet.FacetsCollector;
 import org.apache.lucene.facet.FacetsConfig;
 import org.apache.lucene.facet.LabelAndValue;
-import org.apache.lucene.facet.taxonomy.TaxonomyReader;
-import org.apache.lucene.facet.taxonomy.TaxonomyWriter;
 import org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyReader;
 import org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyWriter;
 import org.apache.lucene.index.DirectoryReader;
@@ -101,14 +99,14 @@ public class TestTaxonomyFacetCounts2 extends FacetTestCase {
     // category is not added twice.
     int numFacetsA = random.nextInt(3) + 1; // 1-3
     int numFacetsB = random.nextInt(2) + 1; // 1-2
-    ArrayList<FacetField> categories_a = new ArrayList<FacetField>();
+    ArrayList<FacetField> categories_a = new ArrayList<>();
     categories_a.addAll(Arrays.asList(CATEGORIES_A));
-    ArrayList<FacetField> categories_b = new ArrayList<FacetField>();
+    ArrayList<FacetField> categories_b = new ArrayList<>();
     categories_b.addAll(Arrays.asList(CATEGORIES_B));
     Collections.shuffle(categories_a, random);
     Collections.shuffle(categories_b, random);
 
-    ArrayList<FacetField> categories = new ArrayList<FacetField>();
+    ArrayList<FacetField> categories = new ArrayList<>();
     categories.addAll(categories_a.subList(0, numFacetsA));
     categories.addAll(categories_b.subList(0, numFacetsB));
     
@@ -210,7 +208,7 @@ public class TestTaxonomyFacetCounts2 extends FacetTestCase {
   
   // initialize expectedCounts w/ 0 for all categories
   private static Map<String,Integer> newCounts() {
-    Map<String,Integer> counts = new HashMap<String,Integer>();
+    Map<String,Integer> counts = new HashMap<>();
     counts.put(CP_A, 0);
     counts.put(CP_B, 0);
     counts.put(CP_C, 0);
@@ -241,8 +239,8 @@ public class TestTaxonomyFacetCounts2 extends FacetTestCase {
     // 3. Segment w/ categories and results
     // 4. Segment w/ categories, but only some results
     
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
-    conf.setMergePolicy(NoMergePolicy.COMPOUND_FILES); // prevent merges, so we can control the index segments
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
+    conf.setMergePolicy(NoMergePolicy.INSTANCE); // prevent merges, so we can control the index segments
     IndexWriter indexWriter = new IndexWriter(indexDir, conf);
     TaxonomyWriter taxoWriter = new DirectoryTaxonomyWriter(taxoDir);
 
@@ -260,8 +258,9 @@ public class TestTaxonomyFacetCounts2 extends FacetTestCase {
     
     // segment w/ categories and some content
     indexDocsWithFacetsAndSomeTerms(indexWriter, taxoWriter, allExpectedCounts);
-    
-    IOUtils.close(indexWriter, taxoWriter);
+
+    indexWriter.close();
+    IOUtils.close(taxoWriter);
   }
   
   @Test

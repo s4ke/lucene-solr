@@ -26,7 +26,7 @@ import junit.framework.Assert;
 
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.store.Directory;
@@ -37,6 +37,11 @@ public class TestDocIdSet extends LuceneTestCase {
   public void testFilteredDocIdSet() throws Exception {
     final int maxdoc=10;
     final DocIdSet innerSet = new DocIdSet() {
+
+      @Override
+      public long ramBytesUsed() {
+        return 0L;
+      }
 
         @Override
         public DocIdSetIterator iterator() {
@@ -77,7 +82,7 @@ public class TestDocIdSet extends LuceneTestCase {
       };
 
     DocIdSetIterator iter = filteredSet.iterator();
-    ArrayList<Integer> list = new ArrayList<Integer>();
+    ArrayList<Integer> list = new ArrayList<>();
     int doc = iter.advance(3);
     if (doc != DocIdSetIterator.NO_MORE_DOCS) {
       list.add(Integer.valueOf(doc));
@@ -119,7 +124,7 @@ public class TestDocIdSet extends LuceneTestCase {
     // Now search w/ a Filter which returns a null DocIdSet
     Filter f = new Filter() {
       @Override
-      public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs) {
+      public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs) {
         return null;
       }
     };
@@ -145,12 +150,17 @@ public class TestDocIdSet extends LuceneTestCase {
       // Now search w/ a Filter which returns a null DocIdSet
     Filter f = new Filter() {
       @Override
-      public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs) {
+      public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs) {
         final DocIdSet innerNullIteratorSet = new DocIdSet() {
           @Override
           public DocIdSetIterator iterator() {
             return null;
           } 
+
+          @Override
+          public long ramBytesUsed() {
+            return 0L;
+          }
         };
         return new FilteredDocIdSet(innerNullIteratorSet) {
           @Override

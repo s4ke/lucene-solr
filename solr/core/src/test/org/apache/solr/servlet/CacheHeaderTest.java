@@ -16,14 +16,17 @@
  */
 package org.apache.solr.servlet;
 
+
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.Date;
 
-import com.google.common.base.Charsets;
 import org.apache.http.Header;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpRequestBase;
@@ -33,23 +36,22 @@ import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import org.apache.lucene.util._TestUtil;
-
 /**
  * A test case for the several HTTP cache headers emitted by Solr
  */
 public class CacheHeaderTest extends CacheHeaderTestBase {
-    private static final File solrHomeDirectory = new File(TEMP_DIR, "CacheHeaderTest");
-
+  private static File solrHomeDirectory;
+    
   @BeforeClass
   public static void beforeTest() throws Exception {
+    solrHomeDirectory = createTempDir().toFile();
     setupJettyTestHome(solrHomeDirectory, "collection1");
     createJetty(solrHomeDirectory.getAbsolutePath(), null, null);
   }
 
   @AfterClass
   public static void afterTest() throws Exception {
-    cleanUpJettyHome(solrHomeDirectory);
+
   }
 
   protected static final String CONTENTS = "id\n100\n101\n102";
@@ -63,7 +65,7 @@ public class CacheHeaderTest extends CacheHeaderTestBase {
     HttpResponse response = getClient().execute(m);
     assertEquals(200, response.getStatusLine().getStatusCode());
     checkVetoHeaders(response, true);
-    f.delete();
+    Files.delete(f.toPath());
   }
   
   @Test
@@ -248,12 +250,12 @@ public class CacheHeaderTest extends CacheHeaderTestBase {
   }
 
   protected File makeFile(String contents) {
-    return makeFile(contents, Charsets.UTF_8.toString());
+    return makeFile(contents, StandardCharsets.UTF_8.name());
   }
 
   protected File makeFile(String contents, String charset) {
     try {
-      File f = _TestUtil.createTempFile("cachetest_csv", null, TEMP_DIR);
+      File f = new File(initCoreDataDir, "cachetest_csv");
       Writer out = new OutputStreamWriter(new FileOutputStream(f), charset);
       out.write(contents);
       out.close();

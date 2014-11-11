@@ -20,6 +20,7 @@ package org.apache.lucene.codecs.blockterms;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import org.apache.lucene.codecs.BlockTermState;
@@ -27,7 +28,7 @@ import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.FieldsConsumer;
 import org.apache.lucene.codecs.PostingsWriterBase;
 import org.apache.lucene.codecs.TermStats;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.Fields;
@@ -39,6 +40,7 @@ import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.store.RAMOutputStream;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
@@ -57,18 +59,16 @@ import org.apache.lucene.util.RamUsageEstimator;
 
 public class BlockTermsWriter extends FieldsConsumer implements Closeable {
 
-  final static String CODEC_NAME = "BLOCK_TERMS_DICT";
+  final static String CODEC_NAME = "BlockTermsWriter";
 
   // Initial format
-  public static final int VERSION_START = 0;
-  public static final int VERSION_APPEND_ONLY = 1;
-  public static final int VERSION_META_ARRAY = 2;
-  public static final int VERSION_CURRENT = VERSION_META_ARRAY;
+  public static final int VERSION_START = 4;
+  public static final int VERSION_CURRENT = VERSION_START;
 
   /** Extension of terms file */
   static final String TERMS_EXTENSION = "tib";
 
-  protected final IndexOutput out;
+  protected IndexOutput out;
   final PostingsWriterBase postingsWriter;
   final FieldInfos fieldInfos;
   FieldInfo currentField;
@@ -96,7 +96,7 @@ public class BlockTermsWriter extends FieldsConsumer implements Closeable {
     }
   }
 
-  private final List<FieldMetaData> fields = new ArrayList<FieldMetaData>();
+  private final List<FieldMetaData> fields = new ArrayList<>();
 
   // private final String segment;
 
@@ -110,14 +110,14 @@ public class BlockTermsWriter extends FieldsConsumer implements Closeable {
     boolean success = false;
     try {
       fieldInfos = state.fieldInfos;
-      writeHeader(out);
+      CodecUtil.writeIndexHeader(out, CODEC_NAME, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
       currentField = null;
       this.postingsWriter = postingsWriter;
       // segment = state.segmentName;
       
       //System.out.println("BTW.init seg=" + state.segmentName);
       
-      postingsWriter.init(out); // have consumer write its format/header
+      postingsWriter.init(out, state); // have consumer write its format/header
       success = true;
     } finally {
       if (!success) {
@@ -125,45 +125,31 @@ public class BlockTermsWriter extends FieldsConsumer implements Closeable {
       }
     }
   }
-  
-  private void writeHeader(IndexOutput out) throws IOException {
-    CodecUtil.writeHeader(out, CODEC_NAME, VERSION_CURRENT);     
-  }
 
   @Override
   public void write(Fields fields) throws IOException {
 
-    boolean success = false;
-    try {
-      for(String field : fields) {
+    for(String field : fields) {
 
-        Terms terms = fields.terms(field);
-        if (terms == null) {
-          continue;
+      Terms terms = fields.terms(field);
+      if (terms == null) {
+        continue;
+      }
+
+      TermsEnum termsEnum = terms.iterator(null);
+
+      TermsWriter termsWriter = addField(fieldInfos.fieldInfo(field));
+
+      while (true) {
+        BytesRef term = termsEnum.next();
+        if (term == null) {
+          break;
         }
 
-        TermsEnum termsEnum = terms.iterator(null);
-
-        TermsWriter termsWriter = addField(fieldInfos.fieldInfo(field));
-
-        while (true) {
-          BytesRef term = termsEnum.next();
-          if (term == null) {
-            break;
-          }
-
-          termsWriter.write(term, termsEnum);
-        }
-
-        termsWriter.finish();
+        termsWriter.write(term, termsEnum);
       }
-      success = true;
-    } finally {
-      if (success) {
-        IOUtils.close(this);
-      } else {
-        IOUtils.closeWhileHandlingException(this);
-      }
+
+      termsWriter.finish();
     }
   }
 
@@ -175,27 +161,30 @@ public class BlockTermsWriter extends FieldsConsumer implements Closeable {
     return new TermsWriter(fieldIndexWriter, field, postingsWriter);
   }
 
+  @Override
   public void close() throws IOException {
-    try {
-      final long dirStart = out.getFilePointer();
-
-      out.writeVInt(fields.size());
-      for(FieldMetaData field : fields) {
-        out.writeVInt(field.fieldInfo.number);
-        out.writeVLong(field.numTerms);
-        out.writeVLong(field.termsStartPointer);
-        if (field.fieldInfo.getIndexOptions() != IndexOptions.DOCS_ONLY) {
-          out.writeVLong(field.sumTotalTermFreq);
-        }
-        out.writeVLong(field.sumDocFreq);
-        out.writeVInt(field.docCount);
-        if (VERSION_CURRENT >= VERSION_META_ARRAY) {
+    if (out != null) {
+      try {
+        final long dirStart = out.getFilePointer();
+        
+        out.writeVInt(fields.size());
+        for(FieldMetaData field : fields) {
+          out.writeVInt(field.fieldInfo.number);
+          out.writeVLong(field.numTerms);
+          out.writeVLong(field.termsStartPointer);
+          if (field.fieldInfo.getIndexOptions() != IndexOptions.DOCS) {
+            out.writeVLong(field.sumTotalTermFreq);
+          }
+          out.writeVLong(field.sumDocFreq);
+          out.writeVInt(field.docCount);
           out.writeVInt(field.longsSize);
         }
+        writeTrailer(dirStart);
+        CodecUtil.writeFooter(out);
+      } finally {
+        IOUtils.close(out, postingsWriter, termsIndexWriter);
+        out = null;
       }
-      writeTrailer(dirStart);
-    } finally {
-      IOUtils.close(out, postingsWriter, termsIndexWriter);
     }
   }
 
@@ -204,7 +193,7 @@ public class BlockTermsWriter extends FieldsConsumer implements Closeable {
   }
   
   private static class TermEntry {
-    public final BytesRef term = new BytesRef();
+    public final BytesRefBuilder term = new BytesRefBuilder();
     public BlockTermState state;
   }
 
@@ -241,7 +230,7 @@ public class BlockTermsWriter extends FieldsConsumer implements Closeable {
       this.longsSize = postingsWriter.setField(fieldInfo);
     }
     
-    private final BytesRef lastPrevTerm = new BytesRef();
+    private final BytesRefBuilder lastPrevTerm = new BytesRefBuilder();
 
     void write(BytesRef text, TermsEnum termsEnum) throws IOException {
 
@@ -271,12 +260,10 @@ public class BlockTermsWriter extends FieldsConsumer implements Closeable {
       }
 
       if (pendingTerms.length == pendingCount) {
-        final TermEntry[] newArray = new TermEntry[ArrayUtil.oversize(pendingCount+1, RamUsageEstimator.NUM_BYTES_OBJECT_REF)];
-        System.arraycopy(pendingTerms, 0, newArray, 0, pendingCount);
-        for(int i=pendingCount;i<newArray.length;i++) {
-          newArray[i] = new TermEntry();
+        pendingTerms = Arrays.copyOf(pendingTerms, ArrayUtil.oversize(pendingCount+1, RamUsageEstimator.NUM_BYTES_OBJECT_REF));
+        for(int i=pendingCount;i<pendingTerms.length;i++) {
+          pendingTerms[i] = new TermEntry();
         }
-        pendingTerms = newArray;
       }
       final TermEntry te = pendingTerms[pendingCount];
       te.term.copyBytes(text);
@@ -294,9 +281,6 @@ public class BlockTermsWriter extends FieldsConsumer implements Closeable {
       // EOF marker:
       out.writeVInt(0);
 
-      this.sumTotalTermFreq = sumTotalTermFreq;
-      this.sumDocFreq = sumDocFreq;
-      this.docCount = docCount;
       fieldIndexWriter.finish(out.getFilePointer());
       if (numTerms > 0) {
         fields.add(new FieldMetaData(fieldInfo,
@@ -334,11 +318,11 @@ public class BlockTermsWriter extends FieldsConsumer implements Closeable {
       // First pass: compute common prefix for all terms
       // in the block, against term before first term in
       // this block:
-      int commonPrefix = sharedPrefix(lastPrevTerm, pendingTerms[0].term);
+      int commonPrefix = sharedPrefix(lastPrevTerm.get(), pendingTerms[0].term.get());
       for(int termCount=1;termCount<pendingCount;termCount++) {
         commonPrefix = Math.min(commonPrefix,
-                                sharedPrefix(lastPrevTerm,
-                                             pendingTerms[termCount].term));
+                                sharedPrefix(lastPrevTerm.get(),
+                                             pendingTerms[termCount].term.get()));
       }        
 
       out.writeVInt(pendingCount);
@@ -346,11 +330,11 @@ public class BlockTermsWriter extends FieldsConsumer implements Closeable {
 
       // 2nd pass: write suffixes, as separate byte[] blob
       for(int termCount=0;termCount<pendingCount;termCount++) {
-        final int suffix = pendingTerms[termCount].term.length - commonPrefix;
+        final int suffix = pendingTerms[termCount].term.length() - commonPrefix;
         // TODO: cutover to better intblock codec, instead
         // of interleaving here:
         bytesWriter.writeVInt(suffix);
-        bytesWriter.writeBytes(pendingTerms[termCount].term.bytes, commonPrefix, suffix);
+        bytesWriter.writeBytes(pendingTerms[termCount].term.bytes(), commonPrefix, suffix);
       }
       out.writeVInt((int) bytesWriter.getFilePointer());
       bytesWriter.writeTo(out);
@@ -363,7 +347,7 @@ public class BlockTermsWriter extends FieldsConsumer implements Closeable {
         final BlockTermState state = pendingTerms[termCount].state;
         assert state != null;
         bytesWriter.writeVInt(state.docFreq);
-        if (fieldInfo.getIndexOptions() != IndexOptions.DOCS_ONLY) {
+        if (fieldInfo.getIndexOptions() != IndexOptions.DOCS) {
           bytesWriter.writeVLong(state.totalTermFreq-state.docFreq);
         }
       }

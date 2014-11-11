@@ -17,10 +17,11 @@ package org.apache.lucene.util.fst;
  * limitations under the License.
  */
 
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStreamWriter;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -37,9 +38,10 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.util.IntsRefBuilder;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.UnicodeUtil;
-import org.apache.lucene.util._TestUtil;
 import org.apache.lucene.util.packed.PackedInts;
 
 import static org.junit.Assert.assertEquals;
@@ -97,7 +99,7 @@ public class FSTTester<T> {
   static String getRandomString(Random random) {
     final String term;
     if (random.nextBoolean()) {
-      term = _TestUtil.randomRealisticUnicodeString(random);
+      term = TestUtil.randomRealisticUnicodeString(random);
     } else {
       // we want to mix in limited-alphabet symbols so
       // we get more sharing of the nodes given how few
@@ -115,16 +117,16 @@ public class FSTTester<T> {
     }
     final char[] buffer = new char[end];
     for (int i = 0; i < end; i++) {
-      buffer[i] = (char) _TestUtil.nextInt(r, 97, 102);
+      buffer[i] = (char) TestUtil.nextInt(r, 97, 102);
     }
     return new String(buffer, 0, end);
   }
 
   static IntsRef toIntsRef(String s, int inputMode) {
-    return toIntsRef(s, inputMode, new IntsRef(10));
+    return toIntsRef(s, inputMode, new IntsRefBuilder());
   }
 
-  static IntsRef toIntsRef(String s, int inputMode, IntsRef ir) {
+  static IntsRef toIntsRef(String s, int inputMode, IntsRefBuilder ir) {
     if (inputMode == 0) {
       // utf8
       return toIntsRef(new BytesRef(s), ir);
@@ -134,32 +136,28 @@ public class FSTTester<T> {
     }
   }
 
-  static IntsRef toIntsRefUTF32(String s, IntsRef ir) {
+  static IntsRef toIntsRefUTF32(String s, IntsRefBuilder ir) {
     final int charLength = s.length();
     int charIdx = 0;
     int intIdx = 0;
+    ir.clear();
     while(charIdx < charLength) {
-      if (intIdx == ir.ints.length) {
-        ir.grow(intIdx+1);
-      }
+      ir.grow(intIdx+1);
       final int utf32 = s.codePointAt(charIdx);
-      ir.ints[intIdx] = utf32;
+      ir.append(utf32);
       charIdx += Character.charCount(utf32);
       intIdx++;
     }
-    ir.length = intIdx;
-    return ir;
+    return ir.get();
   }
 
-  static IntsRef toIntsRef(BytesRef br, IntsRef ir) {
-    if (br.length > ir.ints.length) {
-      ir.grow(br.length);
-    }
+  static IntsRef toIntsRef(BytesRef br, IntsRefBuilder ir) {
+    ir.grow(br.length);
+    ir.clear();
     for(int i=0;i<br.length;i++) {
-      ir.ints[i] = br.bytes[br.offset+i]&0xFF;
+      ir.append(br.bytes[br.offset+i]&0xFF);
     }
-    ir.length = br.length;
-    return ir;
+    return ir.get();
   }
 
   /** Holds one input/output pair. */
@@ -188,10 +186,10 @@ public class FSTTester<T> {
 
     if (testPruning) {
       // simple pruning
-      doTest(_TestUtil.nextInt(random, 1, 1+pairs.size()), 0, true);
+      doTest(TestUtil.nextInt(random, 1, 1 + pairs.size()), 0, true);
         
       // leafy pruning
-      doTest(0, _TestUtil.nextInt(random, 1, 1+pairs.size()), true);
+      doTest(0, TestUtil.nextInt(random, 1, 1 + pairs.size()), true);
     }
   }
 
@@ -233,12 +231,11 @@ public class FSTTester<T> {
     return output;
   }
 
-  private T randomAcceptedWord(FST<T> fst, IntsRef in) throws IOException {
+  private T randomAcceptedWord(FST<T> fst, IntsRefBuilder in) throws IOException {
     FST.Arc<T> arc = fst.getFirstArc(new FST.Arc<T>());
 
-    final List<FST.Arc<T>> arcs = new ArrayList<FST.Arc<T>>();
-    in.length = 0;
-    in.offset = 0;
+    final List<FST.Arc<T>> arcs = new ArrayList<>();
+    in.clear();
     final T NO_OUTPUT = fst.outputs.getNoOutput();
     T output = NO_OUTPUT;
     final FST.BytesReader fstReader = fst.getBytesReader();
@@ -264,10 +261,7 @@ public class FSTTester<T> {
         break;
       }
 
-      if (in.ints.length == in.length) {
-        in.grow(1+in.length);
-      }
-      in.ints[in.length++] = arc.label;
+      in.append(arc.label);
     }
 
     return output;
@@ -281,13 +275,12 @@ public class FSTTester<T> {
 
     final boolean willRewrite = random.nextBoolean();
 
-    final Builder<T> builder = new Builder<T>(inputMode == 0 ? FST.INPUT_TYPE.BYTE1 : FST.INPUT_TYPE.BYTE4,
+    final Builder<T> builder = new Builder<>(inputMode == 0 ? FST.INPUT_TYPE.BYTE1 : FST.INPUT_TYPE.BYTE4,
                                               prune1, prune2,
                                               prune1==0 && prune2==0,
                                               allowRandomSuffixSharing ? random.nextBoolean() : true,
-                                              allowRandomSuffixSharing ? _TestUtil.nextInt(random, 1, 10) : Integer.MAX_VALUE,
+                                              allowRandomSuffixSharing ? TestUtil.nextInt(random, 1, 10) : Integer.MAX_VALUE,
                                               outputs,
-                                              null,
                                               willRewrite,
                                               PackedInts.DEFAULT,
                                               true,
@@ -320,7 +313,7 @@ public class FSTTester<T> {
       out.close();
       IndexInput in = dir.openInput("fst.bin", context);
       try {
-        fst = new FST<T>(in, outputs);
+        fst = new FST<>(in, outputs);
       } finally {
         in.close();
         dir.deleteFile("fst.bin");
@@ -328,7 +321,7 @@ public class FSTTester<T> {
     }
 
     if (LuceneTestCase.VERBOSE && pairs.size() <= 20 && fst != null) {
-      Writer w = new OutputStreamWriter(new FileOutputStream("out.dot"), "UTF-8");
+      Writer w = Files.newBufferedWriter(Paths.get("out.dot"), StandardCharsets.UTF_8);
       Util.toDot(fst, w, false, false);
       w.close();
       System.out.println("SAVED out.dot");
@@ -366,7 +359,7 @@ public class FSTTester<T> {
     if (doReverseLookup) {
       @SuppressWarnings("unchecked") FST<Long> fstLong0 = (FST<Long>) fst;
       fstLong = fstLong0;
-      validOutputs = new HashSet<Long>();
+      validOutputs = new HashSet<>();
       for(InputOutput<T> pair: pairs) {
         Long output = (Long) pair.output;
         maxLong = Math.max(maxLong, output);
@@ -402,7 +395,7 @@ public class FSTTester<T> {
       System.out.println("TEST: check valid terms/next()");
     }
     {
-      IntsRefFSTEnum<T> fstEnum = new IntsRefFSTEnum<T>(fst);
+      IntsRefFSTEnum<T> fstEnum = new IntsRefFSTEnum<>(fst);
       for(InputOutput<T> pair : pairs) {
         IntsRef term = pair.input;
         if (LuceneTestCase.VERBOSE) {
@@ -421,7 +414,7 @@ public class FSTTester<T> {
       assertNull(fstEnum.next());
     }
 
-    final Map<IntsRef,T> termsMap = new HashMap<IntsRef,T>();
+    final Map<IntsRef,T> termsMap = new HashMap<>();
     for(InputOutput<T> pair : pairs) {
       termsMap.put(pair.input, pair.output);
     }
@@ -434,7 +427,7 @@ public class FSTTester<T> {
 
       final int num = LuceneTestCase.atLeast(random, 100);
       for(int iter=0;iter<num;iter++) {
-        Long v = _TestUtil.nextLong(random, minLong, maxLong);
+        Long v = TestUtil.nextLong(random, minLong, maxLong);
         IntsRef input = Util.getByOutput(fstLong, v);
         assertTrue(validOutputs.contains(v) || input == null);
       }
@@ -444,19 +437,19 @@ public class FSTTester<T> {
     if (LuceneTestCase.VERBOSE) {
       System.out.println("TEST: verify random accepted terms");
     }
-    final IntsRef scratch = new IntsRef(10);
+    final IntsRefBuilder scratch = new IntsRefBuilder();
     int num = LuceneTestCase.atLeast(random, 500);
     for(int iter=0;iter<num;iter++) {
       T output = randomAcceptedWord(fst, scratch);
-      assertTrue("accepted word " + inputToString(inputMode, scratch) + " is not valid", termsMap.containsKey(scratch));
-      assertTrue(outputsEqual(termsMap.get(scratch), output));
+      assertTrue("accepted word " + inputToString(inputMode, scratch.get()) + " is not valid", termsMap.containsKey(scratch.get()));
+      assertTrue(outputsEqual(termsMap.get(scratch.get()), output));
 
       if (doReverseLookup) {
         //System.out.println("lookup output=" + output + " outs=" + fst.outputs);
         IntsRef input = Util.getByOutput(fstLong, (Long) output);
         assertNotNull(input);
         //System.out.println("  got " + Util.toBytesRef(input, new BytesRef()).utf8ToString());
-        assertEquals(scratch, input);
+        assertEquals(scratch.get(), input);
       }
     }
     
@@ -464,7 +457,7 @@ public class FSTTester<T> {
     if (LuceneTestCase.VERBOSE) {
       System.out.println("TEST: verify seek");
     }
-    IntsRefFSTEnum<T> fstEnum = new IntsRefFSTEnum<T>(fst);
+    IntsRefFSTEnum<T> fstEnum = new IntsRefFSTEnum<>(fst);
     num = LuceneTestCase.atLeast(random, 100);
     for(int iter=0;iter<num;iter++) {
       if (LuceneTestCase.VERBOSE) {
@@ -556,7 +549,7 @@ public class FSTTester<T> {
         System.out.println("TEST: iter " + iter);
       }
       // reset:
-      fstEnum = new IntsRefFSTEnum<T>(fst);
+      fstEnum = new IntsRefFSTEnum<>(fst);
       int upto = -1;
       while(true) {
         boolean isDone = false;
@@ -682,18 +675,18 @@ public class FSTTester<T> {
     //System.out.println("TEST: tally prefixes");
 
     // build all prefixes
-    final Map<IntsRef,CountMinOutput<T>> prefixes = new HashMap<IntsRef,CountMinOutput<T>>();
-    final IntsRef scratch = new IntsRef(10);
+    final Map<IntsRef,CountMinOutput<T>> prefixes = new HashMap<>();
+    final IntsRefBuilder scratch = new IntsRefBuilder();
     for(InputOutput<T> pair: pairs) {
       scratch.copyInts(pair.input);
       for(int idx=0;idx<=pair.input.length;idx++) {
-        scratch.length = idx;
-        CountMinOutput<T> cmo = prefixes.get(scratch);
+        scratch.setLength(idx);
+        CountMinOutput<T> cmo = prefixes.get(scratch.get());
         if (cmo == null) {
-          cmo = new CountMinOutput<T>();
+          cmo = new CountMinOutput<>();
           cmo.count = 1;
           cmo.output = pair.output;
-          prefixes.put(IntsRef.deepCopyOf(scratch), cmo);
+          prefixes.put(scratch.toIntsRef(), cmo);
         } else {
           cmo.count++;
           T output1 = cmo.output;
@@ -735,9 +728,9 @@ public class FSTTester<T> {
           keep = true;
         } else if (prefix.length > 0) {
           // consult our parent
-          scratch.length = prefix.length-1;
-          System.arraycopy(prefix.ints, prefix.offset, scratch.ints, 0, scratch.length);
-          final CountMinOutput<T> cmo2 = prefixes.get(scratch);
+          scratch.setLength(prefix.length-1);
+          System.arraycopy(prefix.ints, prefix.offset, scratch.ints(), 0, scratch.length());
+          final CountMinOutput<T> cmo2 = prefixes.get(scratch.get());
           //System.out.println("    parent count = " + (cmo2 == null ? -1 : cmo2.count));
           keep = cmo2 != null && ((prune2 > 1 && cmo2.count >= prune2) || (prune2 == 1 && (cmo2.count >= 2 || prefix.length <= 1)));
         } else if (cmo.count >= prune2) {
@@ -754,14 +747,14 @@ public class FSTTester<T> {
         // clear isLeaf for all ancestors
         //System.out.println("    keep");
         scratch.copyInts(prefix);
-        scratch.length--;
-        while(scratch.length >= 0) {
-          final CountMinOutput<T> cmo2 = prefixes.get(scratch);
+        scratch.setLength(scratch.length() - 1);
+        while(scratch.length() >= 0) {
+          final CountMinOutput<T> cmo2 = prefixes.get(scratch.get());
           if (cmo2 != null) {
             //System.out.println("    clear isLeaf " + inputToString(inputMode, scratch));
             cmo2.isLeaf = false;
           }
-          scratch.length--;
+          scratch.setLength(scratch.length() - 1);
         }
       }
     }
@@ -787,7 +780,7 @@ public class FSTTester<T> {
     if (LuceneTestCase.VERBOSE) {
       System.out.println("TEST: check pruned enum");
     }
-    IntsRefFSTEnum<T> fstEnum = new IntsRefFSTEnum<T>(fst);
+    IntsRefFSTEnum<T> fstEnum = new IntsRefFSTEnum<>(fst);
     IntsRefFSTEnum.InputOutput<T> current;
     while((current = fstEnum.next()) != null) {
       if (LuceneTestCase.VERBOSE) {

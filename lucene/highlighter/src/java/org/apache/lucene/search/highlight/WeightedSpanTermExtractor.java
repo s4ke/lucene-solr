@@ -29,12 +29,12 @@ import java.util.TreeSet;
 
 import org.apache.lucene.analysis.CachingTokenFilter;
 import org.apache.lucene.analysis.TokenStream;
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.FilterLeafReader;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.Fields;
-import org.apache.lucene.index.FilterAtomicReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SortedDocValues;
@@ -69,7 +69,7 @@ public class WeightedSpanTermExtractor {
   private boolean cachedTokenStream;
   private boolean wrapToCaching = true;
   private int maxDocCharsToAnalyze;
-  private AtomicReader internalReader = null;
+  private LeafReader internalReader = null;
 
 
   public WeightedSpanTermExtractor() {
@@ -175,7 +175,7 @@ public class WeightedSpanTermExtractor {
           final Term[] termArray = termArrays.get(i);
           List<SpanQuery> disjuncts = disjunctLists[positions[i]];
           if (disjuncts == null) {
-            disjuncts = (disjunctLists[positions[i]] = new ArrayList<SpanQuery>(termArray.length));
+            disjuncts = (disjunctLists[positions[i]] = new ArrayList<>(termArray.length));
             ++distinctPositions;
           }
           for (int j = 0; j < termArray.length; ++j) {
@@ -243,10 +243,10 @@ public class WeightedSpanTermExtractor {
     Set<String> fieldNames;
 
     if (fieldName == null) {
-      fieldNames = new HashSet<String>();
+      fieldNames = new HashSet<>();
       collectSpanQueryFields(spanQuery, fieldNames);
     } else {
-      fieldNames = new HashSet<String>(1);
+      fieldNames = new HashSet<>(1);
       fieldNames.add(fieldName);
     }
     // To support the use of the default field name
@@ -254,9 +254,9 @@ public class WeightedSpanTermExtractor {
       fieldNames.add(defaultField);
     }
     
-    Map<String, SpanQuery> queries = new HashMap<String, SpanQuery>();
+    Map<String, SpanQuery> queries = new HashMap<>();
  
-    Set<Term> nonWeightedTerms = new HashSet<Term>();
+    Set<Term> nonWeightedTerms = new HashSet<>();
     final boolean mustRewriteQuery = mustRewriteQuery(spanQuery);
     if (mustRewriteQuery) {
       for (final String field : fieldNames) {
@@ -268,7 +268,7 @@ public class WeightedSpanTermExtractor {
       spanQuery.extractTerms(nonWeightedTerms);
     }
 
-    List<PositionSpan> spanPositions = new ArrayList<PositionSpan>();
+    List<PositionSpan> spanPositions = new ArrayList<>();
 
     for (final String field : fieldNames) {
       final SpanQuery q;
@@ -277,9 +277,9 @@ public class WeightedSpanTermExtractor {
       } else {
         q = spanQuery;
       }
-      AtomicReaderContext context = getLeafContext();
-      Map<Term,TermContext> termContexts = new HashMap<Term,TermContext>();
-      TreeSet<Term> extractedTerms = new TreeSet<Term>();
+      LeafReaderContext context = getLeafContext();
+      Map<Term,TermContext> termContexts = new HashMap<>();
+      TreeSet<Term> extractedTerms = new TreeSet<>();
       q.extractTerms(extractedTerms);
       for (Term term : extractedTerms) {
         termContexts.put(term, TermContext.build(context, term));
@@ -328,7 +328,7 @@ public class WeightedSpanTermExtractor {
    * @throws IOException If there is a low-level I/O error
    */
   protected void extractWeightedTerms(Map<String,WeightedSpanTerm> terms, Query query) throws IOException {
-    Set<Term> nonWeightedTerms = new HashSet<Term>();
+    Set<Term> nonWeightedTerms = new HashSet<>();
     query.extractTerms(nonWeightedTerms);
 
     for (final Term queryTerm : nonWeightedTerms) {
@@ -349,7 +349,7 @@ public class WeightedSpanTermExtractor {
     return rv;
   }
 
-  protected AtomicReaderContext getLeafContext() throws IOException {
+  protected LeafReaderContext getLeafContext() throws IOException {
     if (internalReader == null) {
       if(wrapToCaching && !(tokenStream instanceof CachingTokenFilter)) {
         assert !cachedTokenStream;
@@ -357,24 +357,24 @@ public class WeightedSpanTermExtractor {
         cachedTokenStream = true;
       }
       final MemoryIndex indexer = new MemoryIndex(true);
-      indexer.addField(DelegatingAtomicReader.FIELD_NAME, tokenStream);
+      indexer.addField(DelegatingLeafReader.FIELD_NAME, tokenStream);
       tokenStream.reset();
       final IndexSearcher searcher = indexer.createSearcher();
       // MEM index has only atomic ctx
-      internalReader = new DelegatingAtomicReader(((AtomicReaderContext)searcher.getTopReaderContext()).reader());
+      internalReader = new DelegatingLeafReader(((LeafReaderContext)searcher.getTopReaderContext()).reader());
     }
     return internalReader.getContext();
   }
   
   /*
    * This reader will just delegate every call to a single field in the wrapped
-   * AtomicReader. This way we only need to build this field once rather than
+   * LeafReader. This way we only need to build this field once rather than
    * N-Times
    */
-  static final class DelegatingAtomicReader extends FilterAtomicReader {
+  static final class DelegatingLeafReader extends FilterLeafReader {
     private static final String FIELD_NAME = "shadowed_field";
 
-    DelegatingAtomicReader(AtomicReader in) {
+    DelegatingLeafReader(LeafReader in) {
       super(in);
     }
     
@@ -388,12 +388,12 @@ public class WeightedSpanTermExtractor {
       return new FilterFields(super.fields()) {
         @Override
         public Terms terms(String field) throws IOException {
-          return super.terms(DelegatingAtomicReader.FIELD_NAME);
+          return super.terms(DelegatingLeafReader.FIELD_NAME);
         }
 
         @Override
         public Iterator<String> iterator() {
-          return Collections.singletonList(DelegatingAtomicReader.FIELD_NAME).iterator();
+          return Collections.singletonList(DelegatingLeafReader.FIELD_NAME).iterator();
         }
 
         @Override
@@ -468,7 +468,7 @@ public class WeightedSpanTermExtractor {
       this.fieldName = null;
     }
 
-    Map<String,WeightedSpanTerm> terms = new PositionCheckingMap<String>();
+    Map<String,WeightedSpanTerm> terms = new PositionCheckingMap<>();
     this.tokenStream = tokenStream;
     try {
       extract(query, terms);
@@ -505,7 +505,7 @@ public class WeightedSpanTermExtractor {
     }
     this.tokenStream = tokenStream;
 
-    Map<String,WeightedSpanTerm> terms = new PositionCheckingMap<String>();
+    Map<String,WeightedSpanTerm> terms = new PositionCheckingMap<>();
     extract(query, terms);
 
     int totalNumDocs = reader.maxDoc();

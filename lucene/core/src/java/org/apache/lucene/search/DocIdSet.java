@@ -18,18 +18,53 @@ package org.apache.lucene.search;
  */
 
 import java.io.IOException;
+import java.util.Collections;
+
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.Bits;
 
 /**
  * A DocIdSet contains a set of doc ids. Implementing classes must
  * only implement {@link #iterator} to provide access to the set. 
  */
-public abstract class DocIdSet {
+public abstract class DocIdSet implements Accountable {
+
+  /** An empty {@code DocIdSet} instance */
+  public static final DocIdSet EMPTY = new DocIdSet() {
+    
+    @Override
+    public DocIdSetIterator iterator() {
+      return DocIdSetIterator.empty();
+    }
+    
+    @Override
+    public boolean isCacheable() {
+      return true;
+    }
+    
+    // we explicitly provide no random access, as this filter is 100% sparse and iterator exits faster
+    @Override
+    public Bits bits() {
+      return null;
+    }
+
+    @Override
+    public long ramBytesUsed() {
+      return 0L;
+    }
+  };
 
   /** Provides a {@link DocIdSetIterator} to access the set.
    * This implementation can return <code>null</code> if there
    * are no docs that match. */
   public abstract DocIdSetIterator iterator() throws IOException;
+
+  // TODO: somehow this class should express the cost of
+  // iteration vs the cost of random access Bits; for
+  // expensive Filters (e.g. distance < 1 km) we should use
+  // bits() after all other Query/Filters have matched, but
+  // this is the opposite of what bits() is for now
+  // (down-low filtering using e.g. FixedBitSet)
 
   /** Optionally provides a {@link Bits} interface for random access
    * to matching documents.
@@ -57,5 +92,10 @@ public abstract class DocIdSet {
    */
   public boolean isCacheable() {
     return false;
+  }
+
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Collections.emptyList();
   }
 }

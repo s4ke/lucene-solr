@@ -41,9 +41,10 @@ import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.NoDeletionPolicy;
 import org.apache.lucene.index.SegmentInfos;
+import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.ThrottledIndexOutput;
-import org.apache.lucene.util._TestUtil;
 
 /**
  * This is a Directory Wrapper that adds methods
@@ -70,17 +71,21 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
   double randomIOExceptionRateOnOpen;
   Random randomState;
   boolean noDeleteOpenFile = true;
+  boolean assertNoDeleteOpenFile = false;
   boolean preventDoubleWrite = true;
   boolean trackDiskUsage = false;
-  boolean wrapLockFactory = true;
+  boolean wrapLocking = true;
+  boolean useSlowOpenClosers = true;
+  boolean enableVirusScanner = true;
+  boolean allowRandomFileNotFoundException = true;
+  boolean allowReadingFilesStillOpenForWrite = false;
   private Set<String> unSyncedFiles;
   private Set<String> createdFiles;
-  private Set<String> openFilesForWrite = new HashSet<String>();
-  Set<String> openLocks = Collections.synchronizedSet(new HashSet<String>());
+  private Set<String> openFilesForWrite = new HashSet<>();
+  Map<String,Exception> openLocks = Collections.synchronizedMap(new HashMap<String,Exception>());
   volatile boolean crashed;
   private ThrottledIndexOutput throttledOutput;
   private Throttling throttling = Throttling.SOMETIMES;
-  protected LockFactory lockFactory;
 
   final AtomicInteger inputCloneCount = new AtomicInteger();
 
@@ -97,17 +102,22 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
   // Only tracked if noDeleteOpenFile is true: if an attempt
   // is made to delete an open file, we enroll it here.
   private Set<String> openFilesDeleted;
+  
+  // only tracked if virus scanner is enabled:
+  // set of files it prevented deletion for
+  private Set<String> triedToDelete;
 
   private synchronized void init() {
     if (openFiles == null) {
-      openFiles = new HashMap<String,Integer>();
-      openFilesDeleted = new HashSet<String>();
+      openFiles = new HashMap<>();
+      openFilesDeleted = new HashSet<>();
+      triedToDelete = new HashSet<>();
     }
 
     if (createdFiles == null)
-      createdFiles = new HashSet<String>();
+      createdFiles = new HashSet<>();
     if (unSyncedFiles == null)
-      unSyncedFiles = new HashSet<String>();
+      unSyncedFiles = new HashSet<>();
   }
 
   public MockDirectoryWrapper(Random random, Directory delegate) {
@@ -118,8 +128,6 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
     this.randomState = new Random(random.nextInt());
     this.throttledOutput = new ThrottledIndexOutput(ThrottledIndexOutput
         .mBitsToBytes(40 + randomState.nextInt(10)), 5 + randomState.nextInt(5), null);
-    // force wrapping of lockfactory
-    this.lockFactory = new MockLockFactoryWrapper(this, delegate.getLockFactory());
     init();
   }
 
@@ -136,7 +144,33 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
   public void setPreventDoubleWrite(boolean value) {
     preventDoubleWrite = value;
   }
+
+  /** If set to true (the default), when we throw random
+   *  IOException on openInput or createOutput, we may
+   *  sometimes throw FileNotFoundException or
+   *  NoSuchFileException. */
+  public void setAllowRandomFileNotFoundException(boolean value) {
+    allowRandomFileNotFoundException = value;
+  }
   
+  /** If set to true, you can open an inputstream on a file
+   *  that is still open for writes. */
+  public void setAllowReadingFilesStillOpenForWrite(boolean value) {
+    allowReadingFilesStillOpenForWrite = value;
+  }
+  
+  /** Returns true if the virus scanner is enabled */
+  public boolean getEnableVirusScanner() {
+    return enableVirusScanner;
+  }
+  
+  /** If set to true (the default), deleteFile sometimes
+   *  fails because a virus scanner is open.
+   */
+  public void setEnableVirusScanner(boolean value) {
+    this.enableVirusScanner = value;
+  }
+
   /**
    * Enum for controlling hard disk throttling.
    * Set via {@link MockDirectoryWrapper #setThrottling(Throttling)}
@@ -155,6 +189,15 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
   public void setThrottling(Throttling throttling) {
     this.throttling = throttling;
   }
+  
+  /** 
+   * By default, opening and closing has a rare small sleep to catch race conditions
+   * <p>
+   * You can disable this if you dont need it
+   */
+  public void setUseSlowOpenClosers(boolean v) {
+    useSlowOpenClosers = v;
+  }
 
   /**
    * Returns true if {@link #in} must sync its files.
@@ -165,6 +208,9 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
   private boolean mustSync() {
     Directory delegate = in;
     while (delegate instanceof FilterDirectory) {
+      if (delegate instanceof NRTCachingDirectory) {
+        return true;
+      }
       delegate = ((FilterDirectory) delegate).getDelegate();
     }
     return delegate instanceof NRTCachingDirectory;
@@ -190,9 +236,42 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
     }
   }
 
+  @Override
+  public synchronized void renameFile(String source, String dest) throws IOException {
+    maybeYield();
+    maybeThrowDeterministicException();
+
+    if (crashed) {
+      throw new IOException("cannot rename after crash");
+    }
+    
+    if (openFiles.containsKey(source)) {
+      if (assertNoDeleteOpenFile) {
+        throw (AssertionError) fillOpenTrace(new AssertionError("MockDirectoryWrapper: file \"" + source + "\" is still open: cannot rename"), source, true);
+      } else if (noDeleteOpenFile) {
+        throw (IOException) fillOpenTrace(new IOException("MockDirectoryWrapper: file \"" + source + "\" is still open: cannot rename"), source, true);
+      }
+    }
+
+    boolean success = false;
+    try {
+      in.renameFile(source, dest);
+      success = true;
+    } finally {
+      if (success) {
+        // we don't do this stuff with lucene's commit, but its just for completeness
+        if (unSyncedFiles.contains(source)) {
+          unSyncedFiles.remove(source);
+          unSyncedFiles.add(dest);
+        }
+        openFilesDeleted.remove(source);
+      }
+    }
+  }
+
   public synchronized final long sizeInBytes() throws IOException {
     if (in instanceof RAMDirectory)
-      return ((RAMDirectory) in).sizeInBytes();
+      return ((RAMDirectory) in).ramBytesUsed();
     else {
       // hack
       long size = 0;
@@ -206,14 +285,14 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
    *  unsynced files. */
   public synchronized void crash() throws IOException {
     crashed = true;
-    openFiles = new HashMap<String,Integer>();
-    openFilesForWrite = new HashSet<String>();
-    openFilesDeleted = new HashSet<String>();
+    openFiles = new HashMap<>();
+    openFilesForWrite = new HashSet<>();
+    openFilesDeleted = new HashSet<>();
     Iterator<String> it = unSyncedFiles.iterator();
-    unSyncedFiles = new HashSet<String>();
+    unSyncedFiles = new HashSet<>();
     // first force-close all files, so we can corrupt on windows etc.
     // clone the file map, as these guys want to remove themselves on close.
-    Map<Closeable,Exception> m = new IdentityHashMap<Closeable,Exception>(openFileHandles);
+    Map<Closeable,Exception> m = new IdentityHashMap<>(openFileHandles);
     for (Closeable f : m.keySet()) {
       try {
         f.close();
@@ -250,7 +329,7 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
         String tempFileName;
         while (true) {
           tempFileName = ""+randomState.nextInt();
-          if (!in.fileExists(tempFileName)) {
+          if (!LuceneTestCase.slowFileExists(in, tempFileName)) {
             break;
           }
         }
@@ -277,7 +356,6 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
         // Totally truncate the file to zero bytes
         deleteFile(name, true);
         IndexOutput out = in.createOutput(name, LuceneTestCase.newIOContext(randomState));
-        out.setLength(0);
         out.close();
       }
       if (LuceneTestCase.VERBOSE) {
@@ -316,8 +394,21 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
   public void setNoDeleteOpenFile(boolean value) {
     this.noDeleteOpenFile = value;
   }
+  
   public boolean getNoDeleteOpenFile() {
     return noDeleteOpenFile;
+  }
+  
+  /**
+   * Trip a test assert if there is an attempt
+   * to delete an open file.
+  */
+  public void setAssertNoDeleteOpenFile(boolean value) {
+    this.assertNoDeleteOpenFile = value;
+  }
+  
+  public boolean getAssertNoDeleteOpenFile() {
+    return assertNoDeleteOpenFile;
   }
 
   /**
@@ -365,12 +456,17 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
         System.out.println(Thread.currentThread().getName() + ": MockDirectoryWrapper: now throw random exception during open file=" + name);
         new Throwable().printStackTrace(System.out);
       }
-      if (randomState.nextBoolean()) {
+      if (allowRandomFileNotFoundException == false || randomState.nextBoolean()) {
         throw new IOException("a random IOException (" + name + ")");
       } else {
         throw randomState.nextBoolean() ? new FileNotFoundException("a random IOException (" + name + ")") : new NoSuchFileException("a random IOException (" + name + ")");
       }
     }
+  }
+  
+  /** returns current open file handle count */
+  public synchronized long getFileHandleCount() {
+    return openFileHandles.size();
   }
 
   @Override
@@ -381,17 +477,17 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
 
   // sets the cause of the incoming ioe to be the stack
   // trace when the offending file name was opened
-  private synchronized IOException fillOpenTrace(IOException ioe, String name, boolean input) {
+  private synchronized Throwable fillOpenTrace(Throwable t, String name, boolean input) {
     for(Map.Entry<Closeable,Exception> ent : openFileHandles.entrySet()) {
       if (input && ent.getKey() instanceof MockIndexInputWrapper && ((MockIndexInputWrapper) ent.getKey()).name.equals(name)) {
-        ioe.initCause(ent.getValue());
+        t.initCause(ent.getValue());
         break;
       } else if (!input && ent.getKey() instanceof MockIndexOutputWrapper && ((MockIndexOutputWrapper) ent.getKey()).name.equals(name)) {
-        ioe.initCause(ent.getValue());
+        t.initCause(ent.getValue());
         break;
       }
     }
-    return ioe;
+    return t;
   }
 
   private void maybeYield() {
@@ -410,19 +506,38 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
 
     if (unSyncedFiles.contains(name))
       unSyncedFiles.remove(name);
-    if (!forced && noDeleteOpenFile) {
+    if (!forced && (noDeleteOpenFile || assertNoDeleteOpenFile)) {
       if (openFiles.containsKey(name)) {
         openFilesDeleted.add(name);
-        throw fillOpenTrace(new IOException("MockDirectoryWrapper: file \"" + name + "\" is still open: cannot delete"), name, true);
+
+        if (!assertNoDeleteOpenFile) {
+          throw (IOException) fillOpenTrace(new IOException("MockDirectoryWrapper: file \"" + name + "\" is still open: cannot delete"), name, true);
+        } else {
+          throw (AssertionError) fillOpenTrace(new AssertionError("MockDirectoryWrapper: file \"" + name + "\" is still open: cannot delete"), name, true);
+        }
       } else {
         openFilesDeleted.remove(name);
       }
     }
+    if (!forced && enableVirusScanner && (randomState.nextInt(4) == 0)) {
+      triedToDelete.add(name);
+      if (LuceneTestCase.VERBOSE) {
+        System.out.println("MDW: now refuse to delete file: " + name);
+      }
+      throw new IOException("cannot delete file: " + name + ", a virus scanner has it open");
+    }
+    triedToDelete.remove(name);
     in.deleteFile(name);
   }
 
+  /** Returns true if {@link #deleteFile} was called with this
+   *  fileName, but the virus checker prevented the deletion. */
+  public boolean didTryToDelete(String fileName) {
+    return triedToDelete.contains(fileName);
+  }
+
   public synchronized Set<String> getOpenDeletedFiles() {
-    return new HashSet<String>(openFilesDeleted);
+    return new HashSet<>(openFilesDeleted);
   }
 
   private boolean failOnCreateOutput = true;
@@ -448,8 +563,12 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
         throw new IOException("file \"" + name + "\" was already written to");
       }
     }
-    if (noDeleteOpenFile && openFiles.containsKey(name)) {
-      throw new IOException("MockDirectoryWrapper: file \"" + name + "\" is still open: cannot overwrite");
+    if ((noDeleteOpenFile || assertNoDeleteOpenFile) && openFiles.containsKey(name)) {
+      if (!assertNoDeleteOpenFile) {
+        throw new IOException("MockDirectoryWrapper: file \"" + name + "\" is still open: cannot overwrite");
+      } else {
+        throw new AssertionError("MockDirectoryWrapper: file \"" + name + "\" is still open: cannot overwrite");
+      }
     }
     
     if (crashed) {
@@ -476,17 +595,13 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
     }
     //System.out.println(Thread.currentThread().getName() + ": MDW: create " + name);
     IndexOutput delegateOutput = in.createOutput(name, LuceneTestCase.newIOContext(randomState, context));
-    if (randomState.nextInt(10) == 0){
-      // once in a while wrap the IO in a Buffered IO with random buffer sizes
-      delegateOutput = new BufferedIndexOutputWrapper(1+randomState.nextInt(BufferedIndexOutput.DEFAULT_BUFFER_SIZE), delegateOutput);
-    } 
     final IndexOutput io = new MockIndexOutputWrapper(this, delegateOutput, name);
     addFileHandle(io, name, Handle.Output);
     openFilesForWrite.add(name);
     
     // throttling REALLY slows down tests, so don't do it very often for SOMETIMES.
     if (throttling == Throttling.ALWAYS || 
-        (throttling == Throttling.SOMETIMES && randomState.nextInt(50) == 0) && !(in instanceof RateLimitedDirectoryWrapper)) {
+        (throttling == Throttling.SOMETIMES && randomState.nextInt(200) == 0) && !(in instanceof RateLimitedDirectoryWrapper)) {
       if (LuceneTestCase.VERBOSE) {
         System.out.println("MockDirectoryWrapper: throttling indexOutput (" + name + ")");
       }
@@ -526,26 +641,26 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
     if (failOnOpenInput) {
       maybeThrowDeterministicException();
     }
-    if (!in.fileExists(name)) {
+    if (!LuceneTestCase.slowFileExists(in, name)) {
       throw randomState.nextBoolean() ? new FileNotFoundException(name + " in dir=" + in) : new NoSuchFileException(name + " in dir=" + in);
     }
 
     // cannot open a file for input if it's still open for
     // output, except for segments.gen and segments_N
-    if (openFilesForWrite.contains(name) && !name.startsWith("segments")) {
-      throw fillOpenTrace(new IOException("MockDirectoryWrapper: file \"" + name + "\" is still open for writing"), name, false);
+    if (!allowReadingFilesStillOpenForWrite && openFilesForWrite.contains(name) && !name.startsWith("segments")) {
+      throw (IOException) fillOpenTrace(new IOException("MockDirectoryWrapper: file \"" + name + "\" is still open for writing"), name, false);
     }
 
     IndexInput delegateInput = in.openInput(name, LuceneTestCase.newIOContext(randomState, context));
 
     final IndexInput ii;
     int randomInt = randomState.nextInt(500);
-    if (randomInt == 0) {
+    if (useSlowOpenClosers && randomInt == 0) {
       if (LuceneTestCase.VERBOSE) {
         System.out.println("MockDirectoryWrapper: using SlowClosingMockIndexInputWrapper for file " + name);
       }
       ii = new SlowClosingMockIndexInputWrapper(this, name, delegateInput);
-    } else if (randomInt  == 1) { 
+    } else if (useSlowOpenClosers && randomInt  == 1) { 
       if (LuceneTestCase.VERBOSE) {
         System.out.println("MockDirectoryWrapper: using SlowOpeningMockIndexInputWrapper for file " + name);
       }
@@ -563,7 +678,7 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
       return sizeInBytes();
     long size = 0;
     for(final RAMFile file: ((RAMDirectory)in).fileMap.values()) {
-      size += file.getSizeInBytes();
+      size += file.ramBytesUsed();
     }
     return size;
   }
@@ -583,47 +698,57 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
     return size;
   }
 
-  private boolean assertNoUnreferencedFilesOnClose = true;
+  // NOTE: This is off by default; see LUCENE-5574
+  private boolean assertNoUnreferencedFilesOnClose;
 
   public void setAssertNoUnrefencedFilesOnClose(boolean v) {
     assertNoUnreferencedFilesOnClose = v;
   }
   
   /**
-   * Set to false if you want to return the pure lockfactory
-   * and not wrap it with MockLockFactoryWrapper.
+   * Set to false if you want to return the pure {@link LockFactory} and not
+   * wrap all lock with {@code AssertingLock}.
    * <p>
-   * Be careful if you turn this off: MockDirectoryWrapper might
-   * no longer be able to detect if you forget to close an IndexWriter,
+   * Be careful if you turn this off: {@code MockDirectoryWrapper} might
+   * no longer be able to detect if you forget to close an {@link IndexWriter},
    * and spit out horribly scary confusing exceptions instead of
    * simply telling you that.
    */
-  public void setWrapLockFactory(boolean v) {
-    this.wrapLockFactory = v;
+  public void setAssertLocks(boolean v) {
+    this.wrapLocking = v;
   }
 
   @Override
   public synchronized void close() throws IOException {
     // files that we tried to delete, but couldn't because readers were open.
     // all that matters is that we tried! (they will eventually go away)
-    Set<String> pendingDeletions = new HashSet<String>(openFilesDeleted);
+    //   still open when we tried to delete
+    Set<String> pendingDeletions = new HashSet<>(openFilesDeleted);
+    //   virus scanner when we tried to delete
+    pendingDeletions.addAll(triedToDelete);
     maybeYield();
     if (openFiles == null) {
-      openFiles = new HashMap<String,Integer>();
-      openFilesDeleted = new HashSet<String>();
+      openFiles = new HashMap<>();
+      openFilesDeleted = new HashSet<>();
     }
-    if (noDeleteOpenFile && openFiles.size() > 0) {
+    if (openFiles.size() > 0) {
       // print the first one as its very verbose otherwise
       Exception cause = null;
       Iterator<Exception> stacktraces = openFileHandles.values().iterator();
-      if (stacktraces.hasNext())
+      if (stacktraces.hasNext()) {
         cause = stacktraces.next();
+      }
       // RuntimeException instead of IOException because
       // super() does not throw IOException currently:
       throw new RuntimeException("MockDirectoryWrapper: cannot close: there are still open files: " + openFiles, cause);
     }
-    if (noDeleteOpenFile && openLocks.size() > 0) {
-      throw new RuntimeException("MockDirectoryWrapper: cannot close: there are still open locks: " + openLocks);
+    if (openLocks.size() > 0) {
+      Exception cause = null;
+      Iterator<Exception> stacktraces = openLocks.values().iterator();
+      if (stacktraces.hasNext()) {
+        cause = stacktraces.next();
+      }
+      throw new RuntimeException("MockDirectoryWrapper: cannot close: there are still open locks: " + openLocks, cause);
     }
 
     isOpen = false;
@@ -632,27 +757,27 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
       randomIOExceptionRateOnOpen = 0.0;
       if (DirectoryReader.indexExists(this)) {
         if (LuceneTestCase.VERBOSE) {
-          System.out.println("\nNOTE: MockDirectoryWrapper: now crash");
+          System.out.println("\nNOTE: MockDirectoryWrapper: now crush");
         }
         crash(); // corrupt any unsynced-files
         if (LuceneTestCase.VERBOSE) {
           System.out.println("\nNOTE: MockDirectoryWrapper: now run CheckIndex");
         } 
-        _TestUtil.checkIndex(this, getCrossCheckTermVectorsOnClose());
+        TestUtil.checkIndex(this, getCrossCheckTermVectorsOnClose(), true);
 
         // TODO: factor this out / share w/ TestIW.assertNoUnreferencedFiles
         if (assertNoUnreferencedFilesOnClose) {
           // now look for unreferenced files: discount ones that we tried to delete but could not
-          Set<String> allFiles = new HashSet<String>(Arrays.asList(listAll()));
+          Set<String> allFiles = new HashSet<>(Arrays.asList(listAll()));
           allFiles.removeAll(pendingDeletions);
           String[] startFiles = allFiles.toArray(new String[0]);
-          IndexWriterConfig iwc = new IndexWriterConfig(LuceneTestCase.TEST_VERSION_CURRENT, null);
+          IndexWriterConfig iwc = new IndexWriterConfig(null);
           iwc.setIndexDeletionPolicy(NoDeletionPolicy.INSTANCE);
           new IndexWriter(in, iwc).rollback();
           String[] endFiles = in.listAll();
 
-          Set<String> startSet = new TreeSet<String>(Arrays.asList(startFiles));
-          Set<String> endSet = new TreeSet<String>(Arrays.asList(endFiles));
+          Set<String> startSet = new TreeSet<>(Arrays.asList(startFiles));
+          Set<String> endSet = new TreeSet<>(Arrays.asList(endFiles));
           
           if (pendingDeletions.contains("segments.gen") && endSet.contains("segments.gen")) {
             // this is possible if we hit an exception while writing segments.gen, we try to delete it
@@ -672,15 +797,16 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
               if (LuceneTestCase.VERBOSE) {
                 System.out.println("MDW: Unreferenced check: Ignoring segments file: " + file + " that we could not delete.");
               }
-              SegmentInfos sis = new SegmentInfos();
+              SegmentInfos sis;
               try {
-                sis.read(in, file);
+                sis = SegmentInfos.readCommit(in, file);
               } catch (IOException ioe) {
                 // OK: likely some of the .si files were deleted
+                sis = new SegmentInfos();
               }
 
               try {
-                Set<String> ghosts = new HashSet<String>(sis.files(in, false));
+                Set<String> ghosts = new HashSet<>(sis.files(in, false));
                 for (String s : ghosts) {
                   if (endSet.contains(s) && !startSet.contains(s)) {
                     assert pendingDeletions.contains(s);
@@ -702,14 +828,14 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
           endFiles = endSet.toArray(new String[0]);
 
           if (!Arrays.equals(startFiles, endFiles)) {
-            List<String> removed = new ArrayList<String>();
+            List<String> removed = new ArrayList<>();
             for(String fileName : startFiles) {
               if (!endSet.contains(fileName)) {
                 removed.add(fileName);
               }
             }
 
-            List<String> added = new ArrayList<String>();
+            List<String> added = new ArrayList<>();
             for(String fileName : endFiles) {
               if (!startSet.contains(fileName)) {
                 added.add(fileName);
@@ -731,13 +857,13 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
               extras += "\n\nThese files we had previously tried to delete, but couldn't: " + pendingDeletions;
             }
              
-            assert false : "unreferenced files: before delete:\n    " + Arrays.toString(startFiles) + "\n  after delete:\n    " + Arrays.toString(endFiles) + extras;
+            throw new RuntimeException("unreferenced files: before delete:\n    " + Arrays.toString(startFiles) + "\n  after delete:\n    " + Arrays.toString(endFiles) + extras);
           }
 
           DirectoryReader ir1 = DirectoryReader.open(this);
           int numDocs1 = ir1.numDocs();
           ir1.close();
-          new IndexWriter(this, new IndexWriterConfig(LuceneTestCase.TEST_VERSION_CURRENT, null)).close();
+          new IndexWriter(this, new IndexWriterConfig(null)).close();
           DirectoryReader ir2 = DirectoryReader.open(this);
           int numDocs2 = ir2.numDocs();
           ir2.close();
@@ -818,7 +944,7 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
    */
   synchronized public void failOn(Failure fail) {
     if (failures == null) {
-      failures = new ArrayList<Failure>();
+      failures = new ArrayList<>();
     }
     failures.add(fail);
   }
@@ -830,7 +956,15 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
   synchronized void maybeThrowDeterministicException() throws IOException {
     if (failures != null) {
       for(int i = 0; i < failures.size(); i++) {
-        failures.get(i).eval(this);
+        try {
+          failures.get(i).eval(this);
+        } catch (Throwable t) {
+          if (LuceneTestCase.VERBOSE) {
+            System.out.println("MockDirectoryWrapper: throw exc");
+            t.printStackTrace(System.out);
+          }
+          IOUtils.reThrow(t);
+        }
       }
     }
   }
@@ -842,12 +976,6 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
   }
 
   @Override
-  public synchronized boolean fileExists(String name) throws IOException {
-    maybeYield();
-    return in.fileExists(name);
-  }
-
-  @Override
   public synchronized long fileLength(String name) throws IOException {
     maybeYield();
     return in.fileLength(name);
@@ -856,39 +984,43 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
   @Override
   public synchronized Lock makeLock(String name) {
     maybeYield();
-    return getLockFactory().makeLock(name);
-  }
-
-  @Override
-  public synchronized void clearLock(String name) throws IOException {
-    maybeYield();
-    getLockFactory().clearLock(name);
-  }
-
-  @Override
-  public synchronized void setLockFactory(LockFactory lockFactory) throws IOException {
-    maybeYield();
-    // sneaky: we must pass the original this way to the dir, because
-    // some impls (e.g. FSDir) do instanceof here.
-    in.setLockFactory(lockFactory);
-    // now set our wrapped factory here
-    this.lockFactory = new MockLockFactoryWrapper(this, lockFactory);
-  }
-
-  @Override
-  public synchronized LockFactory getLockFactory() {
-    maybeYield();
-    if (wrapLockFactory) {
-      return lockFactory;
+    if (wrapLocking) {
+      return new AssertingLock(super.makeLock(name), name);
     } else {
-      return in.getLockFactory();
+      return super.makeLock(name);
     }
   }
+  
+  private final class AssertingLock extends Lock {
+    private final Lock delegateLock;
+    private final String name;
+    
+    AssertingLock(Lock delegate, String name) {
+      this.delegateLock = delegate;
+      this.name = name;
+    }
 
-  @Override
-  public synchronized String getLockID() {
-    maybeYield();
-    return in.getLockID();
+    @Override
+    public boolean obtain() throws IOException {
+      if (delegateLock.obtain()) {
+        assert delegateLock == NoLockFactory.SINGLETON_LOCK || !openLocks.containsKey(name);
+        openLocks.put(name, new RuntimeException("lock \"" + name + "\" was not released"));
+        return true;
+      } else {
+        return false;
+      }
+    }
+
+    @Override
+    public void close() throws IOException {
+      delegateLock.close();
+      openLocks.remove(name);
+    }
+
+    @Override
+    public boolean isLocked() throws IOException {
+      return delegateLock.isLocked();
+    }
   }
 
   @Override
@@ -897,85 +1029,10 @@ public class MockDirectoryWrapper extends BaseDirectoryWrapper {
     // randomize the IOContext here?
     in.copy(to, src, dest, context);
   }
-
-  @Override
-  public IndexInputSlicer createSlicer(final String name, IOContext context)
-      throws IOException {
-    maybeYield();
-    if (!in.fileExists(name)) {
-      throw randomState.nextBoolean() ? new FileNotFoundException(name) : new NoSuchFileException(name);
-    }
-    // cannot open a file for input if it's still open for
-    // output, except for segments.gen and segments_N
-    if (openFilesForWrite.contains(name) && !name.startsWith("segments")) {
-      throw fillOpenTrace(new IOException("MockDirectoryWrapper: file \"" + name + "\" is still open for writing"), name, false);
-    }
-    
-    final IndexInputSlicer delegateHandle = in.createSlicer(name, context);
-    final IndexInputSlicer handle = new IndexInputSlicer() {
-      
-      private boolean isClosed;
-      @Override
-      public void close() throws IOException {
-        if (!isClosed) {
-          delegateHandle.close();
-          MockDirectoryWrapper.this.removeOpenFile(this, name);
-          isClosed = true;
-        }
-      }
-
-      @Override
-      public IndexInput openSlice(String sliceDescription, long offset, long length) throws IOException {
-        maybeYield();
-        IndexInput ii = new MockIndexInputWrapper(MockDirectoryWrapper.this, name, delegateHandle.openSlice(sliceDescription, offset, length));
-        addFileHandle(ii, name, Handle.Input);
-        return ii;
-      }
-      
-    };
-    addFileHandle(handle, name, Handle.Slice);
-    return handle;
-  }
   
-  final class BufferedIndexOutputWrapper extends BufferedIndexOutput {
-    private final IndexOutput io;
-    
-    public BufferedIndexOutputWrapper(int bufferSize, IndexOutput io) {
-      super(bufferSize);
-      this.io = io;
-    }
-    
-    @Override
-    public long length() throws IOException {
-      return io.length();
-    }
-    
-    @Override
-    protected void flushBuffer(byte[] b, int offset, int len) throws IOException {
-      io.writeBytes(b, offset, len);
-    }
-    
-    @Override
-    public void flush() throws IOException {
-      try {
-        super.flush();
-      } finally { 
-        io.flush();
-      }
-    }
-    
-    @Override
-    public void close() throws IOException {
-      try {
-        super.close();
-      } finally {
-        io.close();
-      }
-    }
-  }
-
   /** Use this when throwing fake {@code IOException},
    *  e.g. from {@link MockDirectoryWrapper.Failure}. */
   public static class FakeIOException extends IOException {
   }
+
 }

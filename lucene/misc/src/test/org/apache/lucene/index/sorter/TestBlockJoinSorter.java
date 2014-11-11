@@ -26,7 +26,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field.Store;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.StringField;
-import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.NumericDocValues;
@@ -37,8 +37,11 @@ import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.QueryWrapperFilter;
+import org.apache.lucene.search.Sort;
+import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.util.ArrayUtil;
+import org.apache.lucene.util.BitDocIdSet;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.LuceneTestCase;
 
@@ -51,18 +54,18 @@ public class TestBlockJoinSorter extends LuceneTestCase {
     }
 
     @Override
-    protected DocIdSet cacheImpl(DocIdSetIterator iterator, AtomicReader reader)
+    protected DocIdSet cacheImpl(DocIdSetIterator iterator, LeafReader reader)
         throws IOException {
       final FixedBitSet cached = new FixedBitSet(reader.maxDoc());
       cached.or(iterator);
-      return cached;
+      return new BitDocIdSet(cached);
     }
 
   }
 
   public void test() throws IOException {
     final int numParents = atLeast(200);
-    IndexWriterConfig cfg = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig cfg = newIndexWriterConfig(new MockAnalyzer(random()));
     cfg.setMergePolicy(newLogMergePolicy());
     final RandomIndexWriter writer = new RandomIndexWriter(random(), newDirectory(), cfg);
     final Document parentDoc = new Document();
@@ -71,7 +74,7 @@ public class TestBlockJoinSorter extends LuceneTestCase {
     final StringField parent = new StringField("parent", "true", Store.YES);
     parentDoc.add(parent);
     for (int i = 0; i < numParents; ++i) {
-      List<Document> documents = new ArrayList<Document>();
+      List<Document> documents = new ArrayList<>();
       final int numChildren = random().nextInt(10);
       for (int j = 0; j < numChildren; ++j) {
         final Document childDoc = new Document();
@@ -86,50 +89,17 @@ public class TestBlockJoinSorter extends LuceneTestCase {
     final DirectoryReader indexReader = writer.getReader();
     writer.close();
 
-    final AtomicReader reader = getOnlySegmentReader(indexReader);
+    final LeafReader reader = getOnlySegmentReader(indexReader);
     final Filter parentsFilter = new FixedBitSetCachingWrapperFilter(new QueryWrapperFilter(new TermQuery(new Term("parent", "true"))));
-    final FixedBitSet parentBits = (FixedBitSet) parentsFilter.getDocIdSet(reader.getContext(), null);
-
+    final FixedBitSet parentBits = (FixedBitSet) parentsFilter.getDocIdSet(reader.getContext(), null).bits();
     final NumericDocValues parentValues = reader.getNumericDocValues("parent_val");
-    final Sorter.DocComparator parentComparator = new Sorter.DocComparator() {
-      @Override
-      public int compare(int docID1, int docID2) {
-        assertTrue(parentBits.get(docID1));
-        assertTrue(parentBits.get(docID2));
-        return Long.compare(parentValues.get(docID1), parentValues.get(docID2));
-      }
-    };
-
     final NumericDocValues childValues = reader.getNumericDocValues("child_val");
-    final Sorter.DocComparator childComparator = new Sorter.DocComparator() {
-      @Override
-      public int compare(int docID1, int docID2) {
-        assertFalse(parentBits.get(docID1));
-        assertFalse(parentBits.get(docID2));
-        return Long.compare(childValues.get(docID1), childValues.get(docID2));
-      }
-    };
 
-    final Sorter sorter = new BlockJoinSorter(parentsFilter) {
-      
-      @Override
-      public String getID() {
-        return "Dummy";
-      }
-      
-      @Override
-      protected DocComparator getParentComparator(AtomicReader r) {
-        assertEquals(reader, r);
-        return parentComparator;
-      }
+    final Sort parentSort = new Sort(new SortField("parent_val", SortField.Type.LONG));
+    final Sort childSort = new Sort(new SortField("child_val", SortField.Type.LONG));
 
-      @Override
-      protected DocComparator getChildComparator(AtomicReader r) {
-        assertEquals(reader, r);
-        return childComparator;
-      }
-
-    };
+    final Sort sort = new Sort(new SortField("custom", new BlockJoinComparatorSource(parentsFilter, parentSort, childSort)));
+    final Sorter sorter = new Sorter(sort);
     final Sorter.DocMap docMap = sorter.sort(reader);
     assertEquals(reader.maxDoc(), docMap.size());
 

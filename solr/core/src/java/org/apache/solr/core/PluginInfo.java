@@ -29,7 +29,7 @@ import static java.util.Collections.unmodifiableMap;
  * An Object which represents a Plugin of any type 
  *
  */
-public class PluginInfo {
+public class PluginInfo implements MapSerializable{
   public final String name, className, type;
   public final NamedList initArgs;
   public final Map<String, String> attributes;
@@ -55,7 +55,7 @@ public class PluginInfo {
   }
 
   private List<PluginInfo> loadSubPlugins(Node node) {
-    List<PluginInfo> children = new ArrayList<PluginInfo>();
+    List<PluginInfo> children = new ArrayList<>();
     //if there is another sub tag with a non namedlist tag that has to be another plugin
     NodeList nlst = node.getChildNodes();
     for (int i = 0; i < nlst.getLength(); i++) {
@@ -92,6 +92,28 @@ public class PluginInfo {
     List<PluginInfo> l = getChildren(type);
     return  l.isEmpty() ? null:l.get(0);
   }
+ public Map<String,Object> toMap(){
+    LinkedHashMap m = new LinkedHashMap(attributes);
+    if(initArgs!=null ) m.putAll(initArgs.asMap(3));
+    if(children != null){
+      for (PluginInfo child : children) {
+        Object old = m.get(child.name);
+        if(old == null){
+          m.put(child.name, child.toMap());
+        } else if (old instanceof List) {
+          List list = (List) old;
+          list.add(child.toMap());
+        }  else {
+          ArrayList l = new ArrayList();
+          l.add(old);
+          l.add(child.toMap());
+          m.put(child.name,l);
+        }
+      }
+
+    }
+    return m;
+  }
 
   /**Filter children by type
    * @param type The type name. must not be null
@@ -99,16 +121,19 @@ public class PluginInfo {
    */
   public List<PluginInfo> getChildren(String type){
     if(children.isEmpty()) return children;
-    List<PluginInfo> result = new ArrayList<PluginInfo>();
+    List<PluginInfo> result = new ArrayList<>();
     for (PluginInfo child : children) if(type.equals(child.type)) result.add(child);
     return result;
   }
   public static final PluginInfo EMPTY_INFO = new PluginInfo("",Collections.<String,String>emptyMap(), new NamedList(),Collections.<PluginInfo>emptyList());
 
-  private static final HashSet<String> NL_TAGS = new HashSet<String>
+  private static final HashSet<String> NL_TAGS = new HashSet<>
     (Arrays.asList("lst", "arr",
                    "bool",
                    "str",
                    "int","long",
                    "float","double"));
+  public static final String DEFAULTS = "defaults";
+  public static final String APPENDS = "appends";
+  public static final String INVARIANTS = "invariants";
 }

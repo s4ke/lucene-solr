@@ -23,17 +23,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.FilteredQuery;
-import org.apache.lucene.search.PhraseQuery;
 import org.apache.lucene.search.PrefixQuery;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.RegexpQuery;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TermRangeQuery;
@@ -67,7 +66,7 @@ public class FieldQueryTest extends AbstractTestCase {
     booleanQuery.add(innerQuery, Occur.MUST_NOT);
 
     FieldQuery fq = new FieldQuery(booleanQuery, true, true );
-    Set<Query> flatQueries = new HashSet<Query>();
+    Set<Query> flatQueries = new HashSet<>();
     fq.flatten(booleanQuery, reader, flatQueries);
     assertCollectionQueries( flatQueries, tq( boost, "A" ), tq( boost, "B" ), tq( boost, "C" ) );
   }
@@ -77,7 +76,7 @@ public class FieldQueryTest extends AbstractTestCase {
     Query query = dmq( tq( "A" ), tq( "B" ), pqF( "C", "D" ) );
     query.setBoost( boost );
     FieldQuery fq = new FieldQuery( query, true, true );
-    Set<Query> flatQueries = new HashSet<Query>();
+    Set<Query> flatQueries = new HashSet<>();
     fq.flatten( query, reader, flatQueries );
     assertCollectionQueries( flatQueries, tq( boost, "A" ), tq( boost, "B" ), pqF( boost, "C", "D" ) );
   }
@@ -90,7 +89,7 @@ public class FieldQueryTest extends AbstractTestCase {
     booleanQuery.add(pqF("B", "C"), Occur.MUST);
 
     FieldQuery fq = new FieldQuery(booleanQuery, true, true );
-    Set<Query> flatQueries = new HashSet<Query>();
+    Set<Query> flatQueries = new HashSet<>();
     fq.flatten(booleanQuery, reader, flatQueries);
     assertCollectionQueries( flatQueries, tq( boost, "A" ), pqF( boost, "B", "C" ) );
   }
@@ -102,7 +101,7 @@ public class FieldQueryTest extends AbstractTestCase {
     query.add(toPhraseQuery(analyze("EFGH", F, analyzerB), F), Occur.SHOULD);
 
     FieldQuery fq = new FieldQuery( query, true, true );
-    Set<Query> flatQueries = new HashSet<Query>();
+    Set<Query> flatQueries = new HashSet<>();
     fq.flatten( query, reader, flatQueries );
     assertCollectionQueries( flatQueries, tq( "AA" ), pqF( "BC", "CD" ), pqF( "EF", "FG", "GH" ) );
   }
@@ -110,7 +109,7 @@ public class FieldQueryTest extends AbstractTestCase {
   public void testFlatten1TermPhrase() throws Exception {
     Query query = pqF( "A" );
     FieldQuery fq = new FieldQuery( query, true, true );
-    Set<Query> flatQueries = new HashSet<Query>();
+    Set<Query> flatQueries = new HashSet<>();
     fq.flatten( query, reader, flatQueries );
     assertCollectionQueries( flatQueries, tq( "A" ) );
   }
@@ -120,56 +119,56 @@ public class FieldQueryTest extends AbstractTestCase {
     FieldQuery fq = new FieldQuery( dummy, true, true );
 
     // "a b","b c" => "a b","b c","a b c"
-    Set<Query> flatQueries = new HashSet<Query>();
+    Set<Query> flatQueries = new HashSet<>();
     flatQueries.add( pqF( "a", "b" ) );
     flatQueries.add( pqF( "b", "c" ) );
     assertCollectionQueries( fq.expand( flatQueries ),
         pqF( "a", "b" ), pqF( "b", "c" ), pqF( "a", "b", "c" ) );
 
     // "a b","b c d" => "a b","b c d","a b c d"
-    flatQueries = new HashSet<Query>();
+    flatQueries = new HashSet<>();
     flatQueries.add( pqF( "a", "b" ) );
     flatQueries.add( pqF( "b", "c", "d" ) );
     assertCollectionQueries( fq.expand( flatQueries ),
         pqF( "a", "b" ), pqF( "b", "c", "d" ), pqF( "a", "b", "c", "d" ) );
 
     // "a b c","b c d" => "a b c","b c d","a b c d"
-    flatQueries = new HashSet<Query>();
+    flatQueries = new HashSet<>();
     flatQueries.add( pqF( "a", "b", "c" ) );
     flatQueries.add( pqF( "b", "c", "d" ) );
     assertCollectionQueries( fq.expand( flatQueries ),
         pqF( "a", "b", "c" ), pqF( "b", "c", "d" ), pqF( "a", "b", "c", "d" ) );
 
     // "a b c","c d e" => "a b c","c d e","a b c d e"
-    flatQueries = new HashSet<Query>();
+    flatQueries = new HashSet<>();
     flatQueries.add( pqF( "a", "b", "c" ) );
     flatQueries.add( pqF( "c", "d", "e" ) );
     assertCollectionQueries( fq.expand( flatQueries ),
         pqF( "a", "b", "c" ), pqF( "c", "d", "e" ), pqF( "a", "b", "c", "d", "e" ) );
 
     // "a b c d","b c" => "a b c d","b c"
-    flatQueries = new HashSet<Query>();
+    flatQueries = new HashSet<>();
     flatQueries.add( pqF( "a", "b", "c", "d" ) );
     flatQueries.add( pqF( "b", "c" ) );
     assertCollectionQueries( fq.expand( flatQueries ),
         pqF( "a", "b", "c", "d" ), pqF( "b", "c" ) );
 
     // "a b b","b c" => "a b b","b c","a b b c"
-    flatQueries = new HashSet<Query>();
+    flatQueries = new HashSet<>();
     flatQueries.add( pqF( "a", "b", "b" ) );
     flatQueries.add( pqF( "b", "c" ) );
     assertCollectionQueries( fq.expand( flatQueries ),
         pqF( "a", "b", "b" ), pqF( "b", "c" ), pqF( "a", "b", "b", "c" ) );
 
     // "a b","b a" => "a b","b a","a b a", "b a b"
-    flatQueries = new HashSet<Query>();
+    flatQueries = new HashSet<>();
     flatQueries.add( pqF( "a", "b" ) );
     flatQueries.add( pqF( "b", "a" ) );
     assertCollectionQueries( fq.expand( flatQueries ),
         pqF( "a", "b" ), pqF( "b", "a" ), pqF( "a", "b", "a" ), pqF( "b", "a", "b" ) );
 
     // "a b","a b c" => "a b","a b c"
-    flatQueries = new HashSet<Query>();
+    flatQueries = new HashSet<>();
     flatQueries.add( pqF( "a", "b" ) );
     flatQueries.add( pqF( "a", "b", "c" ) );
     assertCollectionQueries( fq.expand( flatQueries ),
@@ -181,42 +180,42 @@ public class FieldQueryTest extends AbstractTestCase {
     FieldQuery fq = new FieldQuery( dummy, true, true );
 
     // "a b","c d" => "a b","c d"
-    Set<Query> flatQueries = new HashSet<Query>();
+    Set<Query> flatQueries = new HashSet<>();
     flatQueries.add( pqF( "a", "b" ) );
     flatQueries.add( pqF( "c", "d" ) );
     assertCollectionQueries( fq.expand( flatQueries ),
         pqF( "a", "b" ), pqF( "c", "d" ) );
 
     // "a","a b" => "a", "a b"
-    flatQueries = new HashSet<Query>();
+    flatQueries = new HashSet<>();
     flatQueries.add( tq( "a" ) );
     flatQueries.add( pqF( "a", "b" ) );
     assertCollectionQueries( fq.expand( flatQueries ),
         tq( "a" ), pqF( "a", "b" ) );
 
     // "a b","b" => "a b", "b"
-    flatQueries = new HashSet<Query>();
+    flatQueries = new HashSet<>();
     flatQueries.add( pqF( "a", "b" ) );
     flatQueries.add( tq( "b" ) );
     assertCollectionQueries( fq.expand( flatQueries ),
         pqF( "a", "b" ), tq( "b" ) );
 
     // "a b c","b c" => "a b c","b c"
-    flatQueries = new HashSet<Query>();
+    flatQueries = new HashSet<>();
     flatQueries.add( pqF( "a", "b", "c" ) );
     flatQueries.add( pqF( "b", "c" ) );
     assertCollectionQueries( fq.expand( flatQueries ),
         pqF( "a", "b", "c" ), pqF( "b", "c" ) );
 
     // "a b","a b c" => "a b","a b c"
-    flatQueries = new HashSet<Query>();
+    flatQueries = new HashSet<>();
     flatQueries.add( pqF( "a", "b" ) );
     flatQueries.add( pqF( "a", "b", "c" ) );
     assertCollectionQueries( fq.expand( flatQueries ),
         pqF( "a", "b" ), pqF( "a", "b", "c" ) );
 
     // "a b c","b d e" => "a b c","b d e"
-    flatQueries = new HashSet<Query>();
+    flatQueries = new HashSet<>();
     flatQueries.add( pqF( "a", "b", "c" ) );
     flatQueries.add( pqF( "b", "d", "e" ) );
     assertCollectionQueries( fq.expand( flatQueries ),
@@ -228,7 +227,7 @@ public class FieldQueryTest extends AbstractTestCase {
     FieldQuery fq = new FieldQuery( dummy, true, false );
 
     // f1:"a b",f2:"b c" => f1:"a b",f2:"b c",f1:"a b c"
-    Set<Query> flatQueries = new HashSet<Query>();
+    Set<Query> flatQueries = new HashSet<>();
     flatQueries.add( pq( F1, "a", "b" ) );
     flatQueries.add( pq( F2, "b", "c" ) );
     assertCollectionQueries( fq.expand( flatQueries ),
@@ -826,7 +825,7 @@ public class FieldQueryTest extends AbstractTestCase {
     FieldQuery fq = new FieldQuery( query, true, true );
     
     // "a"
-    List<TermInfo> phraseCandidate = new ArrayList<TermInfo>();
+    List<TermInfo> phraseCandidate = new ArrayList<>();
     phraseCandidate.add( new TermInfo( "a", 0, 1, 0, 1 ) );
     assertNull( fq.searchPhrase( F, phraseCandidate ) );
     // "a b"
@@ -868,7 +867,7 @@ public class FieldQueryTest extends AbstractTestCase {
     FieldQuery fq = new FieldQuery( query, true, true );
     
     // "a b c" w/ position-gap = 2
-    List<TermInfo> phraseCandidate = new ArrayList<TermInfo>();
+    List<TermInfo> phraseCandidate = new ArrayList<>();
     phraseCandidate.add( new TermInfo( "a", 0, 1, 0, 1 ) );
     phraseCandidate.add( new TermInfo( "b", 2, 3, 2, 1 ) );
     phraseCandidate.add( new TermInfo( "c", 4, 5, 4, 1 ) );
@@ -904,7 +903,7 @@ public class FieldQueryTest extends AbstractTestCase {
   public void testRegexpQuery() throws Exception {
     makeIndexStrMV();
     Term term = new Term(F, "d[a-z].g");
-    defgMultiTermQueryTest(new RegexpQuery (term));
+    defgMultiTermQueryTest(new RegexpQuery(term));
   }
 
   public void testRangeQuery() throws Exception {
@@ -917,7 +916,7 @@ public class FieldQueryTest extends AbstractTestCase {
     QueryPhraseMap qpm = fq.getFieldTermMap(F, "defg");
     assertNotNull (qpm);
     assertNull (fq.getFieldTermMap(F, "dog"));
-    List<TermInfo> phraseCandidate = new ArrayList<TermInfo>();
+    List<TermInfo> phraseCandidate = new ArrayList<>();
     phraseCandidate.add( new TermInfo( "defg", 0, 12, 0, 1 ) );
     assertNotNull (fq.searchPhrase(F, phraseCandidate));
   }
@@ -940,14 +939,14 @@ public class FieldQueryTest extends AbstractTestCase {
     initBoost();
     Query query = new FilteredQuery(pqF( "A" ), new Filter() {
       @Override
-      public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs)
+      public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs)
           throws IOException {
         return null;
       }
     });
     query.setBoost(boost);
     FieldQuery fq = new FieldQuery( query, true, true );
-    Set<Query> flatQueries = new HashSet<Query>();
+    Set<Query> flatQueries = new HashSet<>();
     fq.flatten( query, reader, flatQueries );
     assertCollectionQueries( flatQueries, tq( boost, "A" ) );
   }
@@ -957,7 +956,7 @@ public class FieldQueryTest extends AbstractTestCase {
     Query query = new ConstantScoreQuery(pqF( "A" ));
     query.setBoost(boost);
     FieldQuery fq = new FieldQuery( query, true, true );
-    Set<Query> flatQueries = new HashSet<Query>();
+    Set<Query> flatQueries = new HashSet<>();
     fq.flatten( query, reader, flatQueries );
     assertCollectionQueries( flatQueries, tq( boost, "A" ) );
   }

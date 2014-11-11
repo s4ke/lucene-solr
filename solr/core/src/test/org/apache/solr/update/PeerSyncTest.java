@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.util.Arrays;
 
 import org.apache.solr.BaseDistributedSearchTestCase;
+import org.apache.solr.SolrTestCaseJ4.SuppressSSL;
 import org.apache.solr.client.solrj.SolrServer;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.request.QueryRequest;
@@ -31,6 +32,7 @@ import org.apache.solr.common.util.StrUtils;
 import static org.apache.solr.update.processor.DistributingUpdateProcessorFactory.DISTRIB_UPDATE_PARAM;
 import static org.apache.solr.update.processor.DistributedUpdateProcessor.DistribPhase;
 
+@SuppressSSL(bugUrl = "https://issues.apache.org/jira/browse/SOLR-5776")
 public class PeerSyncTest extends BaseDistributedSearchTestCase {
   private static int numVersions = 100;  // number of versions to use when syncing
   private final String FROM_LEADER = DistribPhase.FROMLEADER.toString();
@@ -52,7 +54,6 @@ public class PeerSyncTest extends BaseDistributedSearchTestCase {
   @Override
   public void doTest() throws Exception {
     handle.clear();
-    handle.put("QTime", SKIPVAL);
     handle.put("timestamp", SKIPVAL);
     handle.put("score", SKIPVAL);
     handle.put("maxScore", SKIPVAL);

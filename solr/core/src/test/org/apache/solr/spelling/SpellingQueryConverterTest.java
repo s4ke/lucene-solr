@@ -40,7 +40,7 @@ public class SpellingQueryConverterTest extends LuceneTestCase {
   public void test() throws Exception {
     SpellingQueryConverter converter = new SpellingQueryConverter();
     converter.init(new NamedList());
-    converter.setAnalyzer(new WhitespaceAnalyzer(TEST_VERSION_CURRENT));
+    converter.setAnalyzer(new WhitespaceAnalyzer());
     Collection<Token> tokens = converter.convert("field:foo");
     assertTrue("tokens is null and it shouldn't be", tokens != null);
     assertTrue("tokens Size: " + tokens.size() + " is not: " + 1, tokens.size() == 1);
@@ -50,7 +50,7 @@ public class SpellingQueryConverterTest extends LuceneTestCase {
   public void testSpecialChars()  {
     SpellingQueryConverter converter = new SpellingQueryConverter();
     converter.init(new NamedList());
-    converter.setAnalyzer(new WhitespaceAnalyzer(TEST_VERSION_CURRENT));
+    converter.setAnalyzer(new WhitespaceAnalyzer());
     String original = "field_with_underscore:value_with_underscore";
     Collection<Token> tokens = converter.convert(original);
     assertTrue("tokens is null and it shouldn't be", tokens != null);
@@ -96,7 +96,7 @@ public class SpellingQueryConverterTest extends LuceneTestCase {
   public void testUnicode() {
     SpellingQueryConverter converter = new SpellingQueryConverter();
     converter.init(new NamedList());
-    converter.setAnalyzer(new WhitespaceAnalyzer(TEST_VERSION_CURRENT));
+    converter.setAnalyzer(new WhitespaceAnalyzer());
     
     // chinese text value
     Collection<Token> tokens = converter.convert("text_field:我购买了道具和服装。");
@@ -116,7 +116,7 @@ public class SpellingQueryConverterTest extends LuceneTestCase {
   public void testMultipleClauses() {
     SpellingQueryConverter converter = new SpellingQueryConverter();
     converter.init(new NamedList());
-    converter.setAnalyzer(new WhitespaceAnalyzer(TEST_VERSION_CURRENT));
+    converter.setAnalyzer(new WhitespaceAnalyzer());
 
     // two field:value pairs should give two tokens
     Collection<Token> tokens = converter.convert("买text_field:我购买了道具和服装。 field2:bar");
@@ -133,52 +133,52 @@ public class SpellingQueryConverterTest extends LuceneTestCase {
   public void testRequiredOrProhibitedFlags() {
     SpellingQueryConverter converter = new SpellingQueryConverter();
     converter.init(new NamedList());
-    converter.setAnalyzer(new WhitespaceAnalyzer(TEST_VERSION_CURRENT));
+    converter.setAnalyzer(new WhitespaceAnalyzer());
 
     {
-      List<Token> tokens = new ArrayList<Token>(converter.convert("aaa bbb ccc"));
+      List<Token> tokens = new ArrayList<>(converter.convert("aaa bbb ccc"));
       assertTrue("Should have 3 tokens",          tokens != null && tokens.size()==3);
       assertTrue("token 1 should be optional",    !hasRequiredFlag(tokens.get(0)) && !hasProhibitedFlag(tokens.get(0)));
       assertTrue("token 2 should be optional",    !hasRequiredFlag(tokens.get(1)) && !hasProhibitedFlag(tokens.get(1)));
       assertTrue("token 3 should be optional",    !hasRequiredFlag(tokens.get(2)) && !hasProhibitedFlag(tokens.get(2)));
     }
     {
-      List<Token> tokens = new ArrayList<Token>(converter.convert("+aaa bbb -ccc"));
+      List<Token> tokens = new ArrayList<>(converter.convert("+aaa bbb -ccc"));
       assertTrue("Should have 3 tokens",          tokens != null && tokens.size()==3);
       assertTrue("token 1 should be required",     hasRequiredFlag(tokens.get(0)) && !hasProhibitedFlag(tokens.get(0)));
       assertTrue("token 2 should be optional",    !hasRequiredFlag(tokens.get(1)) && !hasProhibitedFlag(tokens.get(1)));
       assertTrue("token 3 should be prohibited",  !hasRequiredFlag(tokens.get(2)) &&  hasProhibitedFlag(tokens.get(2)));
     }
     {
-      List<Token> tokens = new ArrayList<Token>(converter.convert("aaa AND bbb ccc"));
+      List<Token> tokens = new ArrayList<>(converter.convert("aaa AND bbb ccc"));
       assertTrue("Should have 3 tokens",           tokens != null && tokens.size()==3);
       assertTrue("token 1 doesn't precede n.b.o.",  !hasNBOFlag(tokens.get(0)) && hasInBooleanFlag(tokens.get(0)));
       assertTrue("token 2 doesn't precede n.b.o.",  !hasNBOFlag(tokens.get(1)) && hasInBooleanFlag(tokens.get(0)));
       assertTrue("token 3 doesn't precede n.b.o.",  !hasNBOFlag(tokens.get(2)) && hasInBooleanFlag(tokens.get(0)));
     }
     {
-      List<Token> tokens = new ArrayList<Token>(converter.convert("aaa OR bbb OR ccc"));
+      List<Token> tokens = new ArrayList<>(converter.convert("aaa OR bbb OR ccc"));
       assertTrue("Should have 3 tokens",           tokens != null && tokens.size()==3);
       assertTrue("token 1 doesn't precede n.b.o.",  !hasNBOFlag(tokens.get(0)) && hasInBooleanFlag(tokens.get(0)));
       assertTrue("token 2 doesn't precede n.b.o.",  !hasNBOFlag(tokens.get(1)) && hasInBooleanFlag(tokens.get(0)));
       assertTrue("token 3 doesn't precede n.b.o.",  !hasNBOFlag(tokens.get(2)) && hasInBooleanFlag(tokens.get(0)));
     }
     {
-      List<Token> tokens = new ArrayList<Token>(converter.convert("aaa AND bbb NOT ccc"));
+      List<Token> tokens = new ArrayList<>(converter.convert("aaa AND bbb NOT ccc"));
       assertTrue("Should have 3 tokens",            tokens != null && tokens.size()==3);
       assertTrue("token 1 doesn't precede n.b.o.",  !hasNBOFlag(tokens.get(0)) && hasInBooleanFlag(tokens.get(0)));
       assertTrue("token 2 precedes n.b.o.",          hasNBOFlag(tokens.get(1)) && hasInBooleanFlag(tokens.get(0)));
       assertTrue("token 3 doesn't precede n.b.o.",  !hasNBOFlag(tokens.get(2)) && hasInBooleanFlag(tokens.get(0)));
     }
     {
-      List<Token> tokens = new ArrayList<Token>(converter.convert("aaa NOT bbb AND ccc"));
+      List<Token> tokens = new ArrayList<>(converter.convert("aaa NOT bbb AND ccc"));
       assertTrue("Should have 3 tokens",           tokens != null && tokens.size()==3);
       assertTrue("token 1 precedes n.b.o.",          hasNBOFlag(tokens.get(0)) && hasInBooleanFlag(tokens.get(0)));
       assertTrue("token 2 precedes n.b.o.",          hasNBOFlag(tokens.get(1)) && hasInBooleanFlag(tokens.get(0)));
       assertTrue("token 3 doesn't precedes n.b.o.", !hasNBOFlag(tokens.get(2)) && hasInBooleanFlag(tokens.get(0)));
     }
     {
-      List<Token> tokens = new ArrayList<Token>(converter.convert("aaa AND NOT bbb AND ccc"));
+      List<Token> tokens = new ArrayList<>(converter.convert("aaa AND NOT bbb AND ccc"));
       assertTrue("Should have 3 tokens",           tokens != null && tokens.size()==3);
       assertTrue("token 1 precedes n.b.o.",          hasNBOFlag(tokens.get(0)) && hasInBooleanFlag(tokens.get(0)));
       assertTrue("token 2 precedes n.b.o.",          hasNBOFlag(tokens.get(1)) && hasInBooleanFlag(tokens.get(0)));

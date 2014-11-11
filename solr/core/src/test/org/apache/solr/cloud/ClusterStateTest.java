@@ -41,14 +41,14 @@ import static org.easymock.EasyMock.expectLastCall;
 public class ClusterStateTest extends SolrTestCaseJ4 {
   @Test
   public void testStoreAndRead() throws Exception {
-    Map<String,DocCollection> collectionStates = new HashMap<String,DocCollection>();
-    Set<String> liveNodes = new HashSet<String>();
+    Map<String,DocCollection> collectionStates = new HashMap<>();
+    Set<String> liveNodes = new HashSet<>();
     liveNodes.add("node1");
     liveNodes.add("node2");
     
-    Map<String,Slice> slices = new HashMap<String,Slice>();
-    Map<String,Replica> sliceToProps = new HashMap<String,Replica>();
-    Map<String,Object> props = new HashMap<String,Object>();
+    Map<String,Slice> slices = new HashMap<>();
+    Map<String,Replica> sliceToProps = new HashMap<>();
+    Map<String,Object> props = new HashMap<>();
 
     props.put("prop1", "value");
     props.put("prop2", "value2");
@@ -62,10 +62,10 @@ public class ClusterStateTest extends SolrTestCaseJ4 {
     collectionStates.put("collection2", new DocCollection("collection2", slices, null, DocRouter.DEFAULT));
     ZkStateReader zkStateReaderMock = getMockZkStateReader(collectionStates.keySet());
     
-    ClusterState clusterState = new ClusterState(-1,liveNodes, collectionStates,zkStateReaderMock);
+    ClusterState clusterState = new ClusterState(-1,liveNodes, collectionStates);
     byte[] bytes = ZkStateReader.toJSON(clusterState);
     // System.out.println("#################### " + new String(bytes));
-    ClusterState loadedClusterState = ClusterState.load(-1, bytes, liveNodes,zkStateReaderMock);
+    ClusterState loadedClusterState = ClusterState.load(-1, bytes, liveNodes);
     
     assertEquals("Provided liveNodes not used properly", 2, loadedClusterState
         .getLiveNodes().size());
@@ -73,13 +73,13 @@ public class ClusterStateTest extends SolrTestCaseJ4 {
     assertEquals("Poperties not copied properly", replica.getStr("prop1"), loadedClusterState.getSlice("collection1", "shard1").getReplicasMap().get("node1").getStr("prop1"));
     assertEquals("Poperties not copied properly", replica.getStr("prop2"), loadedClusterState.getSlice("collection1", "shard1").getReplicasMap().get("node1").getStr("prop2"));
 
-    loadedClusterState = ClusterState.load(-1, new byte[0], liveNodes, getMockZkStateReader(Collections.<String>emptySet()));
+    loadedClusterState = ClusterState.load(-1, new byte[0], liveNodes);
     
     assertEquals("Provided liveNodes not used properly", 2, loadedClusterState
         .getLiveNodes().size());
     assertEquals("Should not have collections", 0, loadedClusterState.getCollections().size());
 
-    loadedClusterState = ClusterState.load(-1, (byte[])null, liveNodes,getMockZkStateReader(Collections.<String>emptySet()));
+    loadedClusterState = ClusterState.load(-1, (byte[])null, liveNodes);
     
     assertEquals("Provided liveNodes not used properly", 2, loadedClusterState
         .getLiveNodes().size());
@@ -89,13 +89,6 @@ public class ClusterStateTest extends SolrTestCaseJ4 {
   public static ZkStateReader getMockZkStateReader(final Set<String> collections) {
     ZkStateReader mock = createMock(ZkStateReader.class);
     EasyMock.reset(mock);
-    mock.getAllCollections();
-    EasyMock.expectLastCall().andAnswer(new IAnswer<Set<String>>() {
-      @Override
-      public Set<String> answer() throws Throwable {
-        return collections;
-      }
-    }).anyTimes();
     EasyMock.replay(mock);
 
     return mock;

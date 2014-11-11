@@ -18,7 +18,6 @@ package org.apache.lucene.analysis.ja;
  */
 
 import java.io.IOException;
-import java.io.Reader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -40,6 +39,7 @@ import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
 import org.apache.lucene.analysis.tokenattributes.PositionLengthAttribute;
 import org.apache.lucene.analysis.util.RollingCharBuffer;
 import org.apache.lucene.util.ArrayUtil;
+import org.apache.lucene.util.AttributeFactory;
 import org.apache.lucene.util.IntsRef;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.fst.FST;
@@ -132,7 +132,7 @@ public final class JapaneseTokenizer extends Tokenizer {
   private static final int MAX_UNKNOWN_WORD_LENGTH = 1024;
   private static final int MAX_BACKTRACE_GAP = 1024;
 
-  private final EnumMap<Type, Dictionary> dictionaryMap = new EnumMap<Type, Dictionary>(Type.class);
+  private final EnumMap<Type, Dictionary> dictionaryMap = new EnumMap<>(Type.class);
 
   private final TokenInfoFST fst;
   private final TokenInfoDictionary dictionary;
@@ -141,7 +141,7 @@ public final class JapaneseTokenizer extends Tokenizer {
   private final UserDictionary userDictionary;
   private final CharacterDefinition characterDefinition;
 
-  private final FST.Arc<Long> arc = new FST.Arc<Long>();
+  private final FST.Arc<Long> arc = new FST.Arc<>();
   private final FST.BytesReader fstReader;
   private final IntsRef wordIdRef = new IntsRef();
 
@@ -174,7 +174,7 @@ public final class JapaneseTokenizer extends Tokenizer {
   private int pos;
 
   // Already parsed, but not yet passed to caller, tokens:
-  private final List<Token> pending = new ArrayList<Token>();
+  private final List<Token> pending = new ArrayList<>();
 
   private final CharTermAttribute termAtt = addAttribute(CharTermAttribute.class);
   private final OffsetAttribute offsetAtt = addAttribute(OffsetAttribute.class);
@@ -195,7 +195,7 @@ public final class JapaneseTokenizer extends Tokenizer {
    * @param mode tokenization mode.
    */
   public JapaneseTokenizer(UserDictionary userDictionary, boolean discardPunctuation, Mode mode) {
-    this(AttributeFactory.DEFAULT_ATTRIBUTE_FACTORY, userDictionary, discardPunctuation, mode);
+    this(DEFAULT_TOKEN_ATTRIBUTE_FACTORY, userDictionary, discardPunctuation, mode);
   }
 
   /**

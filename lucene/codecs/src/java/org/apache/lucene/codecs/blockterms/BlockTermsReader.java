@@ -18,8 +18,10 @@ package org.apache.lucene.codecs.blockterms;
  */
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
 import java.util.TreeMap;
 
 import org.apache.lucene.codecs.BlockTermState;
@@ -29,22 +31,22 @@ import org.apache.lucene.codecs.PostingsReaderBase;
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.DocsEnum;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.index.FieldInfo;
-import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.IndexFileNames;
-import org.apache.lucene.index.SegmentInfo;
+import org.apache.lucene.index.IndexOptions;
+import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.TermState;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.store.ByteArrayDataInput;
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.DoubleBarrelLRUCache;
+import org.apache.lucene.util.BytesRefBuilder;
+import org.apache.lucene.util.RamUsageEstimator;
 
 /** Handles a terms dict, but decouples all details of
  *  doc/freqs/positions reading to an instance of {@link
@@ -59,6 +61,7 @@ import org.apache.lucene.util.DoubleBarrelLRUCache;
  * @lucene.experimental */
 
 public class BlockTermsReader extends FieldsProducer {
+  private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(BlockTermsReader.class);
   // Open input to the main terms dict file (_X.tis)
   private final IndexInput in;
 
@@ -66,18 +69,13 @@ public class BlockTermsReader extends FieldsProducer {
   // produce DocsEnum on demand
   private final PostingsReaderBase postingsReader;
 
-  private final TreeMap<String,FieldReader> fields = new TreeMap<String,FieldReader>();
+  private final TreeMap<String,FieldReader> fields = new TreeMap<>();
 
   // Reads the terms index
   private TermsIndexReaderBase indexReader;
-
-  // keeps the dirStart offset
-  private long dirOffset;
   
-  private final int version; 
-
   // Used as key for the terms cache
-  private static class FieldAndTerm extends DoubleBarrelLRUCache.CloneableKey {
+  private static class FieldAndTerm implements Cloneable {
     String field;
     BytesRef term;
 
@@ -106,54 +104,58 @@ public class BlockTermsReader extends FieldsProducer {
     }
   }
   
-  // private String segment;
-  
-  public BlockTermsReader(TermsIndexReaderBase indexReader, Directory dir, FieldInfos fieldInfos, SegmentInfo info, PostingsReaderBase postingsReader, IOContext context,
-                          String segmentSuffix)
-    throws IOException {
+  public BlockTermsReader(TermsIndexReaderBase indexReader, PostingsReaderBase postingsReader, SegmentReadState state) throws IOException {
     
     this.postingsReader = postingsReader;
-
-    // this.segment = segment;
-    in = dir.openInput(IndexFileNames.segmentFileName(info.name, segmentSuffix, BlockTermsWriter.TERMS_EXTENSION),
-                       context);
+    
+    String filename = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, BlockTermsWriter.TERMS_EXTENSION);
+    in = state.directory.openInput(filename, state.context);
 
     boolean success = false;
     try {
-      version = readHeader(in);
+      CodecUtil.checkIndexHeader(in, BlockTermsWriter.CODEC_NAME, 
+                                       BlockTermsWriter.VERSION_START,
+                                       BlockTermsWriter.VERSION_CURRENT,
+                                       state.segmentInfo.getId(), state.segmentSuffix);
 
       // Have PostingsReader init itself
-      postingsReader.init(in);
+      postingsReader.init(in, state);
+      
+      // NOTE: data file is too costly to verify checksum against all the bytes on open,
+      // but for now we at least verify proper structure of the checksum footer: which looks
+      // for FOOTER_MAGIC + algorithmID. This is cheap and can detect some forms of corruption
+      // such as file truncation.
+      CodecUtil.retrieveChecksum(in);
 
       // Read per-field details
-      seekDir(in, dirOffset);
+      seekDir(in);
 
       final int numFields = in.readVInt();
       if (numFields < 0) {
-        throw new CorruptIndexException("invalid number of fields: " + numFields + " (resource=" + in + ")");
+        throw new CorruptIndexException("invalid number of fields: " + numFields, in);
       }
       for(int i=0;i<numFields;i++) {
         final int field = in.readVInt();
         final long numTerms = in.readVLong();
         assert numTerms >= 0;
         final long termsStartPointer = in.readVLong();
-        final FieldInfo fieldInfo = fieldInfos.fieldInfo(field);
-        final long sumTotalTermFreq = fieldInfo.getIndexOptions() == IndexOptions.DOCS_ONLY ? -1 : in.readVLong();
+        final FieldInfo fieldInfo = state.fieldInfos.fieldInfo(field);
+        final long sumTotalTermFreq = fieldInfo.getIndexOptions() == IndexOptions.DOCS ? -1 : in.readVLong();
         final long sumDocFreq = in.readVLong();
         final int docCount = in.readVInt();
-        final int longsSize = version >= BlockTermsWriter.VERSION_META_ARRAY ? in.readVInt() : 0;
-        if (docCount < 0 || docCount > info.getDocCount()) { // #docs with field must be <= #docs
-          throw new CorruptIndexException("invalid docCount: " + docCount + " maxDoc: " + info.getDocCount() + " (resource=" + in + ")");
+        final int longsSize = in.readVInt();
+        if (docCount < 0 || docCount > state.segmentInfo.getDocCount()) { // #docs with field must be <= #docs
+          throw new CorruptIndexException("invalid docCount: " + docCount + " maxDoc: " + state.segmentInfo.getDocCount(), in);
         }
         if (sumDocFreq < docCount) {  // #postings must be >= #docs with field
-          throw new CorruptIndexException("invalid sumDocFreq: " + sumDocFreq + " docCount: " + docCount + " (resource=" + in + ")");
+          throw new CorruptIndexException("invalid sumDocFreq: " + sumDocFreq + " docCount: " + docCount, in);
         }
         if (sumTotalTermFreq != -1 && sumTotalTermFreq < sumDocFreq) { // #positions must be >= #postings
-          throw new CorruptIndexException("invalid sumTotalTermFreq: " + sumTotalTermFreq + " sumDocFreq: " + sumDocFreq + " (resource=" + in + ")");
+          throw new CorruptIndexException("invalid sumTotalTermFreq: " + sumTotalTermFreq + " sumDocFreq: " + sumDocFreq, in);
         }
         FieldReader previous = fields.put(fieldInfo.name, new FieldReader(fieldInfo, numTerms, termsStartPointer, sumTotalTermFreq, sumDocFreq, docCount, longsSize));
         if (previous != null) {
-          throw new CorruptIndexException("duplicate fields: " + fieldInfo.name + " (resource=" + in + ")");
+          throw new CorruptIndexException("duplicate fields: " + fieldInfo.name, in);
         }
       }
       success = true;
@@ -165,22 +167,10 @@ public class BlockTermsReader extends FieldsProducer {
 
     this.indexReader = indexReader;
   }
-
-  private int readHeader(IndexInput input) throws IOException {
-    int version = CodecUtil.checkHeader(input, BlockTermsWriter.CODEC_NAME,
-                          BlockTermsWriter.VERSION_START,
-                          BlockTermsWriter.VERSION_CURRENT);
-    if (version < BlockTermsWriter.VERSION_APPEND_ONLY) {
-      dirOffset = input.readLong();
-    }
-    return version;
-  }
   
-  private void seekDir(IndexInput input, long dirOffset) throws IOException {
-    if (version >= BlockTermsWriter.VERSION_APPEND_ONLY) {
-      input.seek(input.length() - 8);
-      dirOffset = input.readLong();
-    }
+  private void seekDir(IndexInput input) throws IOException {
+    input.seek(input.length() - CodecUtil.footerLength() - 8);
+    long dirOffset = input.readLong();
     input.seek(dirOffset);
   }
   
@@ -223,7 +213,8 @@ public class BlockTermsReader extends FieldsProducer {
     return fields.size();
   }
 
-  private class FieldReader extends Terms {
+  private static final long FIELD_READER_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(FieldReader.class);
+  private class FieldReader extends Terms implements Accountable {
     final long numTerms;
     final FieldInfo fieldInfo;
     final long termsStartPointer;
@@ -241,6 +232,16 @@ public class BlockTermsReader extends FieldsProducer {
       this.sumDocFreq = sumDocFreq;
       this.docCount = docCount;
       this.longsSize = longsSize;
+    }
+
+    @Override
+    public long ramBytesUsed() {
+      return FIELD_READER_RAM_BYTES_USED;
+    }
+    
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Collections.emptyList();
     }
 
     @Override
@@ -295,7 +296,7 @@ public class BlockTermsReader extends FieldsProducer {
       private final boolean doOrd;
       private final FieldAndTerm fieldTerm = new FieldAndTerm();
       private final TermsIndexReaderBase.FieldIndexEnum indexEnum;
-      private final BytesRef term = new BytesRef();
+      private final BytesRefBuilder term = new BytesRefBuilder();
 
       /* This is true if indexEnum is "still" seek'd to the index term
          for the current term. We set it to true on seeking, and then it
@@ -376,7 +377,7 @@ public class BlockTermsReader extends FieldsProducer {
         // is after current term but before next index term:
         if (indexIsCurrent) {
 
-          final int cmp = BytesRef.getUTF8SortedAsUnicodeComparator().compare(term, target);
+          final int cmp = BytesRef.getUTF8SortedAsUnicodeComparator().compare(term.get(), target);
 
           if (cmp == 0) {
             // Already at the requested term
@@ -451,7 +452,7 @@ public class BlockTermsReader extends FieldsProducer {
           // First, see if target term matches common prefix
           // in this block:
           if (common < termBlockPrefix) {
-            final int cmp = (term.bytes[common]&0xFF) - (target.bytes[target.offset + common]&0xFF);
+            final int cmp = (term.byteAt(common)&0xFF) - (target.bytes[target.offset + common]&0xFF);
             if (cmp < 0) {
 
               // TODO: maybe we should store common prefix
@@ -470,11 +471,9 @@ public class BlockTermsReader extends FieldsProducer {
                   termSuffixesReader.skipBytes(termSuffixesReader.readVInt());
                 }
                 final int suffix = termSuffixesReader.readVInt();
-                term.length = termBlockPrefix + suffix;
-                if (term.bytes.length < term.length) {
-                  term.grow(term.length);
-                }
-                termSuffixesReader.readBytes(term.bytes, termBlockPrefix, suffix);
+                term.setLength(termBlockPrefix + suffix);
+                term.grow(term.length());
+                termSuffixesReader.readBytes(term.bytes(), termBlockPrefix, suffix);
               }
               state.ord++;
               
@@ -491,11 +490,9 @@ public class BlockTermsReader extends FieldsProducer {
               assert state.termBlockOrd == 0;
 
               final int suffix = termSuffixesReader.readVInt();
-              term.length = termBlockPrefix + suffix;
-              if (term.bytes.length < term.length) {
-                term.grow(term.length);
-              }
-              termSuffixesReader.readBytes(term.bytes, termBlockPrefix, suffix);
+              term.setLength(termBlockPrefix + suffix);
+              term.grow(term.length());
+              termSuffixesReader.readBytes(term.bytes(), termBlockPrefix, suffix);
               return SeekStatus.NOT_FOUND;
             } else {
               common++;
@@ -528,22 +525,18 @@ public class BlockTermsReader extends FieldsProducer {
               } else if (cmp > 0) {
                 // Done!  Current term is after target. Stop
                 // here, fill in real term, return NOT_FOUND.
-                term.length = termBlockPrefix + suffix;
-                if (term.bytes.length < term.length) {
-                  term.grow(term.length);
-                }
-                termSuffixesReader.readBytes(term.bytes, termBlockPrefix, suffix);
+                term.setLength(termBlockPrefix + suffix);
+                term.grow(term.length());
+                termSuffixesReader.readBytes(term.bytes(), termBlockPrefix, suffix);
                 //System.out.println("  NOT_FOUND");
                 return SeekStatus.NOT_FOUND;
               }
             }
 
             if (!next && target.length <= termLen) {
-              term.length = termBlockPrefix + suffix;
-              if (term.bytes.length < term.length) {
-                term.grow(term.length);
-              }
-              termSuffixesReader.readBytes(term.bytes, termBlockPrefix, suffix);
+              term.setLength(termBlockPrefix + suffix);
+              term.grow(term.length());
+              termSuffixesReader.readBytes(term.bytes(), termBlockPrefix, suffix);
 
               if (target.length == termLen) {
                 // Done!  Exact match.  Stop here, fill in
@@ -558,11 +551,9 @@ public class BlockTermsReader extends FieldsProducer {
 
             if (state.termBlockOrd == blockTermCount) {
               // Must pre-fill term for next block's common prefix
-              term.length = termBlockPrefix + suffix;
-              if (term.bytes.length < term.length) {
-                term.grow(term.length);
-              }
-              termSuffixesReader.readBytes(term.bytes, termBlockPrefix, suffix);
+              term.setLength(termBlockPrefix + suffix);
+              term.grow(term.length());
+              termSuffixesReader.readBytes(term.bytes(), termBlockPrefix, suffix);
               break;
             } else {
               termSuffixesReader.skipBytes(suffix);
@@ -633,23 +624,21 @@ public class BlockTermsReader extends FieldsProducer {
         final int suffix = termSuffixesReader.readVInt();
         //System.out.println("  suffix=" + suffix);
 
-        term.length = termBlockPrefix + suffix;
-        if (term.bytes.length < term.length) {
-          term.grow(term.length);
-        }
-        termSuffixesReader.readBytes(term.bytes, termBlockPrefix, suffix);
+        term.setLength(termBlockPrefix + suffix);
+        term.grow(term.length());
+        termSuffixesReader.readBytes(term.bytes(), termBlockPrefix, suffix);
         state.termBlockOrd++;
 
         // NOTE: meaningless in the non-ord case
         state.ord++;
 
         //System.out.println("  return term=" + fieldInfo.name + ":" + term.utf8ToString() + " " + term + " tbOrd=" + state.termBlockOrd);
-        return term;
+        return term.get();
       }
 
       @Override
       public BytesRef term() {
-        return term;
+        return term.get();
       }
 
       @Override
@@ -838,7 +827,7 @@ public class BlockTermsReader extends FieldsProducer {
             // docFreq, totalTermFreq
             state.docFreq = freqReader.readVInt();
             //System.out.println("    dF=" + state.docFreq);
-            if (fieldInfo.getIndexOptions() != IndexOptions.DOCS_ONLY) {
+            if (fieldInfo.getIndexOptions() != IndexOptions.DOCS) {
               state.totalTermFreq = state.docFreq + freqReader.readVLong();
               //System.out.println("    totTF=" + state.totalTermFreq);
             }
@@ -859,8 +848,39 @@ public class BlockTermsReader extends FieldsProducer {
 
   @Override
   public long ramBytesUsed() {
-    long sizeInBytes = (postingsReader!=null) ? postingsReader.ramBytesUsed() : 0;
-    sizeInBytes += (indexReader!=null) ? indexReader.ramBytesUsed() : 0;
-    return sizeInBytes;
+    long ramBytesUsed = BASE_RAM_BYTES_USED;
+    ramBytesUsed += (postingsReader!=null) ? postingsReader.ramBytesUsed() : 0;
+    ramBytesUsed += (indexReader!=null) ? indexReader.ramBytesUsed() : 0;
+    ramBytesUsed += fields.size() * 2L * RamUsageEstimator.NUM_BYTES_OBJECT_REF;
+    for (FieldReader reader : fields.values()) {
+      ramBytesUsed += reader.ramBytesUsed();
+    }
+    return ramBytesUsed;
+  }
+  
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    List<Accountable> resources = new ArrayList<>();
+    if (indexReader != null) {
+      resources.add(Accountables.namedAccountable("term index", indexReader));
+    }
+    if (postingsReader != null) {
+      resources.add(Accountables.namedAccountable("delegate", postingsReader));
+    }
+    return Collections.unmodifiableList(resources);
+  }
+
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(index=" + indexReader + ",delegate=" + postingsReader + ")";
+  }
+
+  @Override
+  public void checkIntegrity() throws IOException {   
+    // verify terms
+    CodecUtil.checksumEntireFile(in);
+
+    // verify postings
+    postingsReader.checkIntegrity();
   }
 }

@@ -17,6 +17,12 @@
 
 package org.apache.solr.parser;
 
+import java.io.StringReader;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.util.TokenFilterFactory;
 import org.apache.lucene.index.Term;
@@ -28,17 +34,15 @@ import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.MultiPhraseQuery;
 import org.apache.lucene.search.MultiTermQuery;
 import org.apache.lucene.search.PhraseQuery;
-import org.apache.lucene.search.PrefixQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.RegexpQuery;
 import org.apache.lucene.search.WildcardQuery;
 import org.apache.lucene.util.QueryBuilder;
 import org.apache.lucene.util.ToStringUtils;
 import org.apache.lucene.util.Version;
+import org.apache.lucene.util.automaton.Automata;
 import org.apache.lucene.util.automaton.Automaton;
-import org.apache.lucene.util.automaton.BasicAutomata;
-import org.apache.lucene.util.automaton.BasicOperations;
-import org.apache.lucene.util.automaton.SpecialOperations;
+import org.apache.lucene.util.automaton.Operations;
 import org.apache.solr.analysis.ReversedWildcardFilterFactory;
 import org.apache.solr.analysis.TokenizerChain;
 import org.apache.solr.common.SolrException;
@@ -49,12 +53,6 @@ import org.apache.solr.schema.SchemaField;
 import org.apache.solr.schema.TextField;
 import org.apache.solr.search.QParser;
 import org.apache.solr.search.SyntaxError;
-
-import java.io.StringReader;
-import java.util.EnumSet;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 
 /** This class is overridden by QueryParser in QueryParser.jj
  * and acts to separate the majority of the Java code from the .jj grammar file. 
@@ -80,7 +78,7 @@ public abstract class SolrQueryParserBase extends QueryBuilder {
   /** The default operator that parser uses to combine query terms */
   Operator operator = OR_OPERATOR;
 
-  MultiTermQuery.RewriteMethod multiTermRewriteMethod = MultiTermQuery.CONSTANT_SCORE_AUTO_REWRITE_DEFAULT;
+  MultiTermQuery.RewriteMethod multiTermRewriteMethod = MultiTermQuery.CONSTANT_SCORE_FILTER_REWRITE;
   boolean allowLeadingWildcard = true;
 
   String defaultField;
@@ -115,7 +113,7 @@ public abstract class SolrQueryParserBase extends QueryBuilder {
       return field;
     }
     private final static Map<String,MagicFieldName> lookup
-        = new HashMap<String,MagicFieldName>();
+        = new HashMap<>();
     static {
       for(MagicFieldName s : EnumSet.allOf(MagicFieldName.class))
         lookup.put(s.toString(), s);
@@ -296,7 +294,7 @@ public abstract class SolrQueryParserBase extends QueryBuilder {
 
 
   /**
-   * By default QueryParser uses {@link org.apache.lucene.search.MultiTermQuery#CONSTANT_SCORE_AUTO_REWRITE_DEFAULT}
+   * By default QueryParser uses {@link org.apache.lucene.search.MultiTermQuery#CONSTANT_SCORE_FILTER_REWRITE}
    * when creating a PrefixQuery, WildcardQuery or RangeQuery. This implementation is generally preferable because it
    * a) Runs faster b) Does not have the scarcity of terms unduly influence score
    * c) avoids any "TooManyBooleanClauses" exception.
@@ -419,10 +417,8 @@ public abstract class SolrQueryParserBase extends QueryBuilder {
    * @return new PrefixQuery instance
    */
   protected Query newPrefixQuery(Term prefix){
-    PrefixQuery query = new PrefixQuery(prefix);
     SchemaField sf = schema.getField(prefix.field());
-    query.setRewriteMethod(sf.getType().getRewriteMethod(parser, sf));
-    return query;
+    return sf.getType().getPrefixQuery(parser, sf, prefix.text());
   }
 
   /**
@@ -674,13 +670,13 @@ public abstract class SolrQueryParserBase extends QueryBuilder {
 
 
   protected ReversedWildcardFilterFactory getReversedWildcardFilterFactory(FieldType fieldType) {
-    if (leadingWildcards == null) leadingWildcards = new HashMap<FieldType, ReversedWildcardFilterFactory>();
+    if (leadingWildcards == null) leadingWildcards = new HashMap<>();
     ReversedWildcardFilterFactory fac = leadingWildcards.get(fieldType);
     if (fac != null || leadingWildcards.containsKey(fac)) {
       return fac;
     }
 
-    Analyzer a = fieldType.getAnalyzer();
+    Analyzer a = fieldType.getIndexAnalyzer();
     if (a instanceof TokenizerChain) {
       // examine the indexing analysis chain if it supports leading wildcards
       TokenizerChain tc = (TokenizerChain)a;
@@ -783,16 +779,16 @@ public abstract class SolrQueryParserBase extends QueryBuilder {
       Automaton automaton = WildcardQuery.toAutomaton(term);
       // TODO: we should likely use the automaton to calculate shouldReverse, too.
       if (factory.shouldReverse(termStr)) {
-        automaton = BasicOperations.concatenate(automaton, BasicAutomata.makeChar(factory.getMarkerChar()));
-        SpecialOperations.reverse(automaton);
+        automaton = Operations.concatenate(automaton, Automata.makeChar(factory.getMarkerChar()));
+        automaton = Operations.reverse(automaton);
       } else {
         // reverse wildcardfilter is active: remove false positives
         // fsa representing false positives (markerChar*)
-        Automaton falsePositives = BasicOperations.concatenate(
-            BasicAutomata.makeChar(factory.getMarkerChar()),
-            BasicAutomata.makeAnyString());
+        Automaton falsePositives = Operations.concatenate(
+            Automata.makeChar(factory.getMarkerChar()),
+            Automata.makeAnyString());
         // subtract these away
-        automaton = BasicOperations.minus(automaton, falsePositives);
+        automaton = Operations.minus(automaton, falsePositives, Operations.DEFAULT_MAX_DETERMINIZED_STATES);
       }
       return new AutomatonQuery(term, automaton) {
         // override toString so its completely transparent

@@ -19,11 +19,13 @@ package org.apache.lucene.spatial.prefix;
 
 import com.spatial4j.core.shape.Shape;
 import com.spatial4j.core.shape.SpatialRelation;
-import org.apache.lucene.index.AtomicReaderContext;
+
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.spatial.prefix.tree.Cell;
 import org.apache.lucene.spatial.prefix.tree.SpatialPrefixTree;
 import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.BitDocIdSet;
 import org.apache.lucene.util.FixedBitSet;
 
 import java.io.IOException;
@@ -51,7 +53,16 @@ public class IntersectsPrefixTreeFilter extends AbstractVisitingPrefixTreeFilter
   }
 
   @Override
-  public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs) throws IOException {
+  public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs) throws IOException {
+    /* Possible optimizations (in IN ADDITION TO THOSE LISTED IN VISITORTEMPLATE):
+
+    * If docFreq is 1 (or < than some small threshold), then check to see if we've already
+      collected it; if so short-circuit. Don't do this just for point data, as there is
+      no benefit, or only marginal benefit when multi-valued.
+
+    * Point query shape optimization when the only indexed data is a point (no leaves).  Result is a term query.
+
+     */
     return new VisitorTemplate(context, acceptDocs, hasIndexedLeaves) {
       private FixedBitSet results;
 
@@ -62,7 +73,7 @@ public class IntersectsPrefixTreeFilter extends AbstractVisitingPrefixTreeFilter
 
       @Override
       protected DocIdSet finish() {
-        return results;
+        return new BitDocIdSet(results);
       }
 
       @Override
@@ -81,15 +92,7 @@ public class IntersectsPrefixTreeFilter extends AbstractVisitingPrefixTreeFilter
 
       @Override
       protected void visitScanned(Cell cell) throws IOException {
-        Shape cShape;
-        //if this cell represents a point, use the cell center vs the box
-        // TODO this behavior is debatable; might want to be configurable
-        // (points never have isLeaf())
-        if (cell.getLevel() == grid.getMaxLevels() && !cell.isLeaf())
-          cShape = cell.getCenter();
-        else
-          cShape = cell.getShape();
-        if (queryShape.relate(cShape).intersects())
+        if (queryShape.relate(cell.getShape()).intersects())
           collectDocs(results);
       }
 

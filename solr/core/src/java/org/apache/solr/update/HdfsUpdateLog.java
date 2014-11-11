@@ -31,6 +31,7 @@ import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathFilter;
+import org.apache.hadoop.ipc.RemoteException;
 import org.apache.lucene.util.BytesRef;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrException.ErrorCode;
@@ -113,16 +114,18 @@ public class HdfsUpdateLog extends UpdateLog {
       }
     }
     
+    FileSystem oldFs = fs;
+    
     try {
-      if (fs != null) {
-        fs.close();
-      }
+      fs = FileSystem.newInstance(new Path(dataDir).toUri(), getConf());
     } catch (IOException e) {
       throw new SolrException(ErrorCode.SERVER_ERROR, e);
     }
     
     try {
-      fs = FileSystem.newInstance(new Path(dataDir).toUri(), getConf());
+      if (oldFs != null) {
+        oldFs.close();
+      }
     } catch (IOException e) {
       throw new SolrException(ErrorCode.SERVER_ERROR, e);
     }
@@ -142,16 +145,33 @@ public class HdfsUpdateLog extends UpdateLog {
     }
     lastDataDir = dataDir;
     tlogDir = new Path(dataDir, TLOG_NAME);
-    
-    try {
-      if (!fs.exists(tlogDir)) {
-        boolean success = fs.mkdirs(tlogDir);
-        if (!success) {
-          throw new RuntimeException("Could not create directory:" + tlogDir);
+    while (true) {
+      try {
+        if (!fs.exists(tlogDir)) {
+          boolean success = fs.mkdirs(tlogDir);
+          if (!success) {
+            throw new RuntimeException("Could not create directory:" + tlogDir);
+          }
+        } else {
+          fs.mkdirs(tlogDir); // To check for safe mode
         }
+        break;
+      } catch (RemoteException e) {
+        if (e.getClassName().equals(
+            "org.apache.hadoop.hdfs.server.namenode.SafeModeException")) {
+          log.warn("The NameNode is in SafeMode - Solr will wait 5 seconds and try again.");
+          try {
+            Thread.sleep(5000);
+          } catch (InterruptedException e1) {
+            Thread.interrupted();
+          }
+          continue;
+        }
+        throw new RuntimeException(
+            "Problem creating directory: " + tlogDir, e);
+      } catch (IOException e) {
+        throw new RuntimeException("Problem creating directory: " + tlogDir, e);
       }
-    } catch (IOException e) {
-      throw new RuntimeException(e);
     }
     
     tlogFiles = getLogList(fs, tlogDir);
@@ -183,7 +203,7 @@ public class HdfsUpdateLog extends UpdateLog {
     
     // Record first two logs (oldest first) at startup for potential tlog
     // recovery.
-    // It's possible that at abnormal shutdown both "tlog" and "prevTlog" were
+    // It's possible that at abnormal close both "tlog" and "prevTlog" were
     // uncapped.
     for (TransactionLog ll : logs) {
       newestLogsOnStartup.addFirst(ll);
@@ -260,8 +280,14 @@ public class HdfsUpdateLog extends UpdateLog {
   
   @Override
   public void close(boolean committed) {
-    synchronized (this) {
-      super.close(committed);
+    close(committed, false);
+  }
+  
+  @Override
+  public void close(boolean committed, boolean deleteOnClose) {
+    try {
+      super.close(committed, deleteOnClose);
+    } finally {
       IOUtils.closeQuietly(fs);
     }
   }
@@ -287,7 +313,7 @@ public class HdfsUpdateLog extends UpdateLog {
     if (ulogPluginInfo == null) return;
     Path tlogDir = new Path(getTlogDir(core, ulogPluginInfo));
     try {
-      if (fs.exists(tlogDir)) {
+      if (fs != null && fs.exists(tlogDir)) {
         String[] files = getLogList(tlogDir);
         for (String file : files) {
           Path f = new Path(tlogDir, file);
@@ -311,7 +337,7 @@ public class HdfsUpdateLog extends UpdateLog {
         return name.getName().startsWith(prefix);
       }
     });
-    List<String> fileList = new ArrayList<String>(files.length);
+    List<String> fileList = new ArrayList<>(files.length);
     for (FileStatus file : files) {
       fileList.add(file.getPath().getName());
     }

@@ -49,7 +49,7 @@ public class DocumentStoredFieldVisitor extends StoredFieldVisitor {
 
   /** Load only fields named in the provided fields. */
   public DocumentStoredFieldVisitor(String... fields) {
-    fieldsToAdd = new HashSet<String>(fields.length);
+    fieldsToAdd = new HashSet<>(fields.length);
     for(String field : fields) {
       fieldsToAdd.add(field);
     }
@@ -69,7 +69,6 @@ public class DocumentStoredFieldVisitor extends StoredFieldVisitor {
   public void stringField(FieldInfo fieldInfo, String value) throws IOException {
     final FieldType ft = new FieldType(TextField.TYPE_STORED);
     ft.setStoreTermVectors(fieldInfo.hasVectors());
-    ft.setIndexed(fieldInfo.isIndexed());
     ft.setOmitNorms(fieldInfo.omitsNorms());
     ft.setIndexOptions(fieldInfo.getIndexOptions());
     doc.add(new StoredField(fieldInfo.name, value, ft));

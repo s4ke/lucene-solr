@@ -28,6 +28,7 @@ import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.AttributeSource;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.CharsRef;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.apache.lucene.util.UnicodeUtil;
 import org.apache.lucene.util.automaton.LevenshteinAutomata;
 
@@ -317,7 +318,7 @@ public class DirectSpellChecker {
    */
   public SuggestWord[] suggestSimilar(Term term, int numSug, IndexReader ir, 
       SuggestMode suggestMode, float accuracy) throws IOException {
-    final CharsRef spare = new CharsRef();
+    final CharsRefBuilder spare = new CharsRefBuilder();
     String text = term.text();
     if (minQueryLength > 0 && text.codePointCount(0, text.length()) < minQueryLength)
       return new SuggestWord[0];
@@ -354,7 +355,7 @@ public class DirectSpellChecker {
     // try ed=1 first, in case we get lucky
     terms = suggestSimilar(term, inspections, ir, docfreq, 1, accuracy, spare);
     if (maxEdits > 1 && terms.size() < inspections) {
-      HashSet<ScoreTerm> moreTerms = new HashSet<ScoreTerm>();
+      HashSet<ScoreTerm> moreTerms = new HashSet<>();
       moreTerms.addAll(terms);
       moreTerms.addAll(suggestSimilar(term, inspections, ir, docfreq, maxEdits, accuracy, spare));
       terms = moreTerms;
@@ -367,7 +368,7 @@ public class DirectSpellChecker {
     for (ScoreTerm s : terms) {
       SuggestWord suggestion = new SuggestWord();
       if (s.termAsString == null) {
-        UnicodeUtil.UTF8toUTF16(s.term, spare);
+        spare.copyUTF8Bytes(s.term);
         s.termAsString = spare.toString();
       }
       suggestion.string = s.termAsString;
@@ -399,7 +400,7 @@ public class DirectSpellChecker {
    * @throws IOException If I/O related errors occur
    */
   protected Collection<ScoreTerm> suggestSimilar(Term term, int numSug, IndexReader ir, int docfreq, int editDistance,
-                                                 float accuracy, final CharsRef spare) throws IOException {
+                                                 float accuracy, final CharsRefBuilder spare) throws IOException {
     
     AttributeSource atts = new AttributeSource();
     MaxNonCompetitiveBoostAttribute maxBoostAtt =
@@ -409,7 +410,7 @@ public class DirectSpellChecker {
       return Collections.emptyList();
     }
     FuzzyTermsEnum e = new FuzzyTermsEnum(terms, atts, term, editDistance, Math.max(minPrefix, editDistance-1), true);
-    final PriorityQueue<ScoreTerm> stQueue = new PriorityQueue<ScoreTerm>();
+    final PriorityQueue<ScoreTerm> stQueue = new PriorityQueue<>();
     
     BytesRef queryTerm = new BytesRef(term.text());
     BytesRef candidateTerm;
@@ -440,7 +441,7 @@ public class DirectSpellChecker {
         // undo FuzzyTermsEnum's scale factor for a real scaled lev score
         score = boost / e.getScaleFactor() + e.getMinSimilarity();
       } else {
-        UnicodeUtil.UTF8toUTF16(candidateTerm, spare);
+        spare.copyUTF8Bytes(candidateTerm);
         termAsString = spare.toString();
         score = distance.getDistance(term.text(), termAsString);
       }

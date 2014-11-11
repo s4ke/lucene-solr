@@ -23,7 +23,7 @@ import java.util.List;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexReaderContext;
@@ -54,7 +54,7 @@ public class TestSpans extends LuceneTestCase {
   public void setUp() throws Exception {
     super.setUp();
     directory = newDirectory();
-    RandomIndexWriter writer= new RandomIndexWriter(random(), directory, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
+    RandomIndexWriter writer= new RandomIndexWriter(random(), directory, newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
     for (int i = 0; i < docFields.length; i++) {
       Document doc = new Document();
       doc.add(newTextField(field, docFields[i], Field.Store.YES));
@@ -406,10 +406,10 @@ public class TestSpans extends LuceneTestCase {
     boolean ordered = true;
     int slop = 1;
     IndexReaderContext topReaderContext = searcher.getTopReaderContext();
-    List<AtomicReaderContext> leaves = topReaderContext.leaves();
+    List<LeafReaderContext> leaves = topReaderContext.leaves();
     int subIndex = ReaderUtil.subIndex(11, leaves);
     for (int i = 0, c = leaves.size(); i < c; i++) {
-      final AtomicReaderContext ctx = leaves.get(i);
+      final LeafReaderContext ctx = leaves.get(i);
      
       final Similarity sim = new DefaultSimilarity() {
         @Override
@@ -429,7 +429,7 @@ public class TestSpans extends LuceneTestCase {
                                 slop,
                                 ordered);
   
-        spanScorer = searcher.createNormalizedWeight(snq).scorer(ctx, true, false, ctx.reader().getLiveDocs());
+        spanScorer = searcher.createNormalizedWeight(snq).scorer(ctx, ctx.reader().getLiveDocs());
       } finally {
         searcher.setSimilarity(oldSim);
       }
@@ -475,8 +475,7 @@ public class TestSpans extends LuceneTestCase {
   // LUCENE-1404
   public void testNPESpanQuery() throws Throwable {
     final Directory dir = newDirectory();
-    final IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    final IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(new MockAnalyzer(random())));
 
     // Add documents
     addDoc(writer, "1", "the big dogs went running to the market");

@@ -20,7 +20,7 @@ package org.apache.lucene.store;
 import java.io.IOException;
 
 import org.apache.lucene.index.DirectoryReader;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * Calls check index on close.
@@ -42,7 +42,7 @@ public class BaseDirectoryWrapper extends FilterDirectory {
   public void close() throws IOException {
     isOpen = false;
     if (checkIndexOnClose && DirectoryReader.indexExists(this)) {
-      _TestUtil.checkIndex(this, crossCheckTermVectorsOnClose);
+      TestUtil.checkIndex(this, crossCheckTermVectorsOnClose);
     }
     super.close();
   }
@@ -75,9 +75,4 @@ public class BaseDirectoryWrapper extends FilterDirectory {
   public void copy(Directory to, String src, String dest, IOContext context) throws IOException {
     in.copy(to, src, dest, context);
   }
-
-  @Override
-  public IndexInputSlicer createSlicer(String name, IOContext context) throws IOException {
-    return in.createSlicer(name, context);
-  }  
 }

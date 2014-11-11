@@ -20,6 +20,7 @@ import java.io.Closeable;
 import java.io.IOException;
 
 import org.apache.lucene.index.StoredFieldVisitor;
+import org.apache.lucene.util.Accountable;
 
 /**
  * Codec API for reading stored fields.
@@ -29,18 +30,32 @@ import org.apache.lucene.index.StoredFieldVisitor;
  * clones of any IndexInputs used, etc), and {@link #close()}
  * @lucene.experimental
  */
-public abstract class StoredFieldsReader implements Cloneable, Closeable {
+public abstract class StoredFieldsReader implements Cloneable, Closeable, Accountable {
   /** Sole constructor. (For invocation by subclass 
    *  constructors, typically implicit.) */
   protected StoredFieldsReader() {
   }
   
-  /** Visit the stored fields for document <code>n</code> */
-  public abstract void visitDocument(int n, StoredFieldVisitor visitor) throws IOException;
+  /** Visit the stored fields for document <code>docID</code> */
+  public abstract void visitDocument(int docID, StoredFieldVisitor visitor) throws IOException;
 
   @Override
   public abstract StoredFieldsReader clone();
   
-  /** Returns approximate RAM bytes used */
-  public abstract long ramBytesUsed();
+  /** 
+   * Checks consistency of this reader.
+   * <p>
+   * Note that this may be costly in terms of I/O, e.g. 
+   * may involve computing a checksum value against large data files.
+   * @lucene.internal
+   */
+  public abstract void checkIntegrity() throws IOException;
+  
+  /** 
+   * Returns an instance optimized for merging.
+   * <p>
+   * The default implementation returns {@code this} */
+  public StoredFieldsReader getMergeInstance() throws IOException {
+    return this;
+  }
 }

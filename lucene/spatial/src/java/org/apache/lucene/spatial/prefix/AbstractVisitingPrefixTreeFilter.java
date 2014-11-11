@@ -17,25 +17,25 @@ package org.apache.lucene.spatial.prefix;
  * limitations under the License.
  */
 
-import java.io.IOException;
-import java.util.Iterator;
-
-import org.apache.lucene.index.AtomicReaderContext;
+import com.spatial4j.core.shape.Shape;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.spatial.prefix.tree.Cell;
+import org.apache.lucene.spatial.prefix.tree.CellIterator;
 import org.apache.lucene.spatial.prefix.tree.SpatialPrefixTree;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.StringHelper;
-import com.spatial4j.core.shape.Shape;
+
+import java.io.IOException;
+import java.util.Iterator;
 
 /**
  * Traverses a {@link SpatialPrefixTree} indexed field, using the template &
  * visitor design patterns for subclasses to guide the traversal and collect
  * matching documents.
  * <p/>
- * Subclasses implement {@link #getDocIdSet(org.apache.lucene.index.AtomicReaderContext,
+ * Subclasses implement {@link #getDocIdSet(org.apache.lucene.index.LeafReaderContext,
  * org.apache.lucene.util.Bits)} by instantiating a custom {@link
  * VisitorTemplate} subclass (i.e. an anonymous inner class) and implement the
  * required methods.
@@ -46,6 +46,11 @@ public abstract class AbstractVisitingPrefixTreeFilter extends AbstractPrefixTre
 
   //Historical note: this code resulted from a refactoring of RecursivePrefixTreeFilter,
   // which in turn came out of SOLR-2155
+
+  //This class perhaps could have been implemented in terms of FilteredTermsEnum & MultiTermQuery
+  //  & MultiTermQueryWrapperFilter.  Maybe so for simple Intersects predicate but not for when we want to collect terms
+  //  differently depending on cell state like IsWithin and for fuzzy/accurate collection planned improvements.  At
+  //  least it would just make things more complicated.
 
   protected final int prefixGridScanLevel;//at least one less than grid.getMaxLevels()
 
@@ -60,9 +65,7 @@ public abstract class AbstractVisitingPrefixTreeFilter extends AbstractPrefixTre
   public boolean equals(Object o) {
     if (!super.equals(o)) return false;//checks getClass == o.getClass & instanceof
 
-    AbstractVisitingPrefixTreeFilter that = (AbstractVisitingPrefixTreeFilter) o;
-
-    if (prefixGridScanLevel != that.prefixGridScanLevel) return false;
+    //Ignore prefixGridScanLevel as it is merely a tuning parameter.
 
     return true;
   }
@@ -70,27 +73,26 @@ public abstract class AbstractVisitingPrefixTreeFilter extends AbstractPrefixTre
   @Override
   public int hashCode() {
     int result = super.hashCode();
-    result = 31 * result + prefixGridScanLevel;
     return result;
   }
 
   /**
    * An abstract class designed to make it easy to implement predicates or
    * other operations on a {@link SpatialPrefixTree} indexed field. An instance
-   * of this class is not designed to be re-used across AtomicReaderContext
+   * of this class is not designed to be re-used across LeafReaderContext
    * instances so simply create a new one for each call to, say a {@link
-   * org.apache.lucene.search.Filter#getDocIdSet(org.apache.lucene.index.AtomicReaderContext, org.apache.lucene.util.Bits)}.
+   * org.apache.lucene.search.Filter#getDocIdSet(org.apache.lucene.index.LeafReaderContext, org.apache.lucene.util.Bits)}.
    * The {@link #getDocIdSet()} method here starts the work. It first checks
    * that there are indexed terms; if not it quickly returns null. Then it calls
    * {@link #start()} so a subclass can set up a return value, like an
-   * {@link org.apache.lucene.util.OpenBitSet}. Then it starts the traversal
+   * {@link org.apache.lucene.util.FixedBitSet}. Then it starts the traversal
    * process, calling {@link #findSubCellsToVisit(org.apache.lucene.spatial.prefix.tree.Cell)}
    * which by default finds the top cells that intersect {@code queryShape}. If
    * there isn't an indexed cell for a corresponding cell returned for this
    * method then it's short-circuited until it finds one, at which point
    * {@link #visit(org.apache.lucene.spatial.prefix.tree.Cell)} is called. At
    * some depths, of the tree, the algorithm switches to a scanning mode that
-   * finds calls {@link #visitScanned(org.apache.lucene.spatial.prefix.tree.Cell)}
+   * calls {@link #visitScanned(org.apache.lucene.spatial.prefix.tree.Cell)}
    * for each leaf cell found.
    *
    * @lucene.internal
@@ -112,20 +114,25 @@ public abstract class AbstractVisitingPrefixTreeFilter extends AbstractPrefixTre
     does act as a short-circuit.  So maybe do some percent of the time or when the level
     is above some threshold.
 
-  * Each shape.relate(otherShape) result could be cached since much of the same relations
-    will be invoked when multiple segments are involved.
+  * Once we don't have redundant non-leaves indexed with leaf cells (LUCENE-4942), we can
+    sometimes know to call next() instead of seek() if we're processing a leaf cell that
+    didn't have a corresponding non-leaf.
 
   */
+
+    //
+    //  TODO MAJOR REFACTOR SIMPLIFICATION BASED ON TreeCellIterator  TODO
+    //
 
     protected final boolean hasIndexedLeaves;//if false then we can skip looking for them
 
     private VNode curVNode;//current pointer, derived from query shape
-    private BytesRef curVNodeTerm = new BytesRef();//curVNode.cell's term.
+    private BytesRef curVNodeTerm = new BytesRef();//curVNode.cell's term, without leaf
     private Cell scanCell;
 
     private BytesRef thisTerm;//the result of termsEnum.term()
 
-    public VisitorTemplate(AtomicReaderContext context, Bits acceptDocs,
+    public VisitorTemplate(LeafReaderContext context, Bits acceptDocs,
                            boolean hasIndexedLeaves) throws IOException {
       super(context, acceptDocs);
       this.hasIndexedLeaves = hasIndexedLeaves;
@@ -174,8 +181,7 @@ public abstract class AbstractVisitingPrefixTreeFilter extends AbstractPrefixTre
         }
 
         //Seek to curVNode's cell (or skip if termsEnum has moved beyond)
-        curVNodeTerm.bytes = curVNode.cell.getTokenBytes();
-        curVNodeTerm.length = curVNodeTerm.bytes.length;
+        curVNode.cell.getTokenBytesNoLeaf(curVNodeTerm);
         int compare = thisTerm.compareTo(curVNodeTerm);
         if (compare > 0) {
           // leap frog (termsEnum is beyond where we would otherwise seek)
@@ -216,10 +222,10 @@ public abstract class AbstractVisitingPrefixTreeFilter extends AbstractPrefixTre
 
       //Check for adjacent leaf (happens for indexed non-point shapes)
       if (hasIndexedLeaves && cell.getLevel() != 0) {
-        //If the next indexed term just adds a leaf marker ('+') to cell,
+        //If the next indexed term just adds a leaf marker to cell,
         // then add all of those docs
-        assert StringHelper.startsWith(thisTerm, curVNodeTerm);
-        scanCell = grid.getCell(thisTerm.bytes, thisTerm.offset, thisTerm.length, scanCell);
+        scanCell = grid.readCell(thisTerm, scanCell);
+        assert curVNode.cell.isPrefixOf(scanCell) : "missing leaf or descendants";
         if (scanCell.getLevel() == cell.getLevel() && scanCell.isLeaf()) {
           visitLeaf(scanCell);
           //advance
@@ -256,8 +262,8 @@ public abstract class AbstractVisitingPrefixTreeFilter extends AbstractPrefixTre
      * guaranteed to have an intersection and thus this must return some number
      * of nodes.
      */
-    protected Iterator<Cell> findSubCellsToVisit(Cell cell) {
-      return cell.getSubCells(queryShape).iterator();
+    protected CellIterator findSubCellsToVisit(Cell cell) {
+      return cell.getNextLevelCells(queryShape);
     }
 
     /**
@@ -267,16 +273,20 @@ public abstract class AbstractVisitingPrefixTreeFilter extends AbstractPrefixTre
      * #visitScanned(org.apache.lucene.spatial.prefix.tree.Cell)}.
      */
     protected void scan(int scanDetailLevel) throws IOException {
-      for (;
-           thisTerm != null && StringHelper.startsWith(thisTerm, curVNodeTerm);
-           thisTerm = termsEnum.next()) {
-        scanCell = grid.getCell(thisTerm.bytes, thisTerm.offset, thisTerm.length, scanCell);
+      for ( ;
+          thisTerm != null;
+          thisTerm = termsEnum.next()) {
+        scanCell = grid.readCell(thisTerm, scanCell);
+        if (!curVNode.cell.isPrefixOf(scanCell))
+          break;
 
         int termLevel = scanCell.getLevel();
-        if (termLevel > scanDetailLevel)
-          continue;
-        if (termLevel == scanDetailLevel || scanCell.isLeaf()) {
-          visitScanned(scanCell);
+        if (termLevel < scanDetailLevel) {
+          if (scanCell.isLeaf())
+            visitScanned(scanCell);
+        } else if (termLevel == scanDetailLevel) {
+          if (!scanCell.isLeaf())//LUCENE-5529
+            visitScanned(scanCell);
         }
       }//term loop
     }
@@ -337,7 +347,6 @@ public abstract class AbstractVisitingPrefixTreeFilter extends AbstractPrefixTre
      * might not even intersect the query shape, so be sure to check for that.
      */
     protected abstract void visitScanned(Cell cell) throws IOException;
-
 
     protected void preSiblings(VNode vNode) throws IOException {
     }

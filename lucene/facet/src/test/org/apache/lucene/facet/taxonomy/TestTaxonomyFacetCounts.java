@@ -55,7 +55,7 @@ import org.apache.lucene.search.similarities.PerFieldSimilarityWrapper;
 import org.apache.lucene.search.similarities.Similarity;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.IOUtils;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 public class TestTaxonomyFacetCounts extends FacetTestCase {
 
@@ -132,8 +132,8 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
 
     // Smoke test PrintTaxonomyStats:
     ByteArrayOutputStream bos = new ByteArrayOutputStream();
-    PrintTaxonomyStats.printStats(taxoReader, new PrintStream(bos, false, "UTF-8"), true);
-    String result = bos.toString("UTF-8");
+    PrintTaxonomyStats.printStats(taxoReader, new PrintStream(bos, false, IOUtils.UTF_8), true);
+    String result = bos.toString(IOUtils.UTF_8);
     assertTrue(result.indexOf("/Author: 4 immediate children; 5 total categories") != -1);
     assertTrue(result.indexOf("/Publish Date: 3 immediate children; 12 total categories") != -1);
     // Make sure at least a few nodes of the tree came out:
@@ -141,7 +141,8 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     assertTrue(result.indexOf("  /2012") != -1);
     assertTrue(result.indexOf("      /20") != -1);
 
-    IOUtils.close(writer, taxoWriter, searcher.getIndexReader(), taxoReader, taxoDir, dir);
+    writer.close();
+    IOUtils.close(taxoWriter, searcher.getIndexReader(), taxoReader, taxoDir, dir);
   }
 
   // LUCENE-5333
@@ -198,7 +199,8 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     assertEquals("dim=b path=[] value=2 childCount=2\n  bar1 (1)\n  bar2 (1)\n", results.get(1).toString());
     assertEquals("dim=c path=[] value=1 childCount=1\n  baz1 (1)\n", results.get(2).toString());
 
-    IOUtils.close(writer, taxoWriter, searcher.getIndexReader(), taxoReader, taxoDir, dir);
+    writer.close();
+    IOUtils.close(taxoWriter, searcher.getIndexReader(), taxoReader, taxoDir, dir);
   }
 
   public void testWrongIndexFieldName() throws Exception {
@@ -256,13 +258,14 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
       // expected
     }
 
-    IOUtils.close(writer, taxoWriter, searcher.getIndexReader(), taxoReader, taxoDir, dir);
+    writer.close();
+    IOUtils.close(taxoWriter, searcher.getIndexReader(), taxoReader, taxoDir, dir);
   }
 
   public void testReallyNoNormsForDrillDown() throws Exception {
     Directory dir = newDirectory();
     Directory taxoDir = newDirectory();
-    IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()));
     iwc.setSimilarity(new PerFieldSimilarityWrapper() {
         final Similarity sim = new DefaultSimilarity();
 
@@ -280,7 +283,8 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     doc.add(newTextField("field", "text", Field.Store.NO));
     doc.add(new FacetField("a", "path"));
     writer.addDocument(config.build(taxoWriter, doc));
-    IOUtils.close(writer, taxoWriter, dir, taxoDir);
+    writer.close();
+    IOUtils.close(taxoWriter, dir, taxoDir);
   }
 
   public void testMultiValuedHierarchy() throws Exception {
@@ -325,7 +329,8 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     assertEquals(1, result.labelValues.length);
     assertEquals(1, result.labelValues[0].value.intValue());
 
-    IOUtils.close(writer, taxoWriter, searcher.getIndexReader(), taxoReader, dir, taxoDir);
+    writer.close();
+    IOUtils.close(taxoWriter, searcher.getIndexReader(), taxoReader, dir, taxoDir);
   }
 
   public void testLabelWithDelimiter() throws Exception {
@@ -358,7 +363,8 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
 
     FacetResult result = facets.getTopChildren(10, "dim");
     assertEquals("dim=dim path=[] value=-1 childCount=2\n  test\u001Fone (1)\n  test\u001Etwo (1)\n", result.toString());
-    IOUtils.close(writer, taxoWriter, searcher.getIndexReader(), taxoReader, dir, taxoDir);
+    writer.close();
+    IOUtils.close(taxoWriter, searcher.getIndexReader(), taxoReader, dir, taxoDir);
   }
 
   public void testRequireDimCount() throws Exception {
@@ -407,23 +413,24 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     }
     assertEquals(1, facets.getSpecificValue("dim2"));
     assertEquals(1, facets.getSpecificValue("dim3"));
-    IOUtils.close(writer, taxoWriter, searcher.getIndexReader(), taxoReader, dir, taxoDir);
+    writer.close();
+    IOUtils.close(taxoWriter, searcher.getIndexReader(), taxoReader, dir, taxoDir);
   }
 
   // LUCENE-4583: make sure if we require > 32 KB for one
   // document, we don't hit exc when using Facet42DocValuesFormat
   public void testManyFacetsInOneDocument() throws Exception {
-    assumeTrue("default Codec doesn't support huge BinaryDocValues", _TestUtil.fieldSupportsHugeBinaryDocValues(FacetsConfig.DEFAULT_INDEX_FIELD_NAME));
+    assumeTrue("default Codec doesn't support huge BinaryDocValues", TestUtil.fieldSupportsHugeBinaryDocValues(FacetsConfig.DEFAULT_INDEX_FIELD_NAME));
     Directory dir = newDirectory();
     Directory taxoDir = newDirectory();
-    IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()));
     RandomIndexWriter writer = new RandomIndexWriter(random(), dir, iwc);
     DirectoryTaxonomyWriter taxoWriter = new DirectoryTaxonomyWriter(taxoDir, IndexWriterConfig.OpenMode.CREATE);
 
     FacetsConfig config = new FacetsConfig();
     config.setMultiValued("dim", true);
     
-    int numLabels = _TestUtil.nextInt(random(), 40000, 100000);
+    int numLabels = TestUtil.nextInt(random(), 40000, 100000);
     
     Document doc = new Document();
     doc.add(newTextField("field", "text", Field.Store.NO));
@@ -450,14 +457,15 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
 
     FacetResult result = facets.getTopChildren(Integer.MAX_VALUE, "dim");
     assertEquals(numLabels, result.labelValues.length);
-    Set<String> allLabels = new HashSet<String>();
+    Set<String> allLabels = new HashSet<>();
     for (LabelAndValue labelValue : result.labelValues) {
       allLabels.add(labelValue.label);
       assertEquals(1, labelValue.value.intValue());
     }
     assertEquals(numLabels, allLabels.size());
-    
-    IOUtils.close(searcher.getIndexReader(), taxoWriter, writer, taxoReader, dir, taxoDir);
+
+    writer.close();
+    IOUtils.close(searcher.getIndexReader(), taxoWriter, taxoReader, dir, taxoDir);
   }
 
   // Make sure we catch when app didn't declare field as
@@ -478,7 +486,8 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     } catch (IllegalArgumentException iae) {
       // expected
     }
-    IOUtils.close(writer, taxoWriter, dir, taxoDir);
+    writer.close();
+    IOUtils.close(taxoWriter, dir, taxoDir);
   }
 
   // Make sure we catch when app didn't declare field as
@@ -500,7 +509,8 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     } catch (IllegalArgumentException iae) {
       // expected
     }
-    IOUtils.close(writer, taxoWriter, dir, taxoDir);
+    writer.close();
+    IOUtils.close(taxoWriter, dir, taxoDir);
   }
 
   public void testSeparateIndexedFields() throws Exception {
@@ -508,7 +518,7 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     Directory taxoDir = newDirectory();
     
     DirectoryTaxonomyWriter taxoWriter = new DirectoryTaxonomyWriter(taxoDir);
-    IndexWriter iw = new IndexWriter(indexDir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    IndexWriter iw = new IndexWriter(indexDir, newIndexWriterConfig(new MockAnalyzer(random())));
     FacetsConfig config = new FacetsConfig();
     config.setIndexFieldName("b", "$b");
     
@@ -529,7 +539,8 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     Facets facets2 = getTaxonomyFacetCounts(taxoReader, config, sfc, "$b");
     assertEquals(r.maxDoc(), facets1.getTopChildren(10, "a").value.intValue());
     assertEquals(r.maxDoc(), facets2.getTopChildren(10, "b").value.intValue());
-    IOUtils.close(taxoWriter, iw, taxoReader, taxoDir, r, indexDir);
+    iw.close();
+    IOUtils.close(taxoWriter, taxoReader, taxoDir, r, indexDir);
   }
   
   public void testCountRoot() throws Exception {
@@ -538,7 +549,7 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     Directory taxoDir = newDirectory();
     
     DirectoryTaxonomyWriter taxoWriter = new DirectoryTaxonomyWriter(taxoDir);
-    IndexWriter iw = new IndexWriter(indexDir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    IndexWriter iw = new IndexWriter(indexDir, newIndexWriterConfig(new MockAnalyzer(random())));
     FacetsConfig config = new FacetsConfig();
     for(int i = atLeast(30); i > 0; --i) {
       Document doc = new Document();
@@ -556,8 +567,9 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     for (FacetResult result : facets.getAllDims(10)) {
       assertEquals(r.numDocs(), result.value.intValue());
     }
-    
-    IOUtils.close(taxoWriter, iw, taxoReader, taxoDir, r, indexDir);
+
+    iw.close();
+    IOUtils.close(taxoWriter, taxoReader, taxoDir, r, indexDir);
   }
 
   public void testGetFacetResultsTwice() throws Exception {
@@ -566,7 +578,7 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     Directory taxoDir = newDirectory();
     
     DirectoryTaxonomyWriter taxoWriter = new DirectoryTaxonomyWriter(taxoDir);
-    IndexWriter iw = new IndexWriter(indexDir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    IndexWriter iw = new IndexWriter(indexDir, newIndexWriterConfig(new MockAnalyzer(random())));
     FacetsConfig config = new FacetsConfig();
 
     Document doc = new Document();
@@ -584,8 +596,9 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     List<FacetResult> res1 = facets.getAllDims(10);
     List<FacetResult> res2 = facets.getAllDims(10);
     assertEquals("calling getFacetResults twice should return the .equals()=true result", res1, res2);
-    
-    IOUtils.close(taxoWriter, iw, taxoReader, taxoDir, r, indexDir);
+
+    iw.close();
+    IOUtils.close(taxoWriter, taxoReader, taxoDir, r, indexDir);
   }
   
   public void testChildCount() throws Exception {
@@ -594,7 +607,7 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     Directory taxoDir = newDirectory();
     
     DirectoryTaxonomyWriter taxoWriter = new DirectoryTaxonomyWriter(taxoDir);
-    IndexWriter iw = new IndexWriter(indexDir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    IndexWriter iw = new IndexWriter(indexDir, newIndexWriterConfig(new MockAnalyzer(random())));
     FacetsConfig config = new FacetsConfig();
     for (int i = 0; i < 10; i++) {
       Document doc = new Document();
@@ -611,7 +624,8 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     
     assertEquals(10, facets.getTopChildren(2, "a").childCount);
 
-    IOUtils.close(taxoWriter, iw, taxoReader, taxoDir, r, indexDir);
+    iw.close();
+    IOUtils.close(taxoWriter, taxoReader, taxoDir, r, indexDir);
   }
 
   private void indexTwoDocs(TaxonomyWriter taxoWriter, IndexWriter indexWriter, FacetsConfig config, boolean withContent) throws Exception {
@@ -636,8 +650,8 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     Directory indexDir = newDirectory();
     Directory taxoDir = newDirectory();
     
-    IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
-    iwc.setMergePolicy(NoMergePolicy.COMPOUND_FILES); // prevent merges
+    IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()));
+    iwc.setMergePolicy(NoMergePolicy.INSTANCE); // prevent merges
     IndexWriter indexWriter = new IndexWriter(indexDir, iwc);
 
     TaxonomyWriter taxoWriter = new DirectoryTaxonomyWriter(taxoDir);
@@ -649,7 +663,8 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     indexTwoDocs(taxoWriter, indexWriter, null, true);         // 5th segment, with content, no categories
     indexTwoDocs(taxoWriter, indexWriter, config, true);  // 6th segment, with content, with categories
     indexTwoDocs(taxoWriter, indexWriter, null, true);         // 7th segment, with content, no categories
-    IOUtils.close(indexWriter, taxoWriter);
+    indexWriter.close();
+    IOUtils.close(taxoWriter);
 
     DirectoryReader indexReader = DirectoryReader.open(indexDir);
     TaxonomyReader taxoReader = new DirectoryTaxonomyReader(taxoDir);
@@ -678,7 +693,7 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
     DirectoryTaxonomyWriter tw = new DirectoryTaxonomyWriter(taxoDir);
     FacetsConfig config = new FacetsConfig();
     int numDocs = atLeast(1000);
-    int numDims = _TestUtil.nextInt(random(), 1, 7);
+    int numDims = TestUtil.nextInt(random(), 1, 7);
     List<TestDoc> testDocs = getRandomDocs(tokens, numDocs, numDims);
     for(TestDoc testDoc : testDocs) {
       Document doc = new Document();
@@ -710,7 +725,7 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
       // Slow, yet hopefully bug-free, faceting:
       @SuppressWarnings({"rawtypes","unchecked"}) Map<String,Integer>[] expectedCounts = new HashMap[numDims];
       for(int i=0;i<numDims;i++) {
-        expectedCounts[i] = new HashMap<String,Integer>();
+        expectedCounts[i] = new HashMap<>();
       }
 
       for(TestDoc doc : testDocs) {
@@ -728,9 +743,9 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
         }
       }
 
-      List<FacetResult> expected = new ArrayList<FacetResult>();
+      List<FacetResult> expected = new ArrayList<>();
       for(int i=0;i<numDims;i++) {
-        List<LabelAndValue> labelValues = new ArrayList<LabelAndValue>();
+        List<LabelAndValue> labelValues = new ArrayList<>();
         int totCount = 0;
         for(Map.Entry<String,Integer> ent : expectedCounts[i].entrySet()) {
           labelValues.add(new LabelAndValue(ent.getKey(), ent.getValue()));
@@ -753,6 +768,7 @@ public class TestTaxonomyFacetCounts extends FacetTestCase {
       assertEquals(expected, actual);
     }
 
-    IOUtils.close(w, tw, searcher.getIndexReader(), tr, indexDir, taxoDir);
+    w.close();
+    IOUtils.close(tw, searcher.getIndexReader(), tr, indexDir, taxoDir);
   }
 }

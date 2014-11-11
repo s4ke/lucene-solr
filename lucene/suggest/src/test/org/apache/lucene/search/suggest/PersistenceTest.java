@@ -16,19 +16,17 @@
  */
 package org.apache.lucene.search.suggest;
 
-import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Random;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.util.List;
 
-import org.apache.lucene.search.suggest.Lookup;
 import org.apache.lucene.search.suggest.Lookup.LookupResult;
 import org.apache.lucene.search.suggest.fst.FSTCompletionLookup;
 import org.apache.lucene.search.suggest.jaspell.JaspellLookup;
 import org.apache.lucene.search.suggest.tst.TSTLookup;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 public class PersistenceTest extends LuceneTestCase {
   public final String[] keys = new String[] {
@@ -71,18 +69,18 @@ public class PersistenceTest extends LuceneTestCase {
     lookup.build(new InputArrayIterator(keys));
 
     // Store the suggester.
-    File storeDir = TEMP_DIR;
-    lookup.store(new FileOutputStream(new File(storeDir, "lookup.dat")));
+    Path storeDir = createTempDir(LuceneTestCase.getTestClass().getSimpleName());
+    lookup.store(Files.newOutputStream(storeDir.resolve("lookup.dat")));
 
     // Re-read it from disk.
     lookup = lookupClass.newInstance();
-    lookup.load(new FileInputStream(new File(storeDir, "lookup.dat")));
+    lookup.load(Files.newInputStream(storeDir.resolve("lookup.dat")));
 
     // Assert validity.
     Random random = random();
     long previous = Long.MIN_VALUE;
     for (Input k : keys) {
-      List<LookupResult> list = lookup.lookup(_TestUtil.bytesToCharSequence(k.term, random), false, 1);
+      List<LookupResult> list = lookup.lookup(TestUtil.bytesToCharSequence(k.term, random), false, 1);
       assertEquals(1, list.size());
       LookupResult lookupResult = list.get(0);
       assertNotNull(k.term.utf8ToString(), lookupResult.key);

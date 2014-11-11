@@ -20,7 +20,7 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.queries.function.FunctionValues;
 import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.search.FieldComparator;
@@ -30,10 +30,11 @@ import org.apache.lucene.search.Scorer;
 class ExpressionComparator extends FieldComparator<Double> {
   private final double[] values;
   private double bottom;
+  private double topValue;
   
   private ValueSource source;
   private FunctionValues scores;
-  private AtomicReaderContext readerContext;
+  private LeafReaderContext readerContext;
   
   public ExpressionComparator(ValueSource source, int numHits) {
     values = new double[numHits];
@@ -47,7 +48,7 @@ class ExpressionComparator extends FieldComparator<Double> {
     // TODO: might be cleaner to lazy-init 'source' and set scorer after?
     assert readerContext != null;
     try {
-      Map<String,Object> context = new HashMap<String,Object>();
+      Map<String,Object> context = new HashMap<>();
       assert scorer != null;
       context.put("scorer", scorer);
       scores = source.getValues(context, readerContext);
@@ -67,6 +68,11 @@ class ExpressionComparator extends FieldComparator<Double> {
   }
   
   @Override
+  public void setTopValue(Double value) {
+    topValue = value.doubleValue();
+  }
+  
+  @Override
   public int compareBottom(int doc) throws IOException {
     return Double.compare(bottom, scores.doubleVal(doc));
   }
@@ -77,7 +83,7 @@ class ExpressionComparator extends FieldComparator<Double> {
   }
   
   @Override
-  public FieldComparator<Double> setNextReader(AtomicReaderContext context) throws IOException {
+  public FieldComparator<Double> setNextReader(LeafReaderContext context) throws IOException {
     this.readerContext = context;
     return this;
   }
@@ -88,7 +94,7 @@ class ExpressionComparator extends FieldComparator<Double> {
   }
   
   @Override
-  public int compareDocToValue(int doc, Double valueObj) throws IOException {
-    return Double.compare(scores.doubleVal(doc), valueObj.doubleValue());
+  public int compareTop(int doc) throws IOException {
+    return Double.compare(topValue, scores.doubleVal(doc));
   }
 }

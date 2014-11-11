@@ -17,7 +17,7 @@ package org.apache.lucene.search.spans;
  * limitations under the License.
  */
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.TermContext;
 import org.apache.lucene.util.Bits;
@@ -40,7 +40,7 @@ import java.util.HashSet;
 public class NearSpansUnordered extends Spans {
   private SpanNearQuery query;
 
-  private List<SpansCell> ordered = new ArrayList<SpansCell>();         // spans in query order
+  private List<SpansCell> ordered = new ArrayList<>();         // spans in query order
   private Spans[] subSpans;  
   private int slop;                               // from query
 
@@ -121,7 +121,7 @@ public class NearSpansUnordered extends Spans {
                     // TODO: Remove warning after API has been finalized
     @Override
     public Collection<byte[]> getPayload() throws IOException {
-      return new ArrayList<byte[]>(spans.getPayload());
+      return new ArrayList<>(spans.getPayload());
     }
 
     // TODO: Remove warning after API has been finalized
@@ -140,7 +140,7 @@ public class NearSpansUnordered extends Spans {
   }
 
 
-  public NearSpansUnordered(SpanNearQuery query, AtomicReaderContext context, Bits acceptDocs, Map<Term,TermContext> termContexts)
+  public NearSpansUnordered(SpanNearQuery query, LeafReaderContext context, Bits acceptDocs, Map<Term,TermContext> termContexts)
     throws IOException {
     this.query = query;
     this.slop = query.getSlop();
@@ -250,7 +250,7 @@ public class NearSpansUnordered extends Spans {
    */
   @Override
   public Collection<byte[]> getPayload() throws IOException {
-    Set<byte[]> matchPayload = new HashSet<byte[]>();
+    Set<byte[]> matchPayload = new HashSet<>();
     for (SpansCell cell = first; cell != null; cell = cell.next) {
       if (cell.isPayloadAvailable()) {
         matchPayload.addAll(cell.getPayload());

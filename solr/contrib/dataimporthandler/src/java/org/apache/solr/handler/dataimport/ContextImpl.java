@@ -54,6 +54,8 @@ public class ContextImpl extends Context {
 
   DocBuilder docBuilder;
 
+  Exception lastException = null;
+
 
   public ContextImpl(EntityProcessorWrapper epw, VariableResolver resolver,
                      DataSource ds, String currProcess,
@@ -138,7 +140,7 @@ public class ContextImpl extends Context {
     }
     if (Context.SCOPE_ENTITY.equals(scope)) {
       if (entitySession == null) {
-        entitySession = new HashMap<String, Object>();
+        entitySession = new HashMap<>();
       }
       entitySession.put(name, val);
     } else if (Context.SCOPE_GLOBAL.equals(scope)) {

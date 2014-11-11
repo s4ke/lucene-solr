@@ -25,11 +25,12 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.Constants;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.InfoStream;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.StringHelper;
+import org.apache.lucene.util.TestUtil;
+import org.apache.lucene.util.Version;
 
 public class TestSegmentMerger extends LuceneTestCase {
   //The variables for the new merged segment
@@ -78,9 +79,9 @@ public class TestSegmentMerger extends LuceneTestCase {
 
   public void testMerge() throws IOException {
     final Codec codec = Codec.getDefault();
-    final SegmentInfo si = new SegmentInfo(mergedDir, Constants.LUCENE_MAIN_VERSION, mergedSegment, -1, false, codec, null);
+    final SegmentInfo si = new SegmentInfo(mergedDir, Version.LATEST, mergedSegment, -1, false, codec, null, StringHelper.randomId());
 
-    SegmentMerger merger = new SegmentMerger(Arrays.<AtomicReader>asList(reader1, reader2),
+    SegmentMerger merger = new SegmentMerger(Arrays.<LeafReader>asList(reader1, reader2),
         si, InfoStream.getDefault(), mergedDir,
         MergeState.CheckAbort.NONE, new FieldInfos.FieldNumbers(), newIOContext(random()));
     MergeState mergeState = merger.merge();
@@ -88,9 +89,8 @@ public class TestSegmentMerger extends LuceneTestCase {
     assertTrue(docsMerged == 2);
     //Should be able to open a new SegmentReader against the new directory
     SegmentReader mergedReader = new SegmentReader(new SegmentCommitInfo(
-                                                         new SegmentInfo(mergedDir, Constants.LUCENE_MAIN_VERSION, mergedSegment, docsMerged,
-                                                                         false, codec, null),
-                                                         0, -1L, -1L),
+                                                         mergeState.segmentInfo,
+                                                         0, -1L, -1L, -1L),
                                                    newIOContext(random()));
     assertTrue(mergedReader != null);
     assertTrue(mergedReader.numDocs() == 2);
@@ -102,12 +102,12 @@ public class TestSegmentMerger extends LuceneTestCase {
     assertTrue(newDoc2 != null);
     assertTrue(DocHelper.numFields(newDoc2) == DocHelper.numFields(doc2) - DocHelper.unstored.size());
 
-    DocsEnum termDocs = _TestUtil.docs(random(), mergedReader,
-                                       DocHelper.TEXT_FIELD_2_KEY,
-                                       new BytesRef("field"),
-                                       MultiFields.getLiveDocs(mergedReader),
-                                       null,
-                                       0);
+    DocsEnum termDocs = TestUtil.docs(random(), mergedReader,
+        DocHelper.TEXT_FIELD_2_KEY,
+        new BytesRef("field"),
+        MultiFields.getLiveDocs(mergedReader),
+        null,
+        0);
     assertTrue(termDocs != null);
     assertTrue(termDocs.nextDoc() != DocIdSetIterator.NO_MORE_DOCS);
 
@@ -153,8 +153,8 @@ public class TestSegmentMerger extends LuceneTestCase {
   }
 
   public void testBuildDocMap() {
-    final int maxDoc = _TestUtil.nextInt(random(), 1, 128);
-    final int numDocs = _TestUtil.nextInt(random(), 0, maxDoc);
+    final int maxDoc = TestUtil.nextInt(random(), 1, 128);
+    final int numDocs = TestUtil.nextInt(random(), 0, maxDoc);
     final int numDeletedDocs = maxDoc - numDocs;
     final FixedBitSet liveDocs = new FixedBitSet(maxDoc);
     for (int i = 0; i < numDocs; ++i) {

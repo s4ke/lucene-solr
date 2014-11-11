@@ -51,7 +51,7 @@ public class TestKStemmer extends BaseTokenStreamTestCase {
    * testCreateMap, commented out below).
    */
   public void testVocabulary() throws Exception {
-    assertVocabulary(a, getDataFile("kstemTestData.zip"), "kstem_examples.txt");
+    assertVocabulary(a, getDataPath("kstemTestData.zip"), "kstem_examples.txt");
   }
   
   public void testEmptyTerm() throws IOException {
@@ -73,7 +73,7 @@ public class TestKStemmer extends BaseTokenStreamTestCase {
     // tf = new KStemFilter(tf);
 
     KStemmer kstem = new KStemmer();
-    Map<String,String> map = new TreeMap<String,String>();
+    Map<String,String> map = new TreeMap<>();
     for(;;) {
       Token t = tf.next();
       if (t==null) break;

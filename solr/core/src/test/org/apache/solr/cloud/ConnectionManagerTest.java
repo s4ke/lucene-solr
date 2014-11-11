@@ -17,12 +17,13 @@ package org.apache.solr.cloud;
  * the License.
  */
 
-import java.io.File;
-
 import org.apache.lucene.util.LuceneTestCase.Slow;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.cloud.ConnectionManager;
 import org.apache.solr.common.cloud.SolrZkClient;
+import org.apache.zookeeper.WatchedEvent;
+import org.apache.zookeeper.Watcher.Event.EventType;
+import org.apache.zookeeper.Watcher.Event.KeeperState;
 import org.junit.Ignore;
 
 @Slow
@@ -33,10 +34,8 @@ public class ConnectionManagerTest extends SolrTestCaseJ4 {
   @Ignore
   public void testConnectionManager() throws Exception {
     
-    createTempDir();
     // setup a SolrZkClient to do some getBaseUrlForNodeName testing
-    String zkDir = dataDir.getAbsolutePath() + File.separator
-        + "zookeeper/server1/data";
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
     
     ZkTestServer server = new ZkTestServer(zkDir);
     try {
@@ -48,10 +47,9 @@ public class ConnectionManagerTest extends SolrTestCaseJ4 {
       SolrZkClient zkClient = new SolrZkClient(server.getZkAddress(), TIMEOUT);
       ConnectionManager cm = zkClient.getConnectionManager();
       try {
-        System.err.println("ISEXPIRED:" + cm.isLikelyExpired());
         assertFalse(cm.isLikelyExpired());
-        
-        zkClient.getSolrZooKeeper().pauseCnxn(TIMEOUT);
+
+        zkClient.getSolrZooKeeper().closeCnxn();
         
         long sessionId = zkClient.getSolrZooKeeper().getSessionId();
         server.expire(sessionId);
@@ -66,5 +64,49 @@ public class ConnectionManagerTest extends SolrTestCaseJ4 {
       server.shutdown();
     }
   }
-  
+
+  public void testLikelyExpired() throws Exception {
+
+    // setup a SolrZkClient to do some getBaseUrlForNodeName testing
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
+
+    ZkTestServer server = new ZkTestServer(zkDir);
+    try {
+      server.run();
+
+      AbstractZkTestCase.tryCleanSolrZkNode(server.getZkHost());
+      AbstractZkTestCase.makeSolrZkNode(server.getZkHost());
+
+      SolrZkClient zkClient = new SolrZkClient(server.getZkAddress(), TIMEOUT);
+      ConnectionManager cm = zkClient.getConnectionManager();
+      try {
+        assertFalse(cm.isLikelyExpired());
+        assertTrue(cm.isConnected());
+        cm.process(new WatchedEvent(EventType.None, KeeperState.Disconnected, ""));
+        // disconnect shouldn't immediately set likelyExpired
+        assertFalse(cm.isConnected());
+        assertFalse(cm.isLikelyExpired());
+
+        // but it should after the timeout
+        Thread.sleep((long)(zkClient.getZkClientTimeout() * 1.5));
+        assertFalse(cm.isConnected());
+        assertTrue(cm.isLikelyExpired());
+
+        // even if we disconnect immediately again
+        cm.process(new WatchedEvent(EventType.None, KeeperState.Disconnected, ""));
+        assertFalse(cm.isConnected());
+        assertTrue(cm.isLikelyExpired());
+
+        // reconnect -- should no longer be likely expired
+        cm.process(new WatchedEvent(EventType.None, KeeperState.SyncConnected, ""));
+        assertFalse(cm.isLikelyExpired());
+        assertTrue(cm.isConnected());
+      } finally {
+        cm.close();
+        zkClient.close();
+      }
+    } finally {
+      server.shutdown();
+    }
+  }
 }

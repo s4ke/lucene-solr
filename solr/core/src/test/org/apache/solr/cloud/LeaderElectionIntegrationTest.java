@@ -57,9 +57,9 @@ public class LeaderElectionIntegrationTest extends SolrTestCaseJ4 {
   
   protected String zkDir;
   
-  private Map<Integer,CoreContainer> containerMap = new HashMap<Integer,CoreContainer>();
+  private Map<Integer,CoreContainer> containerMap = new HashMap<>();
   
-  private Map<String,Set<Integer>> shardPorts = new HashMap<String,Set<Integer>>();
+  private Map<String,Set<Integer>> shardPorts = new HashMap<>();
   
   private SolrZkClient zkClient;
 
@@ -73,14 +73,13 @@ public class LeaderElectionIntegrationTest extends SolrTestCaseJ4 {
   @Override
   public void setUp() throws Exception {
     super.setUp();
-    createTempDir();
+
     ignoreException("No UpdateLog found - cannot sync");
     ignoreException("No UpdateLog found - cannot recover");
     
     System.setProperty("zkClientTimeout", "8000");
     
-    zkDir = dataDir.getAbsolutePath() + File.separator
-        + "zookeeper" + System.currentTimeMillis() + "/server1/data";
+    zkDir = createTempDir("zkData").toFile().getAbsolutePath();
     zkServer = new ZkTestServer(zkDir);
     zkServer.run();
     System.setProperty("zkHost", zkServer.getZkAddress());
@@ -133,8 +132,7 @@ public class LeaderElectionIntegrationTest extends SolrTestCaseJ4 {
      
   private void setupContainer(int port, String shard) throws IOException,
       ParserConfigurationException, SAXException {
-    File data = new File(dataDir + File.separator + "data_" + port);
-    data.mkdirs();
+    File data = createTempDir().toFile();
     
     System.setProperty("hostPort", Integer.toString(port));
     System.setProperty("shard", shard);
@@ -142,7 +140,7 @@ public class LeaderElectionIntegrationTest extends SolrTestCaseJ4 {
     System.setProperty("solr.solr.home", TEST_HOME());
     Set<Integer> ports = shardPorts.get(shard);
     if (ports == null) {
-      ports = new HashSet<Integer>();
+      ports = new HashSet<>();
       shardPorts.put(shard, ports);
     }
     ports.add(port);
@@ -197,7 +195,7 @@ public class LeaderElectionIntegrationTest extends SolrTestCaseJ4 {
       
       if (leaderPort == newLeaderPort) {
         zkClient.printLayoutToStdOut();
-        fail("We didn't find a new leader! " + leaderPort + " was shutdown, but it's still showing as the leader");
+        fail("We didn't find a new leader! " + leaderPort + " was close, but it's still showing as the leader");
       }
       
       assertTrue("Could not find leader " + newLeaderPort + " in " + shard1Ports, shard1Ports.contains(newLeaderPort));
@@ -214,7 +212,10 @@ public class LeaderElectionIntegrationTest extends SolrTestCaseJ4 {
     String leader = getLeader();
     int leaderPort = getLeaderPort(leader);
     ZkController zkController = containerMap.get(leaderPort).getZkController();
-    zkController.getZkClient().getSolrZooKeeper().pauseCnxn(zkController.getClientTimeout() + 100);
+
+    zkController.getZkClient().getSolrZooKeeper().closeCnxn();
+    long sessionId = zkClient.getSolrZooKeeper().getSessionId();
+    zkServer.expire(sessionId);
     
     for (int i = 0; i < 60; i++) { // wait till leader is changed
       if (leaderPort != getLeaderPort(getLeader())) {

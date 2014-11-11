@@ -35,16 +35,18 @@ import org.apache.lucene.codecs.PostingsFormat;
 import org.apache.lucene.codecs.TermStats;
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.DocsEnum;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.Fields;
 import org.apache.lucene.index.IndexFileNames;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.FixedBitSet;
@@ -65,7 +67,7 @@ public final class RAMOnlyPostingsFormat extends PostingsFormat {
     
   // Postings state:
   static class RAMPostings extends FieldsProducer {
-    final Map<String,RAMField> fieldToTerms = new TreeMap<String,RAMField>();
+    final Map<String,RAMField> fieldToTerms = new TreeMap<>();
 
     @Override
     public Terms terms(String field) {
@@ -94,11 +96,19 @@ public final class RAMOnlyPostingsFormat extends PostingsFormat {
       }
       return sizeInBytes;
     }
+    
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Accountables.namedAccountables("field", fieldToTerms);
+    }
+
+    @Override
+    public void checkIntegrity() throws IOException {}
   } 
 
-  static class RAMField extends Terms {
+  static class RAMField extends Terms implements Accountable {
     final String field;
-    final SortedMap<String,RAMTerm> termToDocs = new TreeMap<String,RAMTerm>();
+    final SortedMap<String,RAMTerm> termToDocs = new TreeMap<>();
     long sumTotalTermFreq;
     long sumDocFreq;
     int docCount;
@@ -109,13 +119,18 @@ public final class RAMOnlyPostingsFormat extends PostingsFormat {
       this.info = info;
     }
 
-    /** Returns approximate RAM bytes used */
+    @Override
     public long ramBytesUsed() {
       long sizeInBytes = 0;
       for(RAMTerm term : termToDocs.values()) {
         sizeInBytes += term.ramBytesUsed();
       }
       return sizeInBytes;
+    }
+
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Collections.emptyList();
     }
 
     @Override
@@ -127,7 +142,7 @@ public final class RAMOnlyPostingsFormat extends PostingsFormat {
     public long getSumTotalTermFreq() {
       return sumTotalTermFreq;
     }
-      
+
     @Override
     public long getSumDocFreq() throws IOException {
       return sumDocFreq;
@@ -164,15 +179,15 @@ public final class RAMOnlyPostingsFormat extends PostingsFormat {
     }
   }
 
-  static class RAMTerm {
+  static class RAMTerm implements Accountable {
     final String term;
     long totalTermFreq;
-    final List<RAMDoc> docs = new ArrayList<RAMDoc>();
+    final List<RAMDoc> docs = new ArrayList<>();
     public RAMTerm(String term) {
       this.term = term;
     }
 
-    /** Returns approximate RAM bytes used */
+    @Override
     public long ramBytesUsed() {
       long sizeInBytes = 0;
       for(RAMDoc rDoc : docs) {
@@ -180,9 +195,14 @@ public final class RAMOnlyPostingsFormat extends PostingsFormat {
       }
       return sizeInBytes;
     }
+
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Collections.emptyList();
+    }
   }
 
-  static class RAMDoc {
+  static class RAMDoc implements Accountable {
     final int docID;
     final int[] positions;
     byte[][] payloads;
@@ -192,7 +212,7 @@ public final class RAMOnlyPostingsFormat extends PostingsFormat {
       positions = new int[freq];
     }
 
-    /** Returns approximate RAM bytes used */
+    @Override
     public long ramBytesUsed() {
       long sizeInBytes = 0;
       sizeInBytes +=  (positions!=null) ? RamUsageEstimator.sizeOf(positions) : 0;
@@ -203,6 +223,11 @@ public final class RAMOnlyPostingsFormat extends PostingsFormat {
         }
       }
       return sizeInBytes;
+    }
+    
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Collections.emptyList();
     }
   }
 
@@ -329,6 +354,10 @@ public final class RAMOnlyPostingsFormat extends PostingsFormat {
 
         termsConsumer.finish(sumTotalTermFreq, sumDocFreq, docsSeen.cardinality());
       }
+    }
+
+    @Override
+    public void close() throws IOException {
     }
   }
 
@@ -599,7 +628,7 @@ public final class RAMOnlyPostingsFormat extends PostingsFormat {
   }
 
   // Holds all indexes created, keyed by the ID assigned in fieldsConsumer
-  private final Map<Integer,RAMPostings> state = new HashMap<Integer,RAMPostings>();
+  private final Map<Integer,RAMPostings> state = new HashMap<>();
 
   private final AtomicInteger nextID = new AtomicInteger();
 

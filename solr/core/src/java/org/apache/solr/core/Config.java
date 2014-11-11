@@ -48,9 +48,11 @@ import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
 
 import java.io.IOException;
+import java.text.ParseException;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.SortedSet;
@@ -101,7 +103,7 @@ public class Config {
    * @param is the resource as a SAX InputSource
    * @param prefix an optional prefix that will be preprended to all non-absolute xpath expressions
    */
-  public Config(SolrResourceLoader loader, String name, InputSource is, String prefix, boolean subProps) throws ParserConfigurationException, IOException, SAXException 
+  public Config(SolrResourceLoader loader, String name, InputSource is, String prefix, boolean substituteProps) throws ParserConfigurationException, IOException, SAXException
   {
     if( loader == null ) {
       loader = new SolrResourceLoader( null );
@@ -137,8 +139,8 @@ public class Config {
         // some XML parsers are broken and don't close the byte stream (but they should according to spec)
         IOUtils.closeQuietly(is.getByteStream());
       }
-      if (subProps) {
-        DOMUtil.substituteProperties(doc, loader.getCoreProperties());
+      if (substituteProps) {
+        DOMUtil.substituteProperties(doc, getSubstituteProperties());
       }
     } catch (ParserConfigurationException e)  {
       SolrException.log(log, "Exception during parsing file: " + name, e);
@@ -151,7 +153,11 @@ public class Config {
       throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, e);
     }
   }
-  
+
+  protected Properties getSubstituteProperties() {
+    return loader.getCoreProperties();
+  }
+
   public Config(SolrResourceLoader loader, String name, Document doc) {
     this.prefix = null;
     this.doc = doc;
@@ -206,7 +212,7 @@ public class Config {
   }
   
   public void substituteProperties() {
-    DOMUtil.substituteProperties(doc, loader.getCoreProperties());
+    DOMUtil.substituteProperties(doc, getSubstituteProperties());
   }
 
 
@@ -301,14 +307,14 @@ public class Config {
    * or null if all attributes are known.
    */
   public Set<String> getUnknownAttributes(Element element, String... knownAttributes) {
-    Set<String> knownAttributeSet = new HashSet<String>(Arrays.asList(knownAttributes));
+    Set<String> knownAttributeSet = new HashSet<>(Arrays.asList(knownAttributes));
     Set<String> unknownAttributeSet = null;
     NamedNodeMap attributes = element.getAttributes();
     for (int i = 0 ; i < attributes.getLength() ; ++i) {
       final String attributeName = attributes.item(i).getNodeName();
       if ( ! knownAttributeSet.contains(attributeName)) {
         if (null == unknownAttributeSet) {
-          unknownAttributeSet = new HashSet<String>();
+          unknownAttributeSet = new HashSet<>();
         }
         unknownAttributeSet.add(attributeName);
       }
@@ -321,7 +327,7 @@ public class Config {
    * contains an attribute name that is not among knownAttributes. 
    */
   public void complainAboutUnknownAttributes(String elementXpath, String... knownAttributes) {
-    SortedMap<String,SortedSet<String>> problems = new TreeMap<String,SortedSet<String>>(); 
+    SortedMap<String,SortedSet<String>> problems = new TreeMap<>();
     NodeList nodeList = getNodeList(elementXpath, false);
     for (int i = 0 ; i < nodeList.getLength() ; ++i) {
       Element element = (Element)nodeList.item(i);
@@ -330,7 +336,7 @@ public class Config {
         String elementName = element.getNodeName();
         SortedSet<String> allUnknownAttributes = problems.get(elementName);
         if (null == allUnknownAttributes) {
-          allUnknownAttributes = new TreeSet<String>();
+          allUnknownAttributes = new TreeSet<>();
           problems.put(elementName, allUnknownAttributes);
         }
         allUnknownAttributes.addAll(unknownAttributes);
@@ -441,16 +447,14 @@ public class Config {
     final Version version;
     try {
       version = Version.parseLeniently(matchVersion);
-    } catch (IllegalArgumentException iae) {
+    } catch (ParseException pe) {
       throw new SolrException(SolrException.ErrorCode.SERVER_ERROR,
-        "Invalid luceneMatchVersion '" + matchVersion +
-        "', valid values are: " + Arrays.toString(Version.values()) +
-        " or a string in format 'V.V'", iae);
+        "Invalid luceneMatchVersion.  Should be of the form 'V.V.V' (e.g. 4.8.0)", pe);
     }
     
-    if (version == Version.LUCENE_CURRENT && !versionWarningAlreadyLogged.getAndSet(true)) {
+    if (version == Version.LATEST && !versionWarningAlreadyLogged.getAndSet(true)) {
       log.warn(
-        "You should not use LUCENE_CURRENT as luceneMatchVersion property: "+
+        "You should not use LATEST as luceneMatchVersion property: "+
         "if you use this setting, and then Solr upgrades to a newer release of Lucene, "+
         "sizable changes may happen. If precise back compatibility is important "+
         "then you should instead explicitly specify an actual Lucene version."

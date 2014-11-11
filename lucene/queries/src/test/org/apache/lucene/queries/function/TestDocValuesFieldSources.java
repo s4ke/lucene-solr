@@ -25,17 +25,18 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.SortedDocValuesField;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.DirectoryReader;
-import org.apache.lucene.index.FieldInfo.DocValuesType;
+import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.queries.function.valuesource.BytesRefFieldSource;
 import org.apache.lucene.queries.function.valuesource.LongFieldSource;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.packed.PackedInts;
 
 import com.carrotsearch.randomizedtesting.generators.RandomInts;
@@ -45,7 +46,7 @@ public class TestDocValuesFieldSources extends LuceneTestCase {
 
   public void test(DocValuesType type) throws IOException {
     Directory d = newDirectory();
-    IndexWriterConfig iwConfig = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig iwConfig = newIndexWriterConfig(new MockAnalyzer(random()));
     final int nDocs = atLeast(50);
     final Field id = new NumericDocValuesField("id", 0);
     final Field f;
@@ -75,7 +76,7 @@ public class TestDocValuesFieldSources extends LuceneTestCase {
         case SORTED:
         case BINARY:
           do {
-            vals[i] = _TestUtil.randomSimpleString(random(), 20);
+            vals[i] = TestUtil.randomSimpleString(random(), 20);
           } while (((String) vals[i]).isEmpty());
           f.setBytesValue(new BytesRef((String) vals[i]));
           break;
@@ -93,7 +94,7 @@ public class TestDocValuesFieldSources extends LuceneTestCase {
     iw.close();
 
     DirectoryReader rd = DirectoryReader.open(d);
-    for (AtomicReaderContext leave : rd.leaves()) {
+    for (LeafReaderContext leave : rd.leaves()) {
       final FunctionValues ids = new LongFieldSource("id").getValues(null, leave);
       final ValueSource vs;
       switch (type) {
@@ -108,7 +109,7 @@ public class TestDocValuesFieldSources extends LuceneTestCase {
           throw new AssertionError();
       }
       final FunctionValues values = vs.getValues(null, leave);
-      BytesRef bytes = new BytesRef();
+      BytesRefBuilder bytes = new BytesRefBuilder();
       for (int i = 0; i < leave.reader().maxDoc(); ++i) {
         assertTrue(values.exists(i));
         if (vs instanceof BytesRefFieldSource) {
@@ -131,7 +132,7 @@ public class TestDocValuesFieldSources extends LuceneTestCase {
             assertEquals(expected, values.objectVal(i));
             assertEquals(expected, values.strVal(i));
             assertTrue(values.bytesVal(i, bytes));
-            assertEquals(new BytesRef((String) expected), bytes);
+            assertEquals(new BytesRef((String) expected), bytes.get());
             break;
           case NUMERIC:
             assertEquals(((Number) expected).longValue(), values.longVal(i));
@@ -145,7 +146,7 @@ public class TestDocValuesFieldSources extends LuceneTestCase {
 
   public void test() throws IOException {
     for (DocValuesType type : DocValuesType.values()) {
-      if (type != DocValuesType.SORTED_SET) {
+      if (type != DocValuesType.SORTED_SET && type != DocValuesType.SORTED_NUMERIC && type != DocValuesType.NONE) {
         test(type);
       }
     }

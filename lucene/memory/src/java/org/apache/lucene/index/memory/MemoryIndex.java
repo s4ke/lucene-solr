@@ -32,30 +32,31 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
 import org.apache.lucene.analysis.tokenattributes.TermToBytesRefAttribute;
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.BinaryDocValues;
+import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.DocsEnum;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.FieldInvertState;
 import org.apache.lucene.index.Fields;
+import org.apache.lucene.index.IndexOptions;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.OrdTermState;
 import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.index.StoredFieldVisitor;
 import org.apache.lucene.index.TermState;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
-import org.apache.lucene.search.Collector;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.Scorer;
+import org.apache.lucene.search.SimpleCollector;
 import org.apache.lucene.search.similarities.Similarity;
-import org.apache.lucene.store.RAMDirectory; // for javadocs
+import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.ByteBlockPool;
@@ -153,18 +154,12 @@ import org.apache.lucene.util.RecyclingIntBlockAllocator;
  * </pre>
  * 
  * 
- * <h4>No thread safety guarantees</h4>
- * 
- * An instance can be queried multiple times with the same or different queries,
- * but an instance is not thread-safe. If desired use idioms such as:
- * <pre class="prettyprint">
- * MemoryIndex index = ...
- * synchronized (index) {
- *    // read and/or write index (i.e. add fields and/or query)
- * } 
- * </pre>
- * 
- * 
+ * <h4>Thread safety guarantees</h4>
+ *
+ * MemoryIndex is not normally thread-safe for adds or queries.  However, queries
+ * are thread-safe after {@code freeze()} has been called.
+ *
+ *
  * <h4>Performance Notes</h4>
  * 
  * Internally there's a new data structure geared towards efficient indexing 
@@ -195,7 +190,7 @@ import org.apache.lucene.util.RecyclingIntBlockAllocator;
 public class MemoryIndex {
 
   /** info for each field: Map<String fieldName, Info field> */
-  private final HashMap<String,Info> fields = new HashMap<String,Info>();
+  private final HashMap<String,Info> fields = new HashMap<>();
   
   /** fields sorted ascending by fieldName; lazily computed on demand */
   private transient Map.Entry<String,Info>[] sortedFields; 
@@ -209,9 +204,13 @@ public class MemoryIndex {
 //  private final IntBlockPool.SliceReader postingsReader;
   private final IntBlockPool.SliceWriter postingsWriter;
   
-  private HashMap<String,FieldInfo> fieldInfos = new HashMap<String,FieldInfo>();
+  private HashMap<String,FieldInfo> fieldInfos = new HashMap<>();
 
   private Counter bytesUsed;
+
+  private boolean frozen = false;
+
+  private Similarity normSimilarity = IndexSearcher.getDefaultSimilarity();
   
   /**
    * Sorts term entries into ascending order; also works for
@@ -295,7 +294,7 @@ public class MemoryIndex {
       throw new RuntimeException(ex);
     }
 
-    addField(fieldName, stream, 1.0f, analyzer.getPositionIncrementGap(fieldName));
+    addField(fieldName, stream, 1.0f, analyzer.getPositionIncrementGap(fieldName), analyzer.getOffsetGap(fieldName));
   }
   
   /**
@@ -340,7 +339,7 @@ public class MemoryIndex {
   
   /**
    * Equivalent to <code>addField(fieldName, stream, 1.0f)</code>.
-   * 
+   *
    * @param fieldName
    *            a name to be associated with the text
    * @param stream
@@ -370,6 +369,31 @@ public class MemoryIndex {
     addField(fieldName, stream, boost, 0);
   }
 
+
+  /**
+   * Iterates over the given token stream and adds the resulting terms to the index;
+   * Equivalent to adding a tokenized, indexed, termVectorStored, unstored,
+   * Lucene {@link org.apache.lucene.document.Field}.
+   * Finally closes the token stream. Note that untokenized keywords can be added with this method via
+   * {@link #keywordTokenStream(Collection)}, the Lucene <code>KeywordTokenizer</code> or similar utilities.
+   *
+   * @param fieldName
+   *            a name to be associated with the text
+   * @param stream
+   *            the token stream to retrieve tokens from.
+   * @param boost
+   *            the boost factor for hits for this field
+   *
+   * @param positionIncrementGap
+   *            the position increment gap if fields with the same name are added more than once
+   *
+   *
+   * @see org.apache.lucene.document.Field#setBoost(float)
+   */
+  public void addField(String fieldName, TokenStream stream, float boost, int positionIncrementGap) {
+    addField(fieldName, stream, boost, positionIncrementGap, 1);
+  }
+
   /**
    * Iterates over the given token stream and adds the resulting terms to the index;
    * Equivalent to adding a tokenized, indexed, termVectorStored, unstored,
@@ -377,6 +401,7 @@ public class MemoryIndex {
    * Finally closes the token stream. Note that untokenized keywords can be added with this method via 
    * {@link #keywordTokenStream(Collection)}, the Lucene <code>KeywordTokenizer</code> or similar utilities.
    * 
+   *
    * @param fieldName
    *            a name to be associated with the text
    * @param stream
@@ -385,11 +410,14 @@ public class MemoryIndex {
    *            the boost factor for hits for this field
    * @param positionIncrementGap
    *            the position increment gap if fields with the same name are added more than once
-   *
+   * @param offsetGap
+   *            the offset gap if fields with the same name are added more than once
    * @see org.apache.lucene.document.Field#setBoost(float)
    */
-  public void addField(String fieldName, TokenStream stream, float boost, int positionIncrementGap) {
+  public void addField(String fieldName, TokenStream stream, float boost, int positionIncrementGap, int offsetGap) {
     try {
+      if (frozen)
+        throw new IllegalArgumentException("Cannot call addField() when MemoryIndex is frozen");
       if (fieldName == null)
         throw new IllegalArgumentException("fieldName must not be null");
       if (stream == null)
@@ -403,10 +431,12 @@ public class MemoryIndex {
       final SliceByteStartArray sliceArray;
       Info info = null;
       long sumTotalTermFreq = 0;
+      int offset = 0;
       if ((info = fields.get(fieldName)) != null) {
         numTokens = info.numTokens;
         numOverlapTokens = info.numOverlapTokens;
         pos = info.lastPosition + positionIncrementGap;
+        offset = info.lastOffset + offsetGap;
         terms = info.terms;
         boost *= info.boost;
         sliceArray = info.sliceArray;
@@ -418,7 +448,9 @@ public class MemoryIndex {
 
       if (!fieldInfos.containsKey(fieldName)) {
         fieldInfos.put(fieldName, 
-            new FieldInfo(fieldName, true, fieldInfos.size(), false, false, false, this.storeOffsets ? IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS : IndexOptions.DOCS_AND_FREQS_AND_POSITIONS , null, null, null));
+            new FieldInfo(fieldName, fieldInfos.size(), false, false, false,
+                          this.storeOffsets ? IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS : IndexOptions.DOCS_AND_FREQS_AND_POSITIONS,
+                          DocValuesType.NONE, -1, null));
       }
       TermToBytesRefAttribute termAtt = stream.getAttribute(TermToBytesRefAttribute.class);
       PositionIncrementAttribute posIncrAttribute = stream.addAttribute(PositionIncrementAttribute.class);
@@ -447,8 +479,8 @@ public class MemoryIndex {
           postingsWriter.writeInt(pos);
         } else {
           postingsWriter.writeInt(pos);
-          postingsWriter.writeInt(offsetAtt.startOffset());
-          postingsWriter.writeInt(offsetAtt.endOffset());
+          postingsWriter.writeInt(offsetAtt.startOffset() + offset);
+          postingsWriter.writeInt(offsetAtt.endOffset() + offset);
         }
         sliceArray.end[ord] = postingsWriter.getCurrentOffset();
       }
@@ -456,7 +488,7 @@ public class MemoryIndex {
 
       // ensure infos.numTokens > 0 invariant; needed for correct operation of terms()
       if (numTokens > 0) {
-        fields.put(fieldName, new Info(terms, sliceArray, numTokens, numOverlapTokens, boost, pos, sumTotalTermFreq));
+        fields.put(fieldName, new Info(terms, sliceArray, numTokens, numOverlapTokens, boost, pos, offsetAtt.endOffset() + offset, sumTotalTermFreq));
         sortedFields = null;    // invalidate sorted view, if any
       }
     } catch (Exception e) { // can never happen
@@ -473,6 +505,15 @@ public class MemoryIndex {
   }
 
   /**
+   * Set the Similarity to be used for calculating field norms
+   */
+  public void setSimilarity(Similarity similarity) {
+    if (frozen)
+      throw new IllegalArgumentException("Cannot set Similarity when MemoryIndex is frozen");
+    this.normSimilarity = similarity;
+  }
+
+  /**
    * Creates and returns a searcher that can be used to execute arbitrary
    * Lucene queries and to collect the resulting query results as hits.
    * 
@@ -481,8 +522,23 @@ public class MemoryIndex {
   public IndexSearcher createSearcher() {
     MemoryIndexReader reader = new MemoryIndexReader();
     IndexSearcher searcher = new IndexSearcher(reader); // ensures no auto-close !!
-    reader.setSearcher(searcher); // to later get hold of searcher.getSimilarity()
+    searcher.setSimilarity(normSimilarity);
     return searcher;
+  }
+
+  /**
+   * Prepares the MemoryIndex for querying in a non-lazy way.
+   *
+   * After calling this you can query the MemoryIndex from multiple threads, but you
+   * cannot subsequently add new data.
+   */
+  public void freeze() {
+    this.frozen = true;
+    sortFields();
+    for (Map.Entry<String,Info> info : sortedFields) {
+      info.getValue().sortTerms();
+    }
+    calculateNormValues();
   }
   
   /**
@@ -503,7 +559,7 @@ public class MemoryIndex {
     IndexSearcher searcher = createSearcher();
     try {
       final float[] scores = new float[1]; // inits to 0.0f (no match)
-      searcher.search(query, new Collector() {
+      searcher.search(query, new SimpleCollector() {
         private Scorer scorer;
 
         @Override
@@ -521,8 +577,6 @@ public class MemoryIndex {
           return true;
         }
 
-        @Override
-        public void setNextReader(AtomicReaderContext context) { }
       });
       float score = scores[0];
       return score;
@@ -544,15 +598,6 @@ public class MemoryIndex {
        * would not degrade performance...
        */
     }   
-  }
-  
-  /**
-   * Returns a reasonable approximation of the main memory [bytes] consumed by
-   * this instance. Useful for smart memory sensititive caches/pools.
-   * @return the main memory consumption
-   */
-  public long getMemorySize() {
-    return RamUsageEstimator.sizeOf(this);
   }
 
   /** sorts into ascending order (on demand), reusing memory along the way */
@@ -626,7 +671,6 @@ public class MemoryIndex {
       
       result.append("\tterms=" + info.terms.size());
       result.append(", positions=" + numPositions);
-      result.append(", memory=" + RamUsageEstimator.humanReadableUnits(RamUsageEstimator.sizeOf(info)));
       result.append("\n");
       sumPositions += numPositions;
       sumTerms += info.terms.size();
@@ -635,7 +679,6 @@ public class MemoryIndex {
     result.append("\nfields=" + sortedFields.length);
     result.append(", terms=" + sumTerms);
     result.append(", positions=" + sumPositions);
-    result.append(", memory=" + RamUsageEstimator.humanReadableUnits(getMemorySize()));
     return result.toString();
   }
   
@@ -668,9 +711,12 @@ public class MemoryIndex {
     private final long sumTotalTermFreq;
 
     /** the last position encountered in this field for multi field support*/
-    private int lastPosition;
+    private final int lastPosition;
 
-    public Info(BytesRefHash terms, SliceByteStartArray sliceArray, int numTokens, int numOverlapTokens, float boost, int lastPosition, long sumTotalTermFreq) {
+    /** the last offset encountered in this field for multi field support*/
+    private final int lastOffset;
+
+    public Info(BytesRefHash terms, SliceByteStartArray sliceArray, int numTokens, int numOverlapTokens, float boost, int lastPosition, int lastOffset, long sumTotalTermFreq) {
       this.terms = terms;
       this.sliceArray = sliceArray; 
       this.numTokens = numTokens;
@@ -678,6 +724,7 @@ public class MemoryIndex {
       this.boost = boost;
       this.sumTotalTermFreq = sumTotalTermFreq;
       this.lastPosition = lastPosition;
+      this.lastOffset = lastOffset;
     }
 
     public long getSumTotalTermFreq() {
@@ -710,14 +757,22 @@ public class MemoryIndex {
    * Search support for Lucene framework integration; implements all methods
    * required by the Lucene IndexReader contracts.
    */
-  private final class MemoryIndexReader extends AtomicReader {
-    
-    private IndexSearcher searcher; // needed to find searcher.getSimilarity() 
+  private final class MemoryIndexReader extends LeafReader {
     
     private MemoryIndexReader() {
       super(); // avoid as much superclass baggage as possible
     }
-    
+
+    @Override
+    public void addCoreClosedListener(CoreClosedListener listener) {
+      addCoreClosedListenerAsReaderClosedListener(this, listener);
+    }
+
+    @Override
+    public void removeCoreClosedListener(CoreClosedListener listener) {
+      removeCoreClosedListenerAsReaderClosedListener(this, listener);
+    }
+
     private Info getInfo(String fieldName) {
       return fields.get(fieldName);
     }
@@ -752,6 +807,11 @@ public class MemoryIndex {
     }
     
     @Override
+    public SortedNumericDocValues getSortedNumericDocValues(String field) {
+      return null;
+    }
+    
+    @Override
     public SortedSetDocValues getSortedSetDocValues(String field) {
       return null;
     }
@@ -759,6 +819,11 @@ public class MemoryIndex {
     @Override
     public Bits getDocsWithField(String field) throws IOException {
       return null;
+    }
+
+    @Override
+    public void checkIntegrity() throws IOException {
+      // no-op
     }
 
     private class MemoryFields extends Fields {
@@ -1117,15 +1182,6 @@ public class MemoryIndex {
         return null;
       }
     }
-
-    private Similarity getSimilarity() {
-      if (searcher != null) return searcher.getSimilarity();
-      return IndexSearcher.getDefaultSimilarity();
-    }
-    
-    private void setSearcher(IndexSearcher searcher) {
-      this.searcher = searcher;
-    }
   
     @Override
     public int numDocs() {
@@ -1150,33 +1206,35 @@ public class MemoryIndex {
       if (DEBUG) System.err.println("MemoryIndexReader.doClose");
     }
     
-    /** performance hack: cache norms to avoid repeated expensive calculations */
-    private NumericDocValues cachedNormValues;
-    private String cachedFieldName;
-    private Similarity cachedSimilarity;
-    
     @Override
     public NumericDocValues getNormValues(String field) {
-      FieldInfo fieldInfo = fieldInfos.get(field);
-      if (fieldInfo == null || fieldInfo.omitsNorms())
-        return null;
-      NumericDocValues norms = cachedNormValues;
-      Similarity sim = getSimilarity();
-      if (!field.equals(cachedFieldName) || sim != cachedSimilarity) { // not cached?
-        Info info = getInfo(field);
-        int numTokens = info != null ? info.numTokens : 0;
-        int numOverlapTokens = info != null ? info.numOverlapTokens : 0;
-        float boost = info != null ? info.getBoost() : 1.0f; 
-        FieldInvertState invertState = new FieldInvertState(field, 0, numTokens, numOverlapTokens, 0, boost);
-        long value = sim.computeNorm(invertState);
-        norms = new MemoryIndexNormDocValues(value);
-        // cache it for future reuse
-        cachedNormValues = norms;
-        cachedFieldName = field;
-        cachedSimilarity = sim;
-        if (DEBUG) System.err.println("MemoryIndexReader.norms: " + field + ":" + value + ":" + numTokens);
-      }
-      return norms;
+      if (norms == null)
+        return calculateFieldNormValue(field);
+      return norms.get(field);
+    }
+
+  }
+
+  private Map<String, NumericDocValues> norms = null;
+
+  private NumericDocValues calculateFieldNormValue(String field) {
+    FieldInfo fieldInfo = fieldInfos.get(field);
+    if (fieldInfo == null)
+      return null;
+    Info info = fields.get(field);
+    int numTokens = info != null ? info.numTokens : 0;
+    int numOverlapTokens = info != null ? info.numOverlapTokens : 0;
+    float boost = info != null ? info.getBoost() : 1.0f;
+    FieldInvertState invertState = new FieldInvertState(field, 0, numTokens, numOverlapTokens, 0, boost);
+    long value = normSimilarity.computeNorm(invertState);
+    if (DEBUG) System.err.println("MemoryIndexReader.norms: " + field + ":" + value + ":" + numTokens);
+    return new MemoryIndexNormDocValues(value);
+  }
+
+  private void calculateNormValues() {
+    norms = new HashMap<>();
+    for (String field : fieldInfos.keySet()) {
+      norms.put(field, calculateFieldNormValue(field));
     }
   }
   
@@ -1187,8 +1245,11 @@ public class MemoryIndex {
     this.fieldInfos.clear();
     this.fields.clear();
     this.sortedFields = null;
+    this.norms = null;
+    this.normSimilarity = IndexSearcher.getDefaultSimilarity();
     byteBlockPool.reset(false, false); // no need to 0-fill the buffers
     intBlockPool.reset(true, false); // here must must 0-fill since we use slices
+    this.frozen = false;
   }
   
   private static final class SliceByteStartArray extends DirectBytesStartArray {

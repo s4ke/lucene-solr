@@ -75,7 +75,7 @@ public class RegexTransformer extends Transformer {
                   Map.Entry<String ,Object> entry = (Map.Entry<String, Object>) e;
                   List l = results;
                   if(!col.equals(entry.getKey())){
-                    if(otherVars == null) otherVars = new HashMap<String, List>();
+                    if(otherVars == null) otherVars = new HashMap<>();
                     l = otherVars.get(entry.getKey());
                     if(l == null){
                       l = new ArrayList();
@@ -122,7 +122,7 @@ public class RegexTransformer extends Transformer {
     } else if (replaceWith != null) {
       Pattern p = getPattern(reStr);
       Matcher m = p.matcher(value);
-      return m.find()? m.replaceAll(replaceWith): null;
+      return m.find() ? m.replaceAll(replaceWith) : value;
     } else {
       return readfromRegExp(reStr, value, col, groupNames);
     }
@@ -131,7 +131,7 @@ public class RegexTransformer extends Transformer {
   @SuppressWarnings("unchecked")
   private List<String> readBySplit(String splitBy, String value) {
     String[] vals = value.split(splitBy);
-    List<String> l = new ArrayList<String>();
+    List<String> l = new ArrayList<>();
     l.addAll(Arrays.asList(vals));
     return l;
   }
@@ -151,7 +151,7 @@ public class RegexTransformer extends Transformer {
         if(groupNames == null){
           l = new ArrayList();
         } else {
-          map =  new HashMap<String, String>();
+          map =  new HashMap<>();
         }
         for (int i = 1; i <= m.groupCount(); i++) {
           try {
@@ -186,7 +186,7 @@ public class RegexTransformer extends Transformer {
     return result;
   }
 
-  private HashMap<String, Pattern> PATTERN_CACHE = new HashMap<String, Pattern>();
+  private HashMap<String, Pattern> PATTERN_CACHE = new HashMap<>();
 
   public static final String REGEX = "regex";
 

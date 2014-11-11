@@ -18,6 +18,7 @@ package org.apache.lucene.search.vectorhighlight;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.Set;
 
@@ -28,8 +29,7 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.CharsRef;
-import org.apache.lucene.util.UnicodeUtil;
+import org.apache.lucene.util.CharsRefBuilder;
 
 /**
  * <code>FieldTermStack</code> is a stack that keeps query terms in the specified field
@@ -38,16 +38,16 @@ import org.apache.lucene.util.UnicodeUtil;
 public class FieldTermStack {
   
   private final String fieldName;
-  LinkedList<TermInfo> termList = new LinkedList<TermInfo>();
+  LinkedList<TermInfo> termList = new LinkedList<>();
   
   //public static void main( String[] args ) throws Exception {
-  //  Analyzer analyzer = new WhitespaceAnalyzer(Version.LUCENE_CURRENT);
-  //  QueryParser parser = new QueryParser(Version.LUCENE_CURRENT,  "f", analyzer );
+  //  Analyzer analyzer = new WhitespaceAnalyzer(Version.LATEST);
+  //  QueryParser parser = new QueryParser(Version.LATEST,  "f", analyzer );
   //  Query query = parser.parse( "a x:b" );
   //  FieldQuery fieldQuery = new FieldQuery( query, true, false );
     
   //  Directory dir = new RAMDirectory();
-  //  IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(Version.LUCENE_CURRENT, analyzer));
+  //  IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(Version.LATEST, analyzer));
   //  Document doc = new Document();
   //  FieldType ft = new FieldType(TextField.TYPE_STORED);
   //  ft.setStoreTermVectors(true);
@@ -91,7 +91,7 @@ public class FieldTermStack {
       return;
     }
 
-    final CharsRef spare = new CharsRef();
+    final CharsRefBuilder spare = new CharsRefBuilder();
     final TermsEnum termsEnum = vector.iterator(null);
     DocsAndPositionsEnum dpEnum = null;
     BytesRef text;
@@ -99,7 +99,7 @@ public class FieldTermStack {
     int numDocs = reader.maxDoc();
     
     while ((text = termsEnum.next()) != null) {
-      UnicodeUtil.UTF8toUTF16(text, spare);
+      spare.copyUTF8Bytes(text);
       final String term = spare.toString();
       if (!termSet.contains(term)) {
         continue;
@@ -128,6 +128,30 @@ public class FieldTermStack {
     
     // sort by position
     Collections.sort(termList);
+    
+    // now look for dups at the same position, linking them together
+    int currentPos = -1;
+    TermInfo previous = null;
+    TermInfo first = null;
+    Iterator<TermInfo> iterator = termList.iterator();
+    while (iterator.hasNext()) {
+      TermInfo current = iterator.next();
+      if (current.position == currentPos) {
+        assert previous != null;
+        previous.setNext(current);
+        previous = current;
+        iterator.remove();
+      } else {
+        if (previous != null) {
+          previous.setNext(first);
+        }
+        previous = first = current;
+        currentPos = current.position;
+      }
+    }
+    if (previous != null) {
+      previous.setNext(first);
+    }
   }
 
   /**
@@ -173,6 +197,10 @@ public class FieldTermStack {
 
     // IDF-weight of this term
     private final float weight;
+    
+    // pointer to other TermInfo's at the same position.
+    // this is a circular list, so with no syns, just points to itself
+    private TermInfo next;
 
     public TermInfo( String text, int startOffset, int endOffset, int position, float weight ){
       this.text = text;
@@ -180,8 +208,15 @@ public class FieldTermStack {
       this.endOffset = endOffset;
       this.position = position;
       this.weight = weight;
+      this.next = this;
     }
     
+    void setNext(TermInfo next) { this.next = next; }
+    /** 
+     * Returns the next TermInfo at this same position.
+     * This is a circular list!
+     */
+    public TermInfo getNext() { return next; }
     public String getText(){ return text; }
     public int getStartOffset(){ return startOffset; }
     public int getEndOffset(){ return endOffset; }

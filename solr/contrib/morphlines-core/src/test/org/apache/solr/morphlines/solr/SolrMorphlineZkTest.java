@@ -16,15 +16,18 @@
  */
 package org.apache.solr.morphlines.solr;
 
+import java.io.File;
 import java.util.Iterator;
 
 import org.apache.lucene.util.Constants;
 import org.apache.lucene.util.LuceneTestCase.Slow;
-import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.common.SolrDocument;
 import org.junit.BeforeClass;
+import org.kitesdk.morphline.api.Record;
+import org.kitesdk.morphline.base.Fields;
+import org.kitesdk.morphline.base.Notifications;
 
 import com.carrotsearch.randomizedtesting.annotations.ThreadLeakAction;
 import com.carrotsearch.randomizedtesting.annotations.ThreadLeakAction.Action;
@@ -33,15 +36,11 @@ import com.carrotsearch.randomizedtesting.annotations.ThreadLeakScope;
 import com.carrotsearch.randomizedtesting.annotations.ThreadLeakScope.Scope;
 import com.carrotsearch.randomizedtesting.annotations.ThreadLeakZombies;
 import com.carrotsearch.randomizedtesting.annotations.ThreadLeakZombies.Consequence;
-import org.kitesdk.morphline.api.Record;
-import org.kitesdk.morphline.base.Fields;
-import org.kitesdk.morphline.base.Notifications;
 
 @ThreadLeakAction({Action.WARN})
 @ThreadLeakLingering(linger = 0)
 @ThreadLeakZombies(Consequence.CONTINUE)
 @ThreadLeakScope(Scope.NONE)
-@SuppressCodecs({"Lucene3x", "Lucene40"})
 @Slow
 public class SolrMorphlineZkTest extends AbstractSolrMorphlineZkTestBase {
   
@@ -56,7 +55,7 @@ public class SolrMorphlineZkTest extends AbstractSolrMorphlineZkTestBase {
     
     waitForRecoveriesToFinish(false);
     
-    morphline = parse("test-morphlines/loadSolrBasic");    
+    morphline = parse("test-morphlines" + File.separator + "loadSolrBasic");    
     Record record = new Record();
     record.put(Fields.ID, "id0-innsbruck");
     record.put("text", "mytext");

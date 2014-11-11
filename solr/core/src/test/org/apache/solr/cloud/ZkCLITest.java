@@ -21,6 +21,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.List;
 
@@ -28,7 +29,9 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.io.filefilter.RegexFileFilter;
 import org.apache.commons.io.filefilter.TrueFileFilter;
+import org.apache.solr.SolrJettyTestBase;
 import org.apache.solr.SolrTestCaseJ4;
+import org.apache.solr.common.SolrException;
 import org.apache.solr.common.cloud.SolrZkClient;
 import org.apache.solr.common.cloud.ZkNodeProps;
 import org.apache.solr.common.cloud.ZkStateReader;
@@ -73,21 +76,22 @@ public class ZkCLITest extends SolrTestCaseJ4 {
   public void setUp() throws Exception {
     super.setUp();
     log.info("####SETUP_START " + getTestName());
-    createTempDir();
+
+    String exampleHome = SolrJettyTestBase.legacyExampleCollection1SolrHome();
     
     boolean useNewSolrXml = random().nextBoolean();
-    
+    File tmpDir = createTempDir().toFile();
     if (useNewSolrXml) {
-      solrHome = ExternalPaths.EXAMPLE_HOME;
+      solrHome = exampleHome;
     } else {
-      File tmpSolrHome = new File(dataDir, "tmp-solr-home");
-      FileUtils.copyDirectory(new File(ExternalPaths.EXAMPLE_HOME), tmpSolrHome);
-      FileUtils.copyFile(new File(ExternalPaths.SOURCE_HOME, "core/src/test-files/old-solr-example/solr.xml"), new File(tmpSolrHome, "solr.xml"));
+      File tmpSolrHome = new File(tmpDir, "tmp-solr-home");
+      FileUtils.copyDirectory(new File(exampleHome), tmpSolrHome);
+      FileUtils.copyFile(getFile("old-solr-example/solr.xml"), new File(tmpSolrHome, "solr.xml"));
       solrHome = tmpSolrHome.getAbsolutePath();
     }
     
     
-    zkDir = dataDir.getAbsolutePath() + File.separator
+    zkDir = tmpDir.getAbsolutePath() + File.separator
         + "zookeeper/server1/data";
     log.info("ZooKeeper dataDir:" + zkDir);
     zkServer = new ZkTestServer(zkDir);
@@ -156,7 +160,7 @@ public class ZkCLITest extends SolrTestCaseJ4 {
 
     zkClient.getData("/data.txt", null, null, true);
 
-    assertArrayEquals(zkClient.getData("/data.txt", null, null, true), data.getBytes("UTF-8"));
+    assertArrayEquals(zkClient.getData("/data.txt", null, null, true), data.getBytes(StandardCharsets.UTF_8));
   }
 
   @Test
@@ -166,12 +170,12 @@ public class ZkCLITest extends SolrTestCaseJ4 {
         "putfile", "/solr.xml", SOLR_HOME + File.separator + "solr-stress-new.xml"};
     ZkCLI.main(args);
 
-    String fromZk = new String(zkClient.getData("/solr.xml", null, null, true), "UTF-8");
+    String fromZk = new String(zkClient.getData("/solr.xml", null, null, true), StandardCharsets.UTF_8);
     File locFile = new File(SOLR_HOME + File.separator + "solr-stress-new.xml");
     InputStream is = new FileInputStream(locFile);
     String fromLoc;
     try {
-      fromLoc = new String(IOUtils.toByteArray(is), "UTF-8");
+      fromLoc = new String(IOUtils.toByteArray(is), StandardCharsets.UTF_8);
     } finally {
       IOUtils.closeQuietly(is);
     }
@@ -203,6 +207,8 @@ public class ZkCLITest extends SolrTestCaseJ4 {
   
   @Test
   public void testUpConfigLinkConfigClearZk() throws Exception {
+    File tmpDir = createTempDir().toFile();
+    
     // test upconfig
     String confsetname = "confsetone";
     String[] args = new String[] {
@@ -211,8 +217,7 @@ public class ZkCLITest extends SolrTestCaseJ4 {
         "-cmd",
         "upconfig",
         "-confdir",
-        ExternalPaths.EXAMPLE_HOME + File.separator + "collection1"
-            + File.separator + "conf", "-confname", confsetname};
+        ExternalPaths.TECHPRODUCTS_CONFIGSET, "-confname", confsetname};
     ZkCLI.main(args);
     
     assertTrue(zkClient.exists(ZkController.CONFIGS_ZKNODE + "/" + confsetname, true));
@@ -230,11 +235,10 @@ public class ZkCLITest extends SolrTestCaseJ4 {
     assertEquals(confsetname, collectionProps.getStr("configName"));
     
     // test down config
-    File confDir = new File(TEMP_DIR,
+    File confDir = new File(tmpDir,
         "solrtest-confdropspot-" + this.getClass().getName() + "-" + System.currentTimeMillis());
-    
     assertFalse(confDir.exists());
-    
+
     args = new String[] {"-zkhost", zkServer.getZkAddress(), "-cmd",
         "downconfig", "-confdir", confDir.getAbsolutePath(), "-confname", confsetname};
     ZkCLI.main(args);
@@ -243,13 +247,12 @@ public class ZkCLITest extends SolrTestCaseJ4 {
     List<String> zkFiles = zkClient.getChildren(ZkController.CONFIGS_ZKNODE + "/" + confsetname, null, true);
     assertEquals(files.length, zkFiles.size());
     
-    File sourceConfDir = new File(ExternalPaths.EXAMPLE_HOME + File.separator + "collection1"
-            + File.separator + "conf");
+    File sourceConfDir = new File(ExternalPaths.TECHPRODUCTS_CONFIGSET);
     // filter out all directories starting with . (e.g. .svn)
     Collection<File> sourceFiles = FileUtils.listFiles(sourceConfDir, TrueFileFilter.INSTANCE, new RegexFileFilter("[^\\.].*"));
     for (File sourceFile :sourceFiles){
-        int indexOfRelativePath = sourceFile.getAbsolutePath().lastIndexOf("collection1" + File.separator + "conf");
-        String relativePathofFile = sourceFile.getAbsolutePath().substring(indexOfRelativePath + 17, sourceFile.getAbsolutePath().length());
+        int indexOfRelativePath = sourceFile.getAbsolutePath().lastIndexOf("sample_techproducts_configs" + File.separator + "conf");
+        String relativePathofFile = sourceFile.getAbsolutePath().substring(indexOfRelativePath + 33, sourceFile.getAbsolutePath().length());
         File downloadedFile = new File(confDir,relativePathofFile);
         assertTrue(downloadedFile.getAbsolutePath() + " does not exist source:" + sourceFile.getAbsolutePath(), downloadedFile.exists());
         assertTrue("Content didn't change",FileUtils.contentEquals(sourceFile,downloadedFile));
@@ -267,7 +270,7 @@ public class ZkCLITest extends SolrTestCaseJ4 {
   @Test
   public void testGet() throws Exception {
     String getNode = "/getNode";
-    byte [] data = new String("getNode-data").getBytes("UTF-8");
+    byte [] data = new String("getNode-data").getBytes(StandardCharsets.UTF_8);
     this.zkClient.create(getNode, data, CreateMode.PERSISTENT, true);
     String[] args = new String[] {"-zkhost", zkServer.getZkAddress(), "-cmd",
         "get", getNode};
@@ -276,11 +279,13 @@ public class ZkCLITest extends SolrTestCaseJ4 {
 
   @Test
   public void testGetFile() throws Exception {
+    File tmpDir = createTempDir().toFile();
+    
     String getNode = "/getFileNode";
-    byte [] data = new String("getFileNode-data").getBytes("UTF-8");
+    byte [] data = new String("getFileNode-data").getBytes(StandardCharsets.UTF_8);
     this.zkClient.create(getNode, data, CreateMode.PERSISTENT, true);
 
-    File file = new File(TEMP_DIR,
+    File file = new File(tmpDir,
         "solrtest-getfile-" + this.getClass().getName() + "-" + System.currentTimeMillis());
     String[] args = new String[] {"-zkhost", zkServer.getZkAddress(), "-cmd",
         "getfile", getNode, file.getAbsolutePath()};
@@ -292,10 +297,10 @@ public class ZkCLITest extends SolrTestCaseJ4 {
 
   @Test
   public void testGetFileNotExists() throws Exception {
+    File tmpDir = createTempDir().toFile();
     String getNode = "/getFileNotExistsNode";
 
-    File file = new File(TEMP_DIR,
-        "solrtest-getfilenotexists-" + this.getClass().getName() + "-" + System.currentTimeMillis());
+    File file = File.createTempFile("newfile", null, tmpDir);
     String[] args = new String[] {"-zkhost", zkServer.getZkAddress(), "-cmd",
         "getfile", getNode, file.getAbsolutePath()};
     try {
@@ -303,6 +308,12 @@ public class ZkCLITest extends SolrTestCaseJ4 {
       fail("Expected NoNodeException");
     } catch (KeeperException.NoNodeException ex) {
     }
+  }
+
+  @Test(expected = SolrException.class)
+  public void testInvalidZKAddress() throws SolrException{
+    SolrZkClient zkClient = new SolrZkClient("----------:33332", 100);
+    zkClient.close();
   }
 
   @Override

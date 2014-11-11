@@ -18,15 +18,17 @@ package org.apache.solr.schema;
 
 import org.apache.lucene.analysis.util.ResourceLoader;
 import org.apache.lucene.analysis.util.ResourceLoaderAware;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.StorableField;
 import org.apache.lucene.queries.function.FunctionValues;
 import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.FieldValueFilter;
-import org.apache.lucene.queries.ChainedFilter;
+import org.apache.lucene.uninverting.UninvertingReader.Type;
+import org.apache.lucene.queries.BooleanFilter;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrException.ErrorCode;
 import org.apache.solr.response.TextResponseWriter;
@@ -47,6 +49,7 @@ import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -128,7 +131,7 @@ public class CurrencyField extends FieldType implements SchemaAware, ResourceLoa
     // Initialize field type for amount
     fieldTypeAmountRaw = new TrieLongField();
     fieldTypeAmountRaw.setTypeName("amount_raw_type_tlong");
-    Map<String,String> map = new HashMap<String,String>(1);
+    Map<String,String> map = new HashMap<>(1);
     map.put("precisionStep", precisionStepString);
     fieldTypeAmountRaw.init(schema, map);
     
@@ -169,7 +172,7 @@ public class CurrencyField extends FieldType implements SchemaAware, ResourceLoa
   public List<StorableField> createFields(SchemaField field, Object externalVal, float boost) {
     CurrencyValue value = CurrencyValue.parse(externalVal.toString(), defaultCurrency);
 
-    List<StorableField> f = new ArrayList<StorableField>();
+    List<StorableField> f = new ArrayList<>();
     SchemaField amountField = getAmountField(field);
     f.add(amountField.createField(String.valueOf(value.getAmount()), amountField.indexed() && !amountField.omitNorms() ? boost : 1F));
     SchemaField currencyField = getCurrencyField(field);
@@ -199,7 +202,7 @@ public class CurrencyField extends FieldType implements SchemaAware, ResourceLoa
 
   private void createDynamicCurrencyField(String suffix, FieldType type) {
     String name = "*" + POLY_FIELD_SEPARATOR + suffix;
-    Map<String, String> props = new HashMap<String, String>();
+    Map<String, String> props = new HashMap<>();
     props.put("indexed", "true");
     props.put("stored", "false");
     props.put("multiValued", "false");
@@ -331,8 +334,9 @@ public class CurrencyField extends FieldType implements SchemaAware, ResourceLoa
        p1 == null ? null : p1.getAmount() + "", 
        p2 == null ? null : p2.getAmount() + "",
        minInclusive, maxInclusive);
-    final Filter docsInRange = new ChainedFilter
-      (new Filter [] { docsWithValues, vsRangeFilter }, ChainedFilter.AND);
+    final BooleanFilter docsInRange = new BooleanFilter();
+    docsInRange.add(docsWithValues, Occur.MUST);
+    docsInRange.add(vsRangeFilter, Occur.MUST);
 
     return new SolrConstantScoreQuery(docsInRange);
     
@@ -342,6 +346,11 @@ public class CurrencyField extends FieldType implements SchemaAware, ResourceLoa
   public SortField getSortField(SchemaField field, boolean reverse) {
     // Convert all values to default currency for sorting.
     return (new RawCurrencyValueSource(field, defaultCurrency, null)).getSortField(reverse);
+  }
+  
+  @Override
+  public Type getUninversionType(SchemaField sf) {
+    return null;
   }
 
   @Override
@@ -379,7 +388,7 @@ public class CurrencyField extends FieldType implements SchemaAware, ResourceLoa
     }
 
     @Override
-    public FunctionValues getValues(Map context, AtomicReaderContext reader) 
+    public FunctionValues getValues(Map context, LeafReaderContext reader) 
       throws IOException {
       final FunctionValues amounts = source.getValues(context, reader);
       // the target digits & currency of our source, 
@@ -492,7 +501,7 @@ public class CurrencyField extends FieldType implements SchemaAware, ResourceLoa
     public Currency getTargetCurrency() { return targetCurrency; }
 
     @Override
-    public FunctionValues getValues(Map context, AtomicReaderContext reader) throws IOException {
+    public FunctionValues getValues(Map context, LeafReaderContext reader) throws IOException {
       final FunctionValues amounts = amountValues.getValues(context, reader);
       final FunctionValues currencies = currencyValues.getValues(context, reader);
 
@@ -665,7 +674,7 @@ class FileExchangeRateProvider implements ExchangeRateProvider {
   protected static final String PARAM_CURRENCY_CONFIG       = "currencyConfig";
 
   // Exchange rate map, maps Currency Code -> Currency Code -> Rate
-  private Map<String, Map<String, Double>> rates = new HashMap<String, Map<String, Double>>();
+  private Map<String, Map<String, Double>> rates = new HashMap<>();
 
   private String currencyConfigFile;
   private ResourceLoader loader;
@@ -734,7 +743,7 @@ class FileExchangeRateProvider implements ExchangeRateProvider {
     Map<String, Double> rhs = ratesMap.get(sourceCurrencyCode);
 
     if (rhs == null) {
-      rhs = new HashMap<String, Double>();
+      rhs = new HashMap<>();
       ratesMap.put(sourceCurrencyCode, rhs);
     }
 
@@ -763,7 +772,7 @@ class FileExchangeRateProvider implements ExchangeRateProvider {
 
   @Override
   public Set<String> listAvailableCurrencies() {
-    Set<String> currencies = new HashSet<String>();
+    Set<String> currencies = new HashSet<>();
     for(String from : rates.keySet()) {
       currencies.add(from);
       for(String to : rates.get(from).keySet()) {
@@ -776,7 +785,7 @@ class FileExchangeRateProvider implements ExchangeRateProvider {
   @Override
   public boolean reload() throws SolrException {
     InputStream is = null;
-    Map<String, Map<String, Double>> tmpRates = new HashMap<String, Map<String, Double>>();
+    Map<String, Map<String, Double>> tmpRates = new HashMap<>();
     try {
       log.info("Reloading exchange rates from file "+this.currencyConfigFile);
 

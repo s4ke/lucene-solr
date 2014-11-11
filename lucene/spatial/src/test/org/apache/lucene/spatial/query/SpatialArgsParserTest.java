@@ -22,7 +22,9 @@ import com.spatial4j.core.shape.Rectangle;
 import org.apache.lucene.util.LuceneTestCase;
 import org.junit.Test;
 
+import java.text.ParseException;
 
+//Tests SpatialOperation somewhat too
 public class SpatialArgsParserTest extends LuceneTestCase {
 
   private SpatialContext ctx = SpatialContext.GEO;
@@ -34,7 +36,7 @@ public class SpatialArgsParserTest extends LuceneTestCase {
   public void testArgsParser() throws Exception {
     SpatialArgsParser parser = new SpatialArgsParser();
 
-    String arg = SpatialOperation.IsWithin + "(-10 -20 10 20)";
+    String arg = SpatialOperation.IsWithin + "(Envelope(-10, 10, 20, -20))";
     SpatialArgs out = parser.parse(arg, ctx);
     assertEquals(SpatialOperation.IsWithin, out.getOperation());
     Rectangle bounds = (Rectangle) out.getShape();
@@ -42,7 +44,7 @@ public class SpatialArgsParserTest extends LuceneTestCase {
     assertEquals(10.0, bounds.getMaxX(), 0D);
 
     // Disjoint should not be scored
-    arg = SpatialOperation.IsDisjointTo + " (-10 10 -20 20)";
+    arg = SpatialOperation.IsDisjointTo + " (Envelope(-10,-20,20,10))";
     out = parser.parse(arg, ctx);
     assertEquals(SpatialOperation.IsDisjointTo, out.getOperation());
 
@@ -54,11 +56,27 @@ public class SpatialArgsParserTest extends LuceneTestCase {
     }
 
     try {
-      parser.parse("XXXX(-10 10 -20 20)", ctx);
+      parser.parse("XXXX(Envelope(-10, 10, 20, -20))", ctx);
       fail("unknown operation!");
     }
     catch (Exception ex) {//expected
     }
+
+    assertAlias(SpatialOperation.IsWithin, "CoveredBy");
+    assertAlias(SpatialOperation.IsWithin, "COVEREDBY");
+    assertAlias(SpatialOperation.IsWithin, "coveredBy");
+    assertAlias(SpatialOperation.IsWithin, "Within");
+    assertAlias(SpatialOperation.IsEqualTo, "Equals");
+    assertAlias(SpatialOperation.IsDisjointTo, "disjoint");
+    assertAlias(SpatialOperation.Contains, "Covers");
+  }
+
+  private void assertAlias(SpatialOperation op, final String name) throws ParseException {
+    String arg;
+    SpatialArgs out;
+    arg = name + "(Point(0 0))";
+    out = new SpatialArgsParser().parse(arg, ctx);
+    assertEquals(op, out.getOperation());
   }
 
 }

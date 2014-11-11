@@ -17,6 +17,8 @@ package org.apache.lucene.search;
  * limitations under the License.
  */
 
+import static org.apache.lucene.search.DocIdSet.EMPTY;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -24,18 +26,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.Bits;
-import org.apache.lucene.util.RamUsageEstimator;
-import org.apache.lucene.util.WAH8DocIdSet;
+import org.apache.lucene.util.RoaringDocIdSet;
 
 /**
  * Wraps another {@link Filter}'s result and caches it.  The purpose is to allow
  * filters to simply filter, and then wrap with this class
  * to add caching.
  */
-public class CachingWrapperFilter extends Filter {
+public class CachingWrapperFilter extends Filter implements Accountable {
   private final Filter filter;
   private final Map<Object,DocIdSet> cache = Collections.synchronizedMap(new WeakHashMap<Object,DocIdSet>());
 
@@ -58,24 +61,18 @@ public class CachingWrapperFilter extends Filter {
    *  Provide the DocIdSet to be cached, using the DocIdSet provided
    *  by the wrapped Filter. <p>This implementation returns the given {@link DocIdSet},
    *  if {@link DocIdSet#isCacheable} returns <code>true</code>, else it calls
-   *  {@link #cacheImpl(DocIdSetIterator,AtomicReader)}
-   *  <p>Note: This method returns {@linkplain #EMPTY_DOCIDSET} if the given docIdSet
+   *  {@link #cacheImpl(DocIdSetIterator, org.apache.lucene.index.LeafReader)}
+   *  <p>Note: This method returns {@linkplain DocIdSet#EMPTY} if the given docIdSet
    *  is <code>null</code> or if {@link DocIdSet#iterator()} return <code>null</code>. The empty
    *  instance is use as a placeholder in the cache instead of the <code>null</code> value.
    */
-  protected DocIdSet docIdSetToCache(DocIdSet docIdSet, AtomicReader reader) throws IOException {
-    if (docIdSet == null) {
-      // this is better than returning null, as the nonnull result can be cached
-      return EMPTY_DOCIDSET;
-    } else if (docIdSet.isCacheable()) {
+  protected DocIdSet docIdSetToCache(DocIdSet docIdSet, LeafReader reader) throws IOException {
+    if (docIdSet == null || docIdSet.isCacheable()) {
       return docIdSet;
     } else {
       final DocIdSetIterator it = docIdSet.iterator();
-      // null is allowed to be returned by iterator(),
-      // in this case we wrap with the sentinel set,
-      // which is cacheable.
       if (it == null) {
-        return EMPTY_DOCIDSET;
+        return null;
       } else {
         return cacheImpl(it, reader);
       }
@@ -83,20 +80,18 @@ public class CachingWrapperFilter extends Filter {
   }
   
   /**
-   * Default cache implementation: uses {@link WAH8DocIdSet}.
+   * Default cache implementation: uses {@link RoaringDocIdSet}.
    */
-  protected DocIdSet cacheImpl(DocIdSetIterator iterator, AtomicReader reader) throws IOException {
-    WAH8DocIdSet.Builder builder = new WAH8DocIdSet.Builder();
-    builder.add(iterator);
-    return builder.build();
+  protected DocIdSet cacheImpl(DocIdSetIterator iterator, LeafReader reader) throws IOException {
+    return new RoaringDocIdSet.Builder(reader.maxDoc()).add(iterator).build();
   }
 
   // for testing
   int hitCount, missCount;
 
   @Override
-  public DocIdSet getDocIdSet(AtomicReaderContext context, final Bits acceptDocs) throws IOException {
-    final AtomicReader reader = context.reader();
+  public DocIdSet getDocIdSet(LeafReaderContext context, final Bits acceptDocs) throws IOException {
+    final LeafReader reader = context.reader();
     final Object key = reader.getCoreCacheKey();
 
     DocIdSet docIdSet = cache.get(key);
@@ -105,11 +100,15 @@ public class CachingWrapperFilter extends Filter {
     } else {
       missCount++;
       docIdSet = docIdSetToCache(filter.getDocIdSet(context, null), reader);
+      if (docIdSet == null) {
+        // We use EMPTY as a sentinel for the empty set, which is cacheable
+        docIdSet = EMPTY;
+      }
       assert docIdSet.isCacheable();
       cache.put(key, docIdSet);
     }
 
-    return docIdSet == EMPTY_DOCIDSET ? null : BitsFilteredDocIdSet.wrap(docIdSet, acceptDocs);
+    return docIdSet == EMPTY ? null : BitsFilteredDocIdSet.wrap(docIdSet, acceptDocs);
   }
   
   @Override
@@ -128,41 +127,27 @@ public class CachingWrapperFilter extends Filter {
   public int hashCode() {
     return (filter.hashCode() ^ getClass().hashCode());
   }
-  
-  /** An empty {@code DocIdSet} instance */
-  protected static final DocIdSet EMPTY_DOCIDSET = new DocIdSet() {
-    
-    @Override
-    public DocIdSetIterator iterator() {
-      return DocIdSetIterator.empty();
-    }
-    
-    @Override
-    public boolean isCacheable() {
-      return true;
-    }
-    
-    // we explicitly provide no random access, as this filter is 100% sparse and iterator exits faster
-    @Override
-    public Bits bits() {
-      return null;
-    }
-  };
 
-  /** Returns total byte size used by cached filters. */
-  public long sizeInBytes() {
+  @Override
+  public long ramBytesUsed() {
 
     // Sync only to pull the current set of values:
     List<DocIdSet> docIdSets;
     synchronized(cache) {
-      docIdSets = new ArrayList<DocIdSet>(cache.values());
+      docIdSets = new ArrayList<>(cache.values());
     }
 
     long total = 0;
     for(DocIdSet dis : docIdSets) {
-      total += RamUsageEstimator.sizeOf(dis);
+      total += dis.ramBytesUsed();
     }
 
     return total;
+  }
+
+  @Override
+  public synchronized Iterable<? extends Accountable> getChildResources() {
+    // Sync only to pull the current set of values:
+    return Accountables.namedAccountables("segment", cache);
   }
 }

@@ -28,9 +28,10 @@ import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.util.PriorityQueue;
 import org.apache.lucene.util.BytesRef;
 
-import java.io.File;
 import java.io.IOException;
+import java.nio.file.Paths;
 import java.util.Comparator;
+import java.util.Locale;
 
 /**
  * <code>HighFreqTerms</code> class extracts the top n most frequent terms
@@ -55,7 +56,7 @@ public class HighFreqTerms {
       System.exit(1);
     }     
 
-    Directory dir = FSDirectory.open(new File(args[0]));
+    Directory dir = FSDirectory.open(Paths.get(args[0]));
     
     Comparator<TermStats> comparator = new DocFreqComparator();
    
@@ -76,7 +77,7 @@ public class HighFreqTerms {
     TermStats[] terms = getHighFreqTerms(reader, numTerms, field, comparator);
 
     for (int i = 0; i < terms.length; i++) {
-      System.out.printf("%s:%s \t totalTF = %,d \t docFreq = %,d \n",
+      System.out.printf(Locale.ROOT, "%s:%s \t totalTF = %,d \t docFreq = %,d \n",
             terms[i].field, terms[i].termtext.utf8ToString(), terms[i].totalTermFreq, terms[i].docFreq);
     }
     reader.close();

@@ -17,14 +17,16 @@ package org.apache.lucene.codecs;
  * limitations under the License.
  */
 
-import java.io.IOException;
 import java.io.Closeable;
+import java.io.IOException;
 
-import org.apache.lucene.index.DocsEnum;
 import org.apache.lucene.index.DocsAndPositionsEnum;
+import org.apache.lucene.index.DocsEnum;
 import org.apache.lucene.index.FieldInfo;
-import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.store.DataInput;
+import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.Bits;
 
 /** The core terms dictionaries (BlockTermsReader,
@@ -37,10 +39,12 @@ import org.apache.lucene.util.Bits;
  *  time. 
  *  @lucene.experimental */
 
+// TODO: maybe move under blocktree?  but it's used by other terms dicts (e.g. Block)
+
 // TODO: find a better name; this defines the API that the
 // terms dict impls use to talk to a postings impl.
 // TermsDict + PostingsReader/WriterBase == PostingsConsumer/Producer
-public abstract class PostingsReaderBase implements Closeable {
+public abstract class PostingsReaderBase implements Closeable, Accountable {
 
   /** Sole constructor. (For invocation by subclass 
    *  constructors, typically implicit.) */
@@ -50,7 +54,7 @@ public abstract class PostingsReaderBase implements Closeable {
   /** Performs any initialization, such as reading and
    *  verifying the header from the provided terms
    *  dictionary {@link IndexInput}. */
-  public abstract void init(IndexInput termsIn) throws IOException;
+  public abstract void init(IndexInput termsIn, SegmentReadState state) throws IOException;
 
   /** Return a newly created empty TermState */
   public abstract BlockTermState newTermState() throws IOException;
@@ -68,9 +72,15 @@ public abstract class PostingsReaderBase implements Closeable {
    *  TermState may be reused. */
   public abstract DocsAndPositionsEnum docsAndPositions(FieldInfo fieldInfo, BlockTermState state, Bits skipDocs, DocsAndPositionsEnum reuse,
                                                         int flags) throws IOException;
-
-  /** Returns approximate RAM bytes used */
-  public abstract long ramBytesUsed();
+  
+  /** 
+   * Checks consistency of this reader.
+   * <p>
+   * Note that this may be costly in terms of I/O, e.g. 
+   * may involve computing a checksum value against large data files.
+   * @lucene.internal
+   */
+  public abstract void checkIntegrity() throws IOException;
   
   @Override
   public abstract void close() throws IOException;

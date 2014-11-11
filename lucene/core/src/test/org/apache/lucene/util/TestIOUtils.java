@@ -17,79 +17,65 @@ package org.apache.lucene.util;
  * limitations under the License.
  */
 
-import java.io.Closeable;
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.io.StringWriter;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
+/** Simple test methods for IOUtils */
 public class TestIOUtils extends LuceneTestCase {
-
-  static final class BrokenCloseable implements Closeable {
-    final int i;
-    
-    public BrokenCloseable(int i) {
-      this.i = i;
-    }
   
-    @Override
-    public void close() throws IOException {
-      throw new IOException("TEST-IO-EXCEPTION-" + i);
-    }
-  }
-
-  static final class TestException extends Exception {
-    public TestException() {
-      super("BASE-EXCEPTION");
-    }
-  }
-
-  public void testSuppressedExceptions() {
-    // test with prior exception
-    try {
-      final TestException t = new TestException();
-      IOUtils.closeWhileHandlingException(t, new BrokenCloseable(1), new BrokenCloseable(2));
-    } catch (TestException e1) {
-      assertEquals("BASE-EXCEPTION", e1.getMessage());
-      final StringWriter sw = new StringWriter();
-      final PrintWriter pw = new PrintWriter(sw);
-      e1.printStackTrace(pw);
-      pw.flush();
-      final String trace = sw.toString();
-      if (VERBOSE) {
-        System.out.println("TestIOUtils.testSuppressedExceptions: Thrown Exception stack trace:");
-        System.out.println(trace);
-      }
-      if (Constants.JRE_IS_MINIMUM_JAVA7) {
-        assertTrue("Stack trace does not contain first suppressed Exception: " + trace,
-          trace.contains("java.io.IOException: TEST-IO-EXCEPTION-1"));
-        assertTrue("Stack trace does not contain second suppressed Exception: " + trace,
-          trace.contains("java.io.IOException: TEST-IO-EXCEPTION-2"));
-      }
-    } catch (IOException e2) {
-      fail("IOException should not be thrown here");
-    }
-    
-    // test without prior exception
-    try {
-      IOUtils.closeWhileHandlingException((TestException) null, new BrokenCloseable(1), new BrokenCloseable(2));
-    } catch (TestException e1) {
-      fail("TestException should not be thrown here");
-    } catch (IOException e2) {
-      assertEquals("TEST-IO-EXCEPTION-1", e2.getMessage());
-      final StringWriter sw = new StringWriter();
-      final PrintWriter pw = new PrintWriter(sw);
-      e2.printStackTrace(pw);
-      pw.flush();
-      final String trace = sw.toString();
-      if (VERBOSE) {
-        System.out.println("TestIOUtils.testSuppressedExceptions: Thrown Exception stack trace:");
-        System.out.println(trace);
-      }
-      if (Constants.JRE_IS_MINIMUM_JAVA7) {
-        assertTrue("Stack trace does not contain suppressed Exception: " + trace,
-          trace.contains("java.io.IOException: TEST-IO-EXCEPTION-2"));
-      }
-    }
+  public void testDeleteFileIgnoringExceptions() throws Exception {
+    Path dir = createTempDir();
+    Path file1 = dir.resolve("file1");
+    Files.createFile(file1);
+    IOUtils.deleteFilesIgnoringExceptions(file1);
+    assertFalse(Files.exists(file1));
+    // actually deletes
   }
   
+  public void testDontDeleteFileIgnoringExceptions() throws Exception {
+    Path dir = createTempDir();
+    Path file1 = dir.resolve("file1");
+    IOUtils.deleteFilesIgnoringExceptions(file1);
+    // no exception
+  }
+  
+  public void testDeleteTwoFilesIgnoringExceptions() throws Exception {
+    Path dir = createTempDir();
+    Path file1 = dir.resolve("file1");
+    Path file2 = dir.resolve("file2");
+    // only create file2
+    Files.createFile(file2);
+    IOUtils.deleteFilesIgnoringExceptions(file1, file2);
+    assertFalse(Files.exists(file2));
+    // no exception
+    // actually deletes file2
+  }
+  
+  public void testDeleteFileIfExists() throws Exception {
+    Path dir = createTempDir();
+    Path file1 = dir.resolve("file1");
+    Files.createFile(file1);
+    IOUtils.deleteFilesIfExist(file1);
+    assertFalse(Files.exists(file1));
+    // actually deletes
+  }
+  
+  public void testDontDeleteDoesntExist() throws Exception {
+    Path dir = createTempDir();
+    Path file1 = dir.resolve("file1");
+    IOUtils.deleteFilesIfExist(file1);
+    // no exception
+  }
+  
+  public void testDeleteTwoFilesIfExist() throws Exception {
+    Path dir = createTempDir();
+    Path file1 = dir.resolve("file1");
+    Path file2 = dir.resolve("file2");
+    // only create file2
+    Files.createFile(file2);
+    IOUtils.deleteFilesIfExist(file1, file2);
+    assertFalse(Files.exists(file2));
+    // no exception
+    // actually deletes file2
+  }
 }

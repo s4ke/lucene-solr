@@ -23,13 +23,9 @@ import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.analysis.core.LowerCaseFilter;
-import org.apache.lucene.analysis.core.StopAnalyzer;
 import org.apache.lucene.analysis.core.StopFilter;
-import org.apache.lucene.analysis.standard.StandardFilter;
-import org.apache.lucene.analysis.standard.StandardTokenizer;
 import org.apache.lucene.analysis.util.CharArraySet;
 import org.apache.lucene.analysis.util.StopwordAnalyzerBase;
-import org.apache.lucene.util.Version;
 
 /**
  * {@link Analyzer} for Thai language. It uses {@link java.text.BreakIterator} to break words.
@@ -73,21 +69,18 @@ public final class ThaiAnalyzer extends StopwordAnalyzerBase {
 
   /**
    * Builds an analyzer with the default stop words.
-   * 
-   * @param matchVersion lucene compatibility version
    */
-  public ThaiAnalyzer(Version matchVersion) {
-    this(matchVersion, DefaultSetHolder.DEFAULT_STOP_SET);
+  public ThaiAnalyzer() {
+    this(DefaultSetHolder.DEFAULT_STOP_SET);
   }
   
   /**
    * Builds an analyzer with the given stop words.
-   * 
-   * @param matchVersion lucene compatibility version
+   *
    * @param stopwords a stopword set
    */
-  public ThaiAnalyzer(Version matchVersion, CharArraySet stopwords) {
-    super(matchVersion, stopwords);
+  public ThaiAnalyzer(CharArraySet stopwords) {
+    super(stopwords);
   }
 
   /**
@@ -96,17 +89,14 @@ public final class ThaiAnalyzer extends StopwordAnalyzerBase {
    * used to tokenize all the text in the provided {@link Reader}.
    * 
    * @return {@link org.apache.lucene.analysis.Analyzer.TokenStreamComponents}
-   *         built from a {@link StandardTokenizer} filtered with
-   *         {@link StandardFilter}, {@link LowerCaseFilter}, {@link ThaiWordFilter}, and
-   *         {@link StopFilter}
+   *         built from a {@link ThaiTokenizer} filtered with
+   *         {@link LowerCaseFilter} and {@link StopFilter}
    */
   @Override
   protected TokenStreamComponents createComponents(String fieldName) {
-    final Tokenizer source = new StandardTokenizer(matchVersion);
-    TokenStream result = new StandardFilter(matchVersion, source);
-    result = new LowerCaseFilter(matchVersion, result);
-    result = new ThaiWordFilter(matchVersion, result);
-    return new TokenStreamComponents(source, new StopFilter(matchVersion,
-        result, stopwords));
+    final Tokenizer source = new ThaiTokenizer();
+    TokenStream result = new LowerCaseFilter(source);
+    result = new StopFilter(result, stopwords);
+    return new TokenStreamComponents(source, result);
   }
 }

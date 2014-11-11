@@ -24,7 +24,6 @@ import org.apache.lucene.analysis.CannedTokenStream;
 import org.apache.lucene.analysis.Token;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
@@ -34,7 +33,6 @@ import org.apache.lucene.index.MultiFields;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.TermsEnum;
-import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.similarities.DefaultSimilarity;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.RAMDirectory;
@@ -70,7 +68,7 @@ public class TestMultiPhraseQuery extends LuceneTestCase {
     query1.add(new Term("body", "blueberry"));
     query2.add(new Term("body", "strawberry"));
     
-    LinkedList<Term> termsWithPrefix = new LinkedList<Term>();
+    LinkedList<Term> termsWithPrefix = new LinkedList<>();
     
     // this TermEnum gives "piccadilly", "pie" and "pizza".
     String prefix = "pi";
@@ -467,7 +465,7 @@ public class TestMultiPhraseQuery extends LuceneTestCase {
   
   private void doTestZeroPosIncrSloppy(Query q, int nExpected) throws IOException {
     Directory dir = newDirectory(); // random dir
-    IndexWriterConfig cfg = newIndexWriterConfig(TEST_VERSION_CURRENT, null);
+    IndexWriterConfig cfg = newIndexWriterConfig(null);
     IndexWriter writer = new IndexWriter(dir, cfg);
     Document doc = new Document();
     doc.add(new TextField("field", new CannedTokenStream(INCR_0_DOC_TOKENS)));
@@ -566,6 +564,18 @@ public class TestMultiPhraseQuery extends LuceneTestCase {
       terms[i] = new Term("field",tap[i].toString());
     }
     return terms;
+  }
+  
+  public void testNegativeSlop() throws Exception {
+    MultiPhraseQuery query = new MultiPhraseQuery();
+    query.add(new Term("field", "two"));
+    query.add(new Term("field", "one"));
+    try {
+      query.setSlop(-2);
+      fail("didn't get expected exception");
+    } catch (IllegalArgumentException expected) {
+      // expected exception
+    }
   }
   
 }

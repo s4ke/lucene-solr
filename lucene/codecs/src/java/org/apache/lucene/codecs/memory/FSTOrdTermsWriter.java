@@ -25,11 +25,11 @@ import org.apache.lucene.codecs.BlockTermState;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.FieldsConsumer;
 import org.apache.lucene.codecs.PostingsWriterBase;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.Fields;
 import org.apache.lucene.index.IndexFileNames;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
@@ -39,7 +39,7 @@ import org.apache.lucene.store.RAMOutputStream;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IOUtils;
-import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.util.IntsRefBuilder;
 import org.apache.lucene.util.fst.Builder;
 import org.apache.lucene.util.fst.FST;
 import org.apache.lucene.util.fst.PositiveIntOutputs;
@@ -73,9 +73,10 @@ import org.apache.lucene.util.fst.Util;
  * </p>
  * 
  * <ul>
- *  <li>TermIndex(.tix) --&gt; Header, TermFST<sup>NumFields</sup></li>
+ *  <li>TermIndex(.tix) --&gt; Header, TermFST<sup>NumFields</sup>, Footer</li>
  *  <li>TermFST --&gt; {@link FST FST&lt;long&gt;}</li>
- *  <li>Header --&gt; {@link CodecUtil#writeHeader CodecHeader}</li>
+ *  <li>Header --&gt; {@link CodecUtil#writeIndexHeader IndexHeader}</li>
+ *  <li>Footer --&gt; {@link CodecUtil#writeFooter CodecFooter}</li>
  * </ul>
  *
  * <p>Notes:</p>
@@ -103,7 +104,7 @@ import org.apache.lucene.util.fst.Util;
  * <ul>
  *  <li>TermBlock(.tbk) --&gt; Header, <i>PostingsHeader</i>, FieldSummary, DirOffset</li>
  *  <li>FieldSummary --&gt; NumFields, &lt;FieldNumber, NumTerms, SumTotalTermFreq?, SumDocFreq,
- *                                         DocCount, LongsSize, DataBlock &gt; <sup>NumFields</sup></li>
+ *                                         DocCount, LongsSize, DataBlock &gt; <sup>NumFields</sup>, Footer</li>
  *
  *  <li>DataBlock --&gt; StatsBlockLength, MetaLongsBlockLength, MetaBytesBlockLength, 
  *                       SkipBlock, StatsBlock, MetaLongsBlock, MetaBytesBlock </li>
@@ -112,13 +113,14 @@ import org.apache.lucene.util.fst.Util;
  *  <li>StatsBlock --&gt; &lt; DocFreq[Same?], (TotalTermFreq-DocFreq) ? &gt; <sup>NumTerms</sup>
  *  <li>MetaLongsBlock --&gt; &lt; LongDelta<sup>LongsSize</sup>, BytesSize &gt; <sup>NumTerms</sup>
  *  <li>MetaBytesBlock --&gt; Byte <sup>MetaBytesBlockLength</sup>
- *  <li>Header --&gt; {@link CodecUtil#writeHeader CodecHeader}</li>
+ *  <li>Header --&gt; {@link CodecUtil#writeIndexHeader IndexHeader}</li>
  *  <li>DirOffset --&gt; {@link DataOutput#writeLong Uint64}</li>
  *  <li>NumFields, FieldNumber, DocCount, DocFreq, LongsSize, 
  *        FieldNumber, DocCount --&gt; {@link DataOutput#writeVInt VInt}</li>
  *  <li>NumTerms, SumTotalTermFreq, SumDocFreq, StatsBlockLength, MetaLongsBlockLength, MetaBytesBlockLength,
  *        StatsFPDelta, MetaLongsSkipFPDelta, MetaBytesSkipFPDelta, MetaLongsSkipStart, TotalTermFreq, 
  *        LongDelta,--&gt; {@link DataOutput#writeVLong VLong}</li>
+ *  <li>Footer --&gt; {@link CodecUtil#writeFooter CodecFooter}</li>
  * </ul>
  * <p>Notes: </p>
  * <ul>
@@ -146,15 +148,17 @@ import org.apache.lucene.util.fst.Util;
 public class FSTOrdTermsWriter extends FieldsConsumer {
   static final String TERMS_INDEX_EXTENSION = "tix";
   static final String TERMS_BLOCK_EXTENSION = "tbk";
-  static final String TERMS_CODEC_NAME = "FST_ORD_TERMS_DICT";
-  public static final int TERMS_VERSION_START = 0;
-  public static final int TERMS_VERSION_CURRENT = TERMS_VERSION_START;
+  static final String TERMS_CODEC_NAME = "FSTOrdTerms";
+  static final String TERMS_INDEX_CODEC_NAME = "FSTOrdIndex";
+
+  public static final int VERSION_START = 2;
+  public static final int VERSION_CURRENT = VERSION_START;
   public static final int SKIP_INTERVAL = 8;
   
   final PostingsWriterBase postingsWriter;
   final FieldInfos fieldInfos;
   final int maxDoc;
-  final List<FieldMetaData> fields = new ArrayList<FieldMetaData>();
+  final List<FieldMetaData> fields = new ArrayList<>();
   IndexOutput blockOut = null;
   IndexOutput indexOut = null;
 
@@ -170,9 +174,11 @@ public class FSTOrdTermsWriter extends FieldsConsumer {
     try {
       this.indexOut = state.directory.createOutput(termsIndexFileName, state.context);
       this.blockOut = state.directory.createOutput(termsBlockFileName, state.context);
-      writeHeader(indexOut);
-      writeHeader(blockOut);
-      this.postingsWriter.init(blockOut); 
+      CodecUtil.writeIndexHeader(indexOut, TERMS_INDEX_CODEC_NAME, VERSION_CURRENT, 
+                                             state.segmentInfo.getId(), state.segmentSuffix);
+      CodecUtil.writeIndexHeader(blockOut, TERMS_CODEC_NAME, VERSION_CURRENT, 
+                                             state.segmentInfo.getId(), state.segmentSuffix);
+      this.postingsWriter.init(blockOut, state); 
       success = true;
     } finally {
       if (!success) {
@@ -183,77 +189,79 @@ public class FSTOrdTermsWriter extends FieldsConsumer {
 
   @Override
   public void write(Fields fields) throws IOException {
-    try {
-      for(String field : fields) {
-        Terms terms = fields.terms(field);
-        if (terms == null) {
-          continue;
-        }
-        FieldInfo fieldInfo = fieldInfos.fieldInfo(field);
-        boolean hasFreq = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS) >= 0;
-        TermsEnum termsEnum = terms.iterator(null);
-        TermsWriter termsWriter = new TermsWriter(fieldInfo);
-
-        long sumTotalTermFreq = 0;
-        long sumDocFreq = 0;
-        FixedBitSet docsSeen = new FixedBitSet(maxDoc);
-        while (true) {
-          BytesRef term = termsEnum.next();
-          if (term == null) {
-            break;
-          }
-          BlockTermState termState = postingsWriter.writeTerm(term, termsEnum, docsSeen);
-          if (termState != null) {
-            termsWriter.finishTerm(term, termState);
-            sumTotalTermFreq += termState.totalTermFreq;
-            sumDocFreq += termState.docFreq;
-          }
-        }
-
-        termsWriter.finish(hasFreq ? sumTotalTermFreq : -1, sumDocFreq, docsSeen.cardinality());
+    for(String field : fields) {
+      Terms terms = fields.terms(field);
+      if (terms == null) {
+        continue;
       }
-    } finally {
-      close();
+      FieldInfo fieldInfo = fieldInfos.fieldInfo(field);
+      boolean hasFreq = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS) >= 0;
+      TermsEnum termsEnum = terms.iterator(null);
+      TermsWriter termsWriter = new TermsWriter(fieldInfo);
+
+      long sumTotalTermFreq = 0;
+      long sumDocFreq = 0;
+      FixedBitSet docsSeen = new FixedBitSet(maxDoc);
+      while (true) {
+        BytesRef term = termsEnum.next();
+        if (term == null) {
+          break;
+        }
+        BlockTermState termState = postingsWriter.writeTerm(term, termsEnum, docsSeen);
+        if (termState != null) {
+          termsWriter.finishTerm(term, termState);
+          sumTotalTermFreq += termState.totalTermFreq;
+          sumDocFreq += termState.docFreq;
+        }
+      }
+
+      termsWriter.finish(hasFreq ? sumTotalTermFreq : -1, sumDocFreq, docsSeen.cardinality());
     }
   }
 
+  @Override
   public void close() throws IOException {
-    IOException ioe = null;
-    try {
-      final long blockDirStart = blockOut.getFilePointer();
-
-      // write field summary
-      blockOut.writeVInt(fields.size());
-      for (FieldMetaData field : fields) {
-        blockOut.writeVInt(field.fieldInfo.number);
-        blockOut.writeVLong(field.numTerms);
-        if (field.fieldInfo.getIndexOptions() != IndexOptions.DOCS_ONLY) {
-          blockOut.writeVLong(field.sumTotalTermFreq);
+    if (blockOut != null) {
+      boolean success = false;
+      try {
+        final long blockDirStart = blockOut.getFilePointer();
+        
+        // write field summary
+        blockOut.writeVInt(fields.size());
+        for (FieldMetaData field : fields) {
+          blockOut.writeVInt(field.fieldInfo.number);
+          blockOut.writeVLong(field.numTerms);
+          if (field.fieldInfo.getIndexOptions() != IndexOptions.DOCS) {
+            blockOut.writeVLong(field.sumTotalTermFreq);
+          }
+          blockOut.writeVLong(field.sumDocFreq);
+          blockOut.writeVInt(field.docCount);
+          blockOut.writeVInt(field.longsSize);
+          blockOut.writeVLong(field.statsOut.getFilePointer());
+          blockOut.writeVLong(field.metaLongsOut.getFilePointer());
+          blockOut.writeVLong(field.metaBytesOut.getFilePointer());
+          
+          field.skipOut.writeTo(blockOut);
+          field.statsOut.writeTo(blockOut);
+          field.metaLongsOut.writeTo(blockOut);
+          field.metaBytesOut.writeTo(blockOut);
+          field.dict.save(indexOut);
         }
-        blockOut.writeVLong(field.sumDocFreq);
-        blockOut.writeVInt(field.docCount);
-        blockOut.writeVInt(field.longsSize);
-        blockOut.writeVLong(field.statsOut.getFilePointer());
-        blockOut.writeVLong(field.metaLongsOut.getFilePointer());
-        blockOut.writeVLong(field.metaBytesOut.getFilePointer());
-
-        field.skipOut.writeTo(blockOut);
-        field.statsOut.writeTo(blockOut);
-        field.metaLongsOut.writeTo(blockOut);
-        field.metaBytesOut.writeTo(blockOut);
-        field.dict.save(indexOut);
+        writeTrailer(blockOut, blockDirStart);
+        CodecUtil.writeFooter(indexOut);
+        CodecUtil.writeFooter(blockOut);
+        success = true;
+      } finally {
+        if (success) {
+          IOUtils.close(blockOut, indexOut, postingsWriter);
+        } else {
+          IOUtils.closeWhileHandlingException(blockOut, indexOut, postingsWriter);
+        }
+        blockOut = null;
       }
-      writeTrailer(blockOut, blockDirStart);
-    } catch (IOException ioe2) {
-      ioe = ioe2;
-    } finally {
-      IOUtils.closeWhileHandlingException(ioe, blockOut, indexOut, postingsWriter);
     }
   }
 
-  private void writeHeader(IndexOutput out) throws IOException {
-    CodecUtil.writeHeader(out, TERMS_CODEC_NAME, TERMS_VERSION_CURRENT);   
-  }
   private void writeTrailer(IndexOutput out, long dirStart) throws IOException {
     out.writeLong(dirStart);
   }
@@ -286,7 +294,7 @@ public class FSTOrdTermsWriter extends FieldsConsumer {
     private final int longsSize;
     private long numTerms;
 
-    private final IntsRef scratchTerm = new IntsRef();
+    private final IntsRefBuilder scratchTerm = new IntsRefBuilder();
     private final RAMOutputStream statsOut = new RAMOutputStream();
     private final RAMOutputStream metaLongsOut = new RAMOutputStream();
     private final RAMOutputStream metaBytesOut = new RAMOutputStream();
@@ -305,7 +313,7 @@ public class FSTOrdTermsWriter extends FieldsConsumer {
       this.fieldInfo = fieldInfo;
       this.longsSize = postingsWriter.setField(fieldInfo);
       this.outputs = PositiveIntOutputs.getSingleton();
-      this.builder = new Builder<Long>(FST.INPUT_TYPE.BYTE1, outputs);
+      this.builder = new Builder<>(FST.INPUT_TYPE.BYTE1, outputs);
 
       this.lastBlockStatsFP = 0;
       this.lastBlockMetaLongsFP = 0;
@@ -327,7 +335,7 @@ public class FSTOrdTermsWriter extends FieldsConsumer {
         if (delta == 0) {
           statsOut.writeVInt(state.docFreq<<1|1);
         } else {
-          statsOut.writeVInt(state.docFreq<<1|0);
+          statsOut.writeVInt(state.docFreq<<1);
           statsOut.writeVLong(state.totalTermFreq-state.docFreq);
         }
       } else {

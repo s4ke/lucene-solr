@@ -18,8 +18,8 @@ package org.apache.lucene.search;
  */
 
 import java.io.IOException;
-import java.io.Reader;
 import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 
 import org.apache.lucene.analysis.*;
@@ -29,7 +29,7 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.MultiFields;
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.IndexReader;
@@ -210,7 +210,7 @@ public class TestPositionIncrement extends LuceneTestCase {
     writer.addDocument(doc);
 
     final IndexReader readerFromWriter = writer.getReader();
-    AtomicReader r = SlowCompositeReaderWrapper.wrap(readerFromWriter);
+    LeafReader r = SlowCompositeReaderWrapper.wrap(readerFromWriter);
 
     DocsAndPositionsEnum tp = r.termPositionsEnum(new Term("content", "a"));
     
@@ -249,7 +249,7 @@ public class TestPositionIncrement extends LuceneTestCase {
       for (byte[] bytes : payloads) {
         count++;
         if (VERBOSE) {
-          System.out.println("  payload: " + new String(bytes, "UTF-8"));
+          System.out.println("  payload: " + new String(bytes, StandardCharsets.UTF_8));
         }
       }
     }
@@ -276,7 +276,7 @@ public class TestPositionIncrement extends LuceneTestCase {
     Collection<byte[]> pls = psu.getPayloadsForQuery(snq);
     count = pls.size();
     for (byte[] bytes : pls) {
-      String s = new String(bytes, "UTF-8");
+      String s = new String(bytes, StandardCharsets.UTF_8);
       //System.out.println(s);
       sawZero |= s.equals("pos: 0");
     }

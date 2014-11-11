@@ -23,7 +23,7 @@ package org.apache.lucene.index;
 public abstract class NumericDocValues {
   
   /** Sole constructor. (For invocation by subclass 
-   * constructors, typically implicit.) */
+   *  constructors, typically implicit.) */
   protected NumericDocValues() {}
 
   /**
@@ -32,12 +32,4 @@ public abstract class NumericDocValues {
    * @return numeric value
    */
   public abstract long get(int docID);
-
-  /** An empty NumericDocValues which returns zero for every document */
-  public static final NumericDocValues EMPTY = new NumericDocValues() {
-    @Override
-    public long get(int docID) {
-      return 0;
-    }
-  };
 }

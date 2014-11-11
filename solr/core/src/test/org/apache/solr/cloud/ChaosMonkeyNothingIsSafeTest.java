@@ -19,10 +19,14 @@ package org.apache.solr.cloud;
 
 import java.net.ConnectException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.http.client.HttpClient;
 import org.apache.lucene.util.LuceneTestCase.Slow;
+import org.apache.solr.SolrTestCaseJ4.SuppressSSL;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.SolrServer;
 import org.apache.solr.client.solrj.impl.CloudSolrServer;
@@ -43,8 +47,11 @@ import org.slf4j.LoggerFactory;
 import com.carrotsearch.randomizedtesting.annotations.ThreadLeakLingering;
 
 @Slow
+@SuppressSSL
 @ThreadLeakLingering(linger = 60000)
 public class ChaosMonkeyNothingIsSafeTest extends AbstractFullDistribZkTestBase {
+  private static final int FAIL_TOLERANCE = 20;
+
   public static Logger log = LoggerFactory.getLogger(ChaosMonkeyNothingIsSafeTest.class);
   
   private static final Integer RUN_LENGTH = Integer.parseInt(System.getProperty("solr.tests.cloud.cm.runlength", "-1"));
@@ -69,14 +76,14 @@ public class ChaosMonkeyNothingIsSafeTest extends AbstractFullDistribZkTestBase 
     SolrCmdDistributor.testing_errorHook = null;
   }
   
-  public static String[] fieldNames = new String[]{"f_i", "f_f", "f_d", "f_l", "f_dt"};
-  public static RandVal[] randVals = new RandVal[]{rint, rfloat, rdouble, rlong, rdate};
+  protected static final String[] fieldNames = new String[]{"f_i", "f_f", "f_d", "f_l", "f_dt"};
+  protected static final RandVal[] randVals = new RandVal[]{rint, rfloat, rdouble, rlong, rdate};
   
-  protected String[] getFieldNames() {
+  public String[] getFieldNames() {
     return fieldNames;
   }
 
-  protected RandVal[] getRandValues() {
+  public RandVal[] getRandValues() {
     return randVals;
   }
   
@@ -100,8 +107,15 @@ public class ChaosMonkeyNothingIsSafeTest extends AbstractFullDistribZkTestBase 
   
   public ChaosMonkeyNothingIsSafeTest() {
     super();
-    sliceCount = Integer.parseInt(System.getProperty("solr.tests.cloud.cm.slicecount", "2"));
-    shardCount = Integer.parseInt(System.getProperty("solr.tests.cloud.cm.shardcount", "7"));
+    sliceCount = Integer.parseInt(System.getProperty("solr.tests.cloud.cm.slicecount", "-1"));
+    shardCount = Integer.parseInt(System.getProperty("solr.tests.cloud.cm.shardcount", "-1"));
+    
+    if (sliceCount == -1) {
+      sliceCount = random().nextInt(TEST_NIGHTLY ? 5 : 3) + 1;
+    }
+    if (shardCount == -1) {
+      shardCount = sliceCount + random().nextInt(TEST_NIGHTLY ? 12 : 2);
+    }
   }
   
   @Override
@@ -109,7 +123,6 @@ public class ChaosMonkeyNothingIsSafeTest extends AbstractFullDistribZkTestBase 
     boolean testsSuccesful = false;
     try {
       handle.clear();
-      handle.put("QTime", SKIPVAL);
       handle.put("timestamp", SKIPVAL);
       ZkStateReader zkStateReader = cloudClient.getZkStateReader();
       // make sure we have leaders for each shard
@@ -123,12 +136,14 @@ public class ChaosMonkeyNothingIsSafeTest extends AbstractFullDistribZkTestBase 
       // as it's not supported for recovery
        del("*:*");
       
-      List<StopableThread> threads = new ArrayList<StopableThread>();
-      int threadCount = 1;
+      List<StopableThread> threads = new ArrayList<>();
+      List<StopableIndexingThread> indexTreads = new ArrayList<>();
+      int threadCount = TEST_NIGHTLY ? 3 : 1;
       int i = 0;
       for (i = 0; i < threadCount; i++) {
-        StopableIndexingThread indexThread = new StopableIndexingThread(Integer.toString(i), true);
+        StopableIndexingThread indexThread = new StopableIndexingThread(controlClient, cloudClient, Integer.toString(i), true);
         threads.add(indexThread);
+        indexTreads.add(indexThread);
         indexThread.start();
       }
       
@@ -140,7 +155,8 @@ public class ChaosMonkeyNothingIsSafeTest extends AbstractFullDistribZkTestBase 
         searchThread.start();
       }
       
-      // TODO: only do this sometimes so that we can sometimes compare against control
+      // TODO: we only do this sometimes so that we can sometimes compare against control,
+      // it's currently hard to know what requests failed when using ConcurrentSolrUpdateServer
       boolean runFullThrottle = random().nextBoolean();
       if (runFullThrottle) {
         FullThrottleStopableIndexingThread ftIndexThread = new FullThrottleStopableIndexingThread(
@@ -155,8 +171,13 @@ public class ChaosMonkeyNothingIsSafeTest extends AbstractFullDistribZkTestBase 
         if (RUN_LENGTH != -1) {
           runLength = RUN_LENGTH;
         } else {
-          int[] runTimes = new int[] {5000, 6000, 10000, 15000, 25000, 30000,
-              30000, 45000, 90000, 120000};
+          int[] runTimes;
+          if (TEST_NIGHTLY) {
+            runTimes = new int[] {5000, 6000, 10000, 15000, 25000, 30000,
+                30000, 45000, 90000, 120000};
+          } else {
+            runTimes = new int[] {5000, 7000, 15000};
+          }
           runLength = runTimes[random().nextInt(runTimes.length - 1)];
         }
         
@@ -199,13 +220,16 @@ public class ChaosMonkeyNothingIsSafeTest extends AbstractFullDistribZkTestBase 
       // we expect full throttle fails, but cloud client should not easily fail
       for (StopableThread indexThread : threads) {
         if (indexThread instanceof StopableIndexingThread && !(indexThread instanceof FullThrottleStopableIndexingThread)) {
-          assertEquals("There were expected update fails", 0, ((StopableIndexingThread) indexThread).getFails());
+          assertFalse("There were too many update fails - we expect it can happen, but shouldn't easily", ((StopableIndexingThread) indexThread).getFailCount() > FAIL_TOLERANCE);
         }
       }
       
+      
+      Set<String> addFails = getAddFails(indexTreads);
+      Set<String> deleteFails = getDeleteFails(indexTreads);
       // full throttle thread can
       // have request fails 
-      checkShardConsistency(!runFullThrottle, true);
+      checkShardConsistency(!runFullThrottle, true, addFails, deleteFails);
       
       long ctrlDocs = controlClient.query(new SolrQuery("*:*")).getResults()
       .getNumFound(); 
@@ -237,10 +261,10 @@ public class ChaosMonkeyNothingIsSafeTest extends AbstractFullDistribZkTestBase 
       } finally {
         client.shutdown();
       }
-      List<Integer> numShardsNumReplicas = new ArrayList<Integer>(2);
+      List<Integer> numShardsNumReplicas = new ArrayList<>(2);
       numShardsNumReplicas.add(1);
       numShardsNumReplicas.add(1);
-      checkForCollection("testcollection",numShardsNumReplicas, null);
+      checkForCollection("testcollection", numShardsNumReplicas, null);
       
       testsSuccesful = true;
     } finally {
@@ -250,16 +274,33 @@ public class ChaosMonkeyNothingIsSafeTest extends AbstractFullDistribZkTestBase 
     }
   }
 
+  private Set<String> getAddFails(List<StopableIndexingThread> threads) {
+    Set<String> addFails = new HashSet<String>();
+    for (StopableIndexingThread thread : threads)   {
+      addFails.addAll(thread.getAddFails());
+    }
+    return addFails;
+  }
+  
+  private Set<String> getDeleteFails(List<StopableIndexingThread> threads) {
+    Set<String> deleteFails = new HashSet<String>();
+    for (StopableIndexingThread thread : threads)   {
+      deleteFails.addAll(thread.getDeleteFails());
+    }
+    return deleteFails;
+  }
+
   class FullThrottleStopableIndexingThread extends StopableIndexingThread {
     private HttpClient httpClient = HttpClientUtil.createClient(null);
     private volatile boolean stop = false;
     int clientIndex = 0;
     private ConcurrentUpdateSolrServer suss;
     private List<SolrServer> clients;  
+    private AtomicInteger fails = new AtomicInteger();
     
     public FullThrottleStopableIndexingThread(List<SolrServer> clients,
         String id, boolean doDeletes) {
-      super(id, doDeletes);
+      super(controlClient, cloudClient, id, doDeletes);
       setName("FullThrottleStopableIndexingThread");
       setDaemon(true);
       this.clients = clients;
@@ -300,7 +341,7 @@ public class ChaosMonkeyNothingIsSafeTest extends AbstractFullDistribZkTestBase 
         
         try {
           numAdds++;
-          if (numAdds > 4000)
+          if (numAdds > (TEST_NIGHTLY ? 4002 : 197))
             continue;
           SolrInputDocument doc = getDoc(
               "id",
@@ -353,8 +394,18 @@ public class ChaosMonkeyNothingIsSafeTest extends AbstractFullDistribZkTestBase 
     }
 
     @Override
-    public int getFails() {
+    public int getFailCount() {
       return fails.get();
+    }
+    
+    @Override
+    public Set<String> getAddFails() {
+      throw new UnsupportedOperationException();
+    }
+    
+    @Override
+    public Set<String> getDeleteFails() {
+      throw new UnsupportedOperationException();
     }
     
   };

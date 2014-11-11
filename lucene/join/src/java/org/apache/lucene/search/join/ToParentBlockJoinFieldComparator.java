@@ -17,14 +17,13 @@ package org.apache.lucene.search.join;
  * limitations under the License.
  */
 
-import org.apache.lucene.index.AtomicReaderContext;
-import org.apache.lucene.search.DocIdSet;
+import java.io.IOException;
+
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.FieldComparator;
-import org.apache.lucene.search.Filter;
-import org.apache.lucene.util.FixedBitSet;
-
-import java.io.IOException;
+import org.apache.lucene.util.BitDocIdSet;
+import org.apache.lucene.util.BitSet;
 
 /**
  * A field comparator that allows parent documents to be sorted by fields
@@ -34,15 +33,15 @@ import java.io.IOException;
  */
 public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<Object> {
 
-  private final Filter parentFilter;
-  private final Filter childFilter;
+  private final BitDocIdSetFilter parentFilter;
+  private final BitDocIdSetFilter childFilter;
   final int spareSlot;
 
   FieldComparator<Object> wrappedComparator;
-  FixedBitSet parentDocuments;
-  FixedBitSet childDocuments;
+  BitSet parentDocuments;
+  BitSet childDocuments;
 
-  ToParentBlockJoinFieldComparator(FieldComparator<Object> wrappedComparator, Filter parentFilter, Filter childFilter, int spareSlot) {
+  ToParentBlockJoinFieldComparator(FieldComparator<Object> wrappedComparator, BitDocIdSetFilter parentFilter, BitDocIdSetFilter childFilter, int spareSlot) {
     this.wrappedComparator = wrappedComparator;
     this.parentFilter = parentFilter;
     this.childFilter = childFilter;
@@ -60,49 +59,26 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
   }
 
   @Override
-  public FieldComparator<Object> setNextReader(AtomicReaderContext context) throws IOException {
-    DocIdSet innerDocuments = childFilter.getDocIdSet(context, null);
-    if (isEmpty(innerDocuments)) {
-      this.childDocuments = null;
-    } else if (innerDocuments instanceof FixedBitSet) {
-      this.childDocuments = (FixedBitSet) innerDocuments;
-    } else {
-      DocIdSetIterator iterator = innerDocuments.iterator();
-      if (iterator != null) {
-        this.childDocuments = toFixedBitSet(iterator, context.reader().maxDoc());
-      } else {
-        childDocuments = null;
-      }
-    }
-    DocIdSet rootDocuments = parentFilter.getDocIdSet(context, null);
-    if (isEmpty(rootDocuments)) {
-      this.parentDocuments = null;
-    } else if (rootDocuments instanceof FixedBitSet) {
-      this.parentDocuments = (FixedBitSet) rootDocuments;
-    } else {
-      DocIdSetIterator iterator = rootDocuments.iterator();
-      if (iterator != null) {
-        this.parentDocuments = toFixedBitSet(iterator, context.reader().maxDoc());
-      } else {
-        this.parentDocuments = null;
-      }
-    }
+  public void setTopValue(Object value) {
+    wrappedComparator.setTopValue(value);
+  }
 
+  @Override
+  public FieldComparator<Object> setNextReader(LeafReaderContext context) throws IOException {
+    BitDocIdSet children = childFilter.getDocIdSet(context);
+    if (children == null) {
+      childDocuments = null;
+    } else {
+      childDocuments = children.bits();
+    }
+    BitDocIdSet parents = parentFilter.getDocIdSet(context);
+    if (parents == null) {
+      parentDocuments = null;
+    } else {
+      parentDocuments = parents.bits();
+    }
     wrappedComparator = wrappedComparator.setNextReader(context);
     return this;
-  }
-
-  private static boolean isEmpty(DocIdSet set) {
-    return set == null;
-  }
-
-  private static FixedBitSet toFixedBitSet(DocIdSetIterator iterator, int numBits) throws IOException {
-    FixedBitSet set = new FixedBitSet(numBits);
-    int doc;
-    while ((doc = iterator.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
-      set.set(doc);
-    }
-    return set;
   }
 
   @Override
@@ -120,12 +96,12 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
      * Create ToParentBlockJoinFieldComparator.Lowest
      *
      * @param wrappedComparator The {@link FieldComparator} on the child / nested level.
-     * @param parentFilter Filter (must produce FixedBitSet per-segment) that identifies the parent documents.
+     * @param parentFilter Filter that identifies the parent documents.
      * @param childFilter Filter that defines which child / nested documents participates in sorting.
      * @param spareSlot The extra slot inside the wrapped comparator that is used to compare which nested document
      *                  inside the parent document scope is most competitive.
      */
-    public Lowest(FieldComparator<Object> wrappedComparator, Filter parentFilter, Filter childFilter, int spareSlot) {
+    public Lowest(FieldComparator<Object> wrappedComparator, BitDocIdSetFilter parentFilter, BitDocIdSetFilter childFilter, int spareSlot) {
       super(wrappedComparator, parentFilter, childFilter, spareSlot);
     }
 
@@ -138,7 +114,7 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
       // We need to copy the lowest value from all child docs into slot.
       int prevParentDoc = parentDocuments.prevSetBit(parentDoc - 1);
       int childDoc = childDocuments.nextSetBit(prevParentDoc + 1);
-      if (childDoc >= parentDoc || childDoc == -1) {
+      if (childDoc >= parentDoc || childDoc == DocIdSetIterator.NO_MORE_DOCS) {
         return 0;
       }
 
@@ -150,7 +126,7 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
 
       while (true) {
         childDoc = childDocuments.nextSetBit(childDoc + 1);
-        if (childDoc >= parentDoc || childDoc == -1) {
+        if (childDoc >= parentDoc || childDoc == DocIdSetIterator.NO_MORE_DOCS) {
           return cmp;
         }
         int cmp1 = wrappedComparator.compareBottom(childDoc);
@@ -173,7 +149,7 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
       // We need to copy the lowest value from all child docs into slot.
       int prevParentDoc = parentDocuments.prevSetBit(parentDoc - 1);
       int childDoc = childDocuments.nextSetBit(prevParentDoc + 1);
-      if (childDoc >= parentDoc || childDoc == -1) {
+      if (childDoc >= parentDoc || childDoc == DocIdSetIterator.NO_MORE_DOCS) {
         return;
       }
       wrappedComparator.copy(spareSlot, childDoc);
@@ -181,7 +157,7 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
 
       while (true) {
         childDoc = childDocuments.nextSetBit(childDoc + 1);
-        if (childDoc >= parentDoc || childDoc == -1) {
+        if (childDoc >= parentDoc || childDoc == DocIdSetIterator.NO_MORE_DOCS) {
           return;
         }
         wrappedComparator.copy(spareSlot, childDoc);
@@ -193,7 +169,7 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
 
     @Override
     @SuppressWarnings("unchecked")
-    public int compareDocToValue(int parentDoc, Object value) throws IOException {
+    public int compareTop(int parentDoc) throws IOException {
       if (parentDoc == 0 || parentDocuments == null || childDocuments == null) {
         return 0;
       }
@@ -201,7 +177,7 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
       // We need to copy the lowest value from all nested docs into slot.
       int prevParentDoc = parentDocuments.prevSetBit(parentDoc - 1);
       int childDoc = childDocuments.nextSetBit(prevParentDoc + 1);
-      if (childDoc >= parentDoc || childDoc == -1) {
+      if (childDoc >= parentDoc || childDoc == DocIdSetIterator.NO_MORE_DOCS) {
         return 0;
       }
 
@@ -213,10 +189,10 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
 
       while (true) {
         childDoc = childDocuments.nextSetBit(childDoc + 1);
-        if (childDoc >= parentDoc || childDoc == -1) {
+        if (childDoc >= parentDoc || childDoc == DocIdSetIterator.NO_MORE_DOCS) {
           return cmp;
         }
-        int cmp1 = wrappedComparator.compareDocToValue(childDoc, value);
+        int cmp1 = wrappedComparator.compareTop(childDoc);
         if (cmp1 > 0) {
           return cmp1;
         } else {
@@ -239,12 +215,12 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
      * Create ToParentBlockJoinFieldComparator.Highest
      *
      * @param wrappedComparator The {@link FieldComparator} on the child / nested level.
-     * @param parentFilter Filter (must produce FixedBitSet per-segment) that identifies the parent documents.
+     * @param parentFilter Filter that identifies the parent documents.
      * @param childFilter Filter that defines which child / nested documents participates in sorting.
      * @param spareSlot The extra slot inside the wrapped comparator that is used to compare which nested document
      *                  inside the parent document scope is most competitive.
      */
-    public Highest(FieldComparator<Object> wrappedComparator, Filter parentFilter, Filter childFilter, int spareSlot) {
+    public Highest(FieldComparator<Object> wrappedComparator, BitDocIdSetFilter parentFilter, BitDocIdSetFilter childFilter, int spareSlot) {
       super(wrappedComparator, parentFilter, childFilter, spareSlot);
     }
 
@@ -256,7 +232,7 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
 
       int prevParentDoc = parentDocuments.prevSetBit(parentDoc - 1);
       int childDoc = childDocuments.nextSetBit(prevParentDoc + 1);
-      if (childDoc >= parentDoc || childDoc == -1) {
+      if (childDoc >= parentDoc || childDoc == DocIdSetIterator.NO_MORE_DOCS) {
         return 0;
       }
 
@@ -267,7 +243,7 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
 
       while (true) {
         childDoc = childDocuments.nextSetBit(childDoc + 1);
-        if (childDoc >= parentDoc || childDoc == -1) {
+        if (childDoc >= parentDoc || childDoc == DocIdSetIterator.NO_MORE_DOCS) {
           return cmp;
         }
         int cmp1 = wrappedComparator.compareBottom(childDoc);
@@ -289,7 +265,7 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
 
       int prevParentDoc = parentDocuments.prevSetBit(parentDoc - 1);
       int childDoc = childDocuments.nextSetBit(prevParentDoc + 1);
-      if (childDoc >= parentDoc || childDoc == -1) {
+      if (childDoc >= parentDoc || childDoc == DocIdSetIterator.NO_MORE_DOCS) {
         return;
       }
       wrappedComparator.copy(spareSlot, childDoc);
@@ -297,7 +273,7 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
 
       while (true) {
         childDoc = childDocuments.nextSetBit(childDoc + 1);
-        if (childDoc >= parentDoc || childDoc == -1) {
+        if (childDoc >= parentDoc || childDoc == DocIdSetIterator.NO_MORE_DOCS) {
           return;
         }
         wrappedComparator.copy(spareSlot, childDoc);
@@ -309,14 +285,14 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
 
     @Override
     @SuppressWarnings("unchecked")
-    public int compareDocToValue(int parentDoc, Object value) throws IOException {
+    public int compareTop(int parentDoc) throws IOException {
       if (parentDoc == 0 || parentDocuments == null || childDocuments == null) {
         return 0;
       }
 
       int prevParentDoc = parentDocuments.prevSetBit(parentDoc - 1);
       int childDoc = childDocuments.nextSetBit(prevParentDoc + 1);
-      if (childDoc >= parentDoc || childDoc == -1) {
+      if (childDoc >= parentDoc || childDoc == DocIdSetIterator.NO_MORE_DOCS) {
         return 0;
       }
 
@@ -327,10 +303,10 @@ public abstract class ToParentBlockJoinFieldComparator extends FieldComparator<O
 
       while (true) {
         childDoc = childDocuments.nextSetBit(childDoc + 1);
-        if (childDoc >= parentDoc || childDoc == -1) {
+        if (childDoc >= parentDoc || childDoc == DocIdSetIterator.NO_MORE_DOCS) {
           return cmp;
         }
-        int cmp1 = wrappedComparator.compareDocToValue(childDoc, value);
+        int cmp1 = wrappedComparator.compareTop(childDoc);
         if (cmp1 < 0) {
           return cmp1;
         } else {

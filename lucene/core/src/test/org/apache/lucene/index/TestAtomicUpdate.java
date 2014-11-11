@@ -17,7 +17,7 @@ package org.apache.lucene.index;
  */
 
 import java.io.File;
-import java.io.IOException;
+import java.nio.file.Path;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.*;
@@ -109,8 +109,7 @@ public class TestAtomicUpdate extends LuceneTestCase {
 
     TimedThread[] threads = new TimedThread[4];
 
-    IndexWriterConfig conf = new IndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random()))
+    IndexWriterConfig conf = new IndexWriterConfig(new MockAnalyzer(random()))
         .setMaxBufferedDocs(7);
     ((TieredMergePolicy) conf.getMergePolicy()).setMaxMergeAtOnce(3);
     IndexWriter writer = RandomIndexWriter.mockIndexWriter(directory, conf, random());
@@ -176,10 +175,10 @@ public class TestAtomicUpdate extends LuceneTestCase {
     directory.close();
 
     // Second in an FSDirectory:
-    File dirPath = _TestUtil.getTempDir("lucene.test.atomic");
+    Path dirPath = createTempDir("lucene.test.atomic");
     directory = newFSDirectory(dirPath);
     runTest(directory);
     directory.close();
-    _TestUtil.rmDir(dirPath);
+    IOUtils.rm(dirPath);
   }
 }

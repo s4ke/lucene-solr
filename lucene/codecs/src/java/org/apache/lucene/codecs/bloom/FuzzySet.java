@@ -17,9 +17,12 @@ package org.apache.lucene.codecs.bloom;
  * limitations under the License.
  */
 import java.io.IOException;
+import java.util.Collections;
 
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.RamUsageEstimator;
@@ -46,7 +49,7 @@ import org.apache.lucene.util.RamUsageEstimator;
  * </p>
  * @lucene.experimental
  */
-public class FuzzySet {
+public class FuzzySet implements Accountable {
 
   public static final int VERSION_SPI = 1; // HashFunction used to be loaded through a SPI
   public static final int VERSION_START = VERSION_SPI;
@@ -270,7 +273,7 @@ public class FuzzySet {
       int bitIndex = 0;
       do {
         bitIndex = filter.nextSetBit(bitIndex);
-        if (bitIndex >= 0) {
+        if (bitIndex != DocIdSetIterator.NO_MORE_DOCS) {
           // Project the larger number into a smaller one effectively
           // modulo-ing by using the target bitset size as a mask
           int downSizedBitIndex = bitIndex & rightSizedBitSetSize;
@@ -304,7 +307,18 @@ public class FuzzySet {
     return (float) numBitsSet / (float) bloomSize;
   }
 
+  @Override
   public long ramBytesUsed() {
     return RamUsageEstimator.sizeOf(filter.getBits());
+  }
+
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Collections.emptyList();
+  }
+
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(hash=" + hashFunction + ")";
   }
 }

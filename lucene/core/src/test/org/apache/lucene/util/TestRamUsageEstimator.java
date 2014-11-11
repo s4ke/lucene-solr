@@ -18,6 +18,7 @@ package org.apache.lucene.util;
  */
 
 import static org.apache.lucene.util.RamUsageEstimator.*;
+import static org.apache.lucene.util.RamUsageTester.sizeOf;
 
 import java.util.Random;
 

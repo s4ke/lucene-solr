@@ -1,6 +1,6 @@
 package org.apache.solr.store.blockcache;
 
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -21,6 +21,9 @@ import java.io.IOException;
 
 import org.apache.lucene.store.IndexOutput;
 
+/**
+ * @lucene.experimental
+ */
 public abstract class ReusedBufferedIndexOutput extends IndexOutput {
   
   public static final int BUFFER_SIZE = 1024;
@@ -38,6 +41,8 @@ public abstract class ReusedBufferedIndexOutput extends IndexOutput {
   /** total length of the file */
   private long fileLength = 0;
   
+  private final Store store;
+  
   public ReusedBufferedIndexOutput() {
     this(BUFFER_SIZE);
   }
@@ -45,7 +50,8 @@ public abstract class ReusedBufferedIndexOutput extends IndexOutput {
   public ReusedBufferedIndexOutput(int bufferSize) {
     checkBufferSize(bufferSize);
     this.bufferSize = bufferSize;
-    buffer = BufferStore.takeBuffer(this.bufferSize);
+    store = BufferStore.instance(bufferSize);
+    buffer = store.takeBuffer(this.bufferSize);
   }
   
   protected long getBufferStart() {
@@ -58,20 +64,12 @@ public abstract class ReusedBufferedIndexOutput extends IndexOutput {
   }
   
   /** Write the buffered bytes to cache */
-  private void flushBufferToCache() throws IOException {
+  protected void flushBufferToCache() throws IOException {
     writeInternal(buffer, 0, bufferLength);
     
     bufferStart += bufferLength;
     bufferLength = 0;
     bufferPosition = 0;
-  }
-  
-  protected abstract void flushInternal() throws IOException;
-  
-  @Override
-  public void flush() throws IOException {
-    flushBufferToCache();
-    flushInternal();
   }
   
   protected abstract void closeInternal() throws IOException;
@@ -80,20 +78,13 @@ public abstract class ReusedBufferedIndexOutput extends IndexOutput {
   public void close() throws IOException {
     flushBufferToCache();
     closeInternal();
-    BufferStore.putBuffer(buffer);
+    store.putBuffer(buffer);
     buffer = null;
   }
   
   @Override
   public long getFilePointer() {
     return bufferStart + bufferPosition;
-  }
-  
-  protected abstract void seekInternal(long pos) throws IOException;
-  
-  @Override
-  public long length() throws IOException {
-    return fileLength;
   }
   
   @Override
@@ -169,10 +160,5 @@ public abstract class ReusedBufferedIndexOutput extends IndexOutput {
       }
       
     }
-  }
-  
-  @Override
-  protected Object clone() throws CloneNotSupportedException {
-    throw new CloneNotSupportedException();
   }
 }

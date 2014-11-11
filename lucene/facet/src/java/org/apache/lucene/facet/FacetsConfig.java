@@ -28,7 +28,9 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.lucene.document.BinaryDocValuesField;
+import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.SortedSetDocValuesField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.facet.sortedset.SortedSetDocValuesFacetField;
@@ -37,13 +39,11 @@ import org.apache.lucene.facet.taxonomy.FacetLabel;
 import org.apache.lucene.facet.taxonomy.FloatAssociationFacetField;
 import org.apache.lucene.facet.taxonomy.IntAssociationFacetField;
 import org.apache.lucene.facet.taxonomy.TaxonomyWriter;
-import org.apache.lucene.index.IndexDocument;
 import org.apache.lucene.index.IndexableField;
-import org.apache.lucene.index.IndexableFieldType;
-import org.apache.lucene.index.StorableField;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.util.IntsRefBuilder;
 
 /** Records per-dimension configuration.  By default a
  *  dimension is flat, single valued and does
@@ -63,11 +63,11 @@ public class FacetsConfig {
    *  doc values). */
   public static final String DEFAULT_INDEX_FIELD_NAME = "$facets";
 
-  private final Map<String,DimConfig> fieldTypes = new ConcurrentHashMap<String,DimConfig>();
+  private final Map<String,DimConfig> fieldTypes = new ConcurrentHashMap<>();
 
   // Used only for best-effort detection of app mixing
   // int/float/bytes in a single indexed field:
-  private final Map<String,String> assocDimTypes = new ConcurrentHashMap<String,String>();
+  private final Map<String,String> assocDimTypes = new ConcurrentHashMap<>();
 
   /** Holds the configuration for one dimension
    *
@@ -99,11 +99,22 @@ public class FacetsConfig {
   public FacetsConfig() {
   }
 
+  /** Get the default configuration for new dimensions.  Useful when
+   *  the dimension is not known beforehand and may need different 
+   *  global default settings, like {@code multivalue =
+   *  true}.
+   *
+   *  @return The default configuration to be used for dimensions that 
+   *  are not yet set in the {@link FacetsConfig} */
+  protected DimConfig getDefaultDimConfig(){
+    return DEFAULT_DIM_CONFIG;
+  }
+  
   /** Get the current configuration for a dimension. */
   public synchronized DimConfig getDimConfig(String dimName) {
     DimConfig ft = fieldTypes.get(dimName);
     if (ft == null) {
-      ft = DEFAULT_DIM_CONFIG;
+      ft = getDefaultDimConfig();
     }
     return ft;
   }
@@ -166,29 +177,39 @@ public class FacetsConfig {
     seenDims.add(dim);
   }
 
-  /** Translates any added {@link FacetField}s into normal
-   *  fields for indexing; only use this version if you
-   *  did not add any taxonomy-based fields ({@link
-   *  FacetField} or {@link AssociationFacetField}) */
-  public IndexDocument build(IndexDocument doc) throws IOException {
+  /**
+   * Translates any added {@link FacetField}s into normal fields for indexing;
+   * only use this version if you did not add any taxonomy-based fields (
+   * {@link FacetField} or {@link AssociationFacetField}).
+   * 
+   * <p>
+   * <b>NOTE:</b> you should add the returned document to IndexWriter, not the
+   * input one!
+   */
+  public Document build(Document doc) throws IOException {
     return build(null, doc);
   }
 
-  /** Translates any added {@link FacetField}s into normal
-   *  fields for indexing. */
-  public IndexDocument build(TaxonomyWriter taxoWriter, IndexDocument doc) throws IOException {
+  /**
+   * Translates any added {@link FacetField}s into normal fields for indexing.
+   * 
+   * <p>
+   * <b>NOTE:</b> you should add the returned document to IndexWriter, not the
+   * input one!
+   */
+  public Document build(TaxonomyWriter taxoWriter, Document doc) throws IOException {
     // Find all FacetFields, collated by the actual field:
-    Map<String,List<FacetField>> byField = new HashMap<String,List<FacetField>>();
+    Map<String,List<FacetField>> byField = new HashMap<>();
 
     // ... and also all SortedSetDocValuesFacetFields:
-    Map<String,List<SortedSetDocValuesFacetField>> dvByField = new HashMap<String,List<SortedSetDocValuesFacetField>>();
+    Map<String,List<SortedSetDocValuesFacetField>> dvByField = new HashMap<>();
 
     // ... and also all AssociationFacetFields
-    Map<String,List<AssociationFacetField>> assocByField = new HashMap<String,List<AssociationFacetField>>();
+    Map<String,List<AssociationFacetField>> assocByField = new HashMap<>();
 
-    Set<String> seenDims = new HashSet<String>();
+    Set<String> seenDims = new HashSet<>();
 
-    for(IndexableField field : doc.indexableFields()) {
+    for (IndexableField field : doc.indexableFields()) {
       if (field.fieldType() == FacetField.TYPE) {
         FacetField facetField = (FacetField) field;
         FacetsConfig.DimConfig dimConfig = getDimConfig(facetField.dim);
@@ -198,7 +219,7 @@ public class FacetsConfig {
         String indexFieldName = dimConfig.indexFieldName;
         List<FacetField> fields = byField.get(indexFieldName);
         if (fields == null) {
-          fields = new ArrayList<FacetField>();
+          fields = new ArrayList<>();
           byField.put(indexFieldName, fields);
         }
         fields.add(facetField);
@@ -213,7 +234,7 @@ public class FacetsConfig {
         String indexFieldName = dimConfig.indexFieldName;
         List<SortedSetDocValuesFacetField> fields = dvByField.get(indexFieldName);
         if (fields == null) {
-          fields = new ArrayList<SortedSetDocValuesFacetField>();
+          fields = new ArrayList<>();
           dvByField.put(indexFieldName, fields);
         }
         fields.add(facetField);
@@ -235,7 +256,7 @@ public class FacetsConfig {
         String indexFieldName = dimConfig.indexFieldName;
         List<AssociationFacetField> fields = assocByField.get(indexFieldName);
         if (fields == null) {
-          fields = new ArrayList<AssociationFacetField>();
+          fields = new ArrayList<>();
           assocByField.put(indexFieldName, fields);
         }
         fields.add(facetField);
@@ -260,54 +281,35 @@ public class FacetsConfig {
       }
     }
 
-    List<Field> addedIndexedFields = new ArrayList<Field>();
-    List<Field> addedStoredFields = new ArrayList<Field>();
+    Document result = new Document();
 
-    processFacetFields(taxoWriter, byField, addedIndexedFields, addedStoredFields);
-    processSSDVFacetFields(dvByField, addedIndexedFields, addedStoredFields);
-    processAssocFacetFields(taxoWriter, assocByField, addedIndexedFields, addedStoredFields);
+    processFacetFields(taxoWriter, byField, result);
+    processSSDVFacetFields(dvByField, result);
+    processAssocFacetFields(taxoWriter, assocByField, result);
 
     //System.out.println("add stored: " + addedStoredFields);
 
-    final List<IndexableField> allIndexedFields = new ArrayList<IndexableField>();
-    for(IndexableField field : doc.indexableFields()) {
-      IndexableFieldType ft = field.fieldType();
+    for (Field field : doc.getFields()) {
+      FieldType ft = field.fieldType();
       if (ft != FacetField.TYPE && ft != SortedSetDocValuesFacetField.TYPE && ft != AssociationFacetField.TYPE) {
-        allIndexedFields.add(field);
+        result.add(field);
       }
     }
-    allIndexedFields.addAll(addedIndexedFields);
-
-    final List<StorableField> allStoredFields = new ArrayList<StorableField>();
-    for(StorableField field : doc.storableFields()) {
-      allStoredFields.add(field);
-    }
-    allStoredFields.addAll(addedStoredFields);
 
     //System.out.println("all indexed: " + allIndexedFields);
     //System.out.println("all stored: " + allStoredFields);
 
-    return new IndexDocument() {
-        @Override
-        public Iterable<IndexableField> indexableFields() {
-          return allIndexedFields;
-        }
-
-        @Override
-        public Iterable<StorableField> storableFields() {
-          return allStoredFields;
-        }
-      };
+    return result;
   }
 
-  private void processFacetFields(TaxonomyWriter taxoWriter, Map<String,List<FacetField>> byField, List<Field> addedIndexedFields, List<Field> addedStoredFields) throws IOException {
+  private void processFacetFields(TaxonomyWriter taxoWriter, Map<String,List<FacetField>> byField, Document doc) throws IOException {
 
     for(Map.Entry<String,List<FacetField>> ent : byField.entrySet()) {
 
       String indexFieldName = ent.getKey();
       //System.out.println("  indexFieldName=" + indexFieldName + " fields=" + ent.getValue());
 
-      IntsRef ordinals = new IntsRef(32);
+      IntsRefBuilder ordinals = new IntsRefBuilder();
       for(FacetField facetField : ent.getValue()) {
 
         FacetsConfig.DimConfig ft = getDimConfig(facetField.dim);
@@ -319,10 +321,7 @@ public class FacetsConfig {
 
         checkTaxoWriter(taxoWriter);
         int ordinal = taxoWriter.addCategory(cp);
-        if (ordinals.length == ordinals.ints.length) {
-          ordinals.grow(ordinals.length+1);
-        }
-        ordinals.ints[ordinals.length++] = ordinal;
+        ordinals.append(ordinal);
         //System.out.println("ords[" + (ordinals.length-1) + "]=" + ordinal);
         //System.out.println("  add cp=" + cp);
 
@@ -331,32 +330,29 @@ public class FacetsConfig {
           // Add all parents too:
           int parent = taxoWriter.getParent(ordinal);
           while (parent > 0) {
-            if (ordinals.ints.length == ordinals.length) {
-              ordinals.grow(ordinals.length+1);
-            }
-            ordinals.ints[ordinals.length++] = parent;
+            ordinals.append(parent);
             parent = taxoWriter.getParent(parent);
           }
 
           if (ft.requireDimCount == false) {
             // Remove last (dimension) ord:
-            ordinals.length--;
+            ordinals.setLength(ordinals.length() - 1);
           }
         }
 
         // Drill down:
-        for(int i=1;i<=cp.length;i++) {
-          addedIndexedFields.add(new StringField(indexFieldName, pathToString(cp.components, i), Field.Store.NO));
+        for (int i=1;i<=cp.length;i++) {
+          doc.add(new StringField(indexFieldName, pathToString(cp.components, i), Field.Store.NO));
         }
       }
 
       // Facet counts:
       // DocValues are considered stored fields:
-      addedStoredFields.add(new BinaryDocValuesField(indexFieldName, dedupAndEncode(ordinals)));
+      doc.add(new BinaryDocValuesField(indexFieldName, dedupAndEncode(ordinals.get())));
     }
   }
 
-  private void processSSDVFacetFields(Map<String,List<SortedSetDocValuesFacetField>> byField, List<Field> addedIndexedFields, List<Field> addedStoredFields) throws IOException {
+  private void processSSDVFacetFields(Map<String,List<SortedSetDocValuesFacetField>> byField, Document doc) throws IOException {
     //System.out.println("process SSDV: " + byField);
     for(Map.Entry<String,List<SortedSetDocValuesFacetField>> ent : byField.entrySet()) {
 
@@ -369,25 +365,27 @@ public class FacetsConfig {
         //System.out.println("add " + fullPath);
 
         // For facet counts:
-        addedStoredFields.add(new SortedSetDocValuesField(indexFieldName, new BytesRef(fullPath)));
+        doc.add(new SortedSetDocValuesField(indexFieldName, new BytesRef(fullPath)));
 
         // For drill-down:
-        addedIndexedFields.add(new StringField(indexFieldName, fullPath, Field.Store.NO));
-        addedIndexedFields.add(new StringField(indexFieldName, facetField.dim, Field.Store.NO));
+        doc.add(new StringField(indexFieldName, fullPath, Field.Store.NO));
+        doc.add(new StringField(indexFieldName, facetField.dim, Field.Store.NO));
       }
     }
   }
 
-  private void processAssocFacetFields(TaxonomyWriter taxoWriter, Map<String,List<AssociationFacetField>> byField,
-                                       List<Field> addedIndexedFields, List<Field> addedStoredFields) throws IOException {
-    for(Map.Entry<String,List<AssociationFacetField>> ent : byField.entrySet()) {
+  private void processAssocFacetFields(TaxonomyWriter taxoWriter,
+      Map<String,List<AssociationFacetField>> byField, Document doc)
+      throws IOException {
+    for (Map.Entry<String,List<AssociationFacetField>> ent : byField.entrySet()) {
       byte[] bytes = new byte[16];
       int upto = 0;
       String indexFieldName = ent.getKey();
       for(AssociationFacetField field : ent.getValue()) {
         // NOTE: we don't add parents for associations
         checkTaxoWriter(taxoWriter);
-        int ordinal = taxoWriter.addCategory(new FacetLabel(field.dim, field.path));
+        FacetLabel label = new FacetLabel(field.dim, field.path);
+        int ordinal = taxoWriter.addCategory(label);
         if (upto + 4 > bytes.length) {
           bytes = ArrayUtil.grow(bytes, upto+4);
         }
@@ -401,8 +399,13 @@ public class FacetsConfig {
         }
         System.arraycopy(field.assoc.bytes, field.assoc.offset, bytes, upto, field.assoc.length);
         upto += field.assoc.length;
+        
+        // Drill down:
+        for (int i = 1; i <= label.length; i++) {
+          doc.add(new StringField(indexFieldName, pathToString(label.components, i), Field.Store.NO));
+        }
       }
-      addedStoredFields.add(new BinaryDocValuesField(indexFieldName, new BytesRef(bytes, 0, upto)));
+      doc.add(new BinaryDocValuesField(indexFieldName, new BytesRef(bytes, 0, upto)));
     }
   }
 
@@ -512,7 +515,7 @@ public class FacetsConfig {
    *  #pathToString}) back into the original {@code
    *  String[]}. */
   public static String[] stringToPath(String s) {
-    List<String> parts = new ArrayList<String>();
+    List<String> parts = new ArrayList<>();
     int length = s.length();
     if (length == 0) {
       return new String[0];

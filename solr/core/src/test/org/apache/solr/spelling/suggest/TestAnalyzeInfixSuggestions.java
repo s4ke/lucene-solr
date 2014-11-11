@@ -63,4 +63,5 @@ public class TestAnalyzeInfixSuggestions extends SolrTestCaseJ4  {
       "//lst[@name='spellcheck']/lst[@name='suggestions']/lst[@name='japan']/arr[@name='suggestion']/str[3][.='Add decompose compound <b>Japan</b>ese Katakana token capability to Kuromoji']"
       );
   }
+  
 }

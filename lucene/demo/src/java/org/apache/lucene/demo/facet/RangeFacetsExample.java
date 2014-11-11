@@ -35,14 +35,13 @@ import org.apache.lucene.facet.range.LongRangeFacetCounts;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.NumericRangeQuery;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.RAMDirectory;
-
-
 
 /** Shows simple usage of dynamic range faceting. */
 public class RangeFacetsExample implements Closeable {
@@ -60,8 +59,8 @@ public class RangeFacetsExample implements Closeable {
   
   /** Build the example index. */
   public void index() throws IOException {
-    IndexWriter indexWriter = new IndexWriter(indexDir, new IndexWriterConfig(FacetExamples.EXAMPLES_VER, 
-        new WhitespaceAnalyzer(FacetExamples.EXAMPLES_VER)));
+    IndexWriter indexWriter = new IndexWriter(indexDir, new IndexWriterConfig(
+        new WhitespaceAnalyzer()).setOpenMode(OpenMode.CREATE));
 
     // Add documents with a fake timestamp, 1000 sec before
     // "now", 2000 sec before "now", ...:
@@ -121,7 +120,6 @@ public class RangeFacetsExample implements Closeable {
   }
 
   /** Runs the search and drill-down examples and prints the results. */
-  @SuppressWarnings("unchecked")
   public static void main(String[] args) throws Exception {
     RangeFacetsExample example = new RangeFacetsExample();
     example.index();

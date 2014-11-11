@@ -17,6 +17,9 @@ package org.apache.lucene.index;
  * limitations under the License.
  */
 
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.RejectedExecutionException;
+
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.analysis.MockTokenizer;
 import org.apache.lucene.document.Document;
@@ -26,7 +29,7 @@ import org.apache.lucene.search.TermRangeQuery;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 public class TestReaderClosed extends LuceneTestCase {
   private IndexReader reader;
@@ -37,8 +40,8 @@ public class TestReaderClosed extends LuceneTestCase {
     super.setUp();
     dir = newDirectory();
     RandomIndexWriter writer = new RandomIndexWriter(random(), dir, 
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.KEYWORD, false))
-        .setMaxBufferedDocs(_TestUtil.nextInt(random(), 50, 1000)));
+        newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.KEYWORD, false))
+          .setMaxBufferedDocs(TestUtil.nextInt(random(), 50, 1000)));
     
     Document doc = new Document();
     Field field = newStringField("field", "", Field.Store.NO);
@@ -48,7 +51,7 @@ public class TestReaderClosed extends LuceneTestCase {
     // but for preflex codec, the test can be very slow, so use less iterations.
     int num = atLeast(10);
     for (int i = 0; i < num; i++) {
-      field.setStringValue(_TestUtil.randomUnicodeString(random(), 10));
+      field.setStringValue(TestUtil.randomUnicodeString(random(), 10));
       writer.addDocument(doc);
     }
     reader = writer.getReader();
@@ -65,6 +68,9 @@ public class TestReaderClosed extends LuceneTestCase {
       searcher.search(query, 5);
     } catch (AlreadyClosedException ace) {
       // expected
+    } catch (RejectedExecutionException ree) {
+      // expected if the searcher has been created with threads since LuceneTestCase
+      // closes the thread-pool in a reader close listener
     }
   }
 
@@ -72,7 +78,7 @@ public class TestReaderClosed extends LuceneTestCase {
   public void testReaderChaining() throws Exception {
     assertTrue(reader.getRefCount() > 0);
     IndexReader wrappedReader = SlowCompositeReaderWrapper.wrap(reader);
-    wrappedReader = new ParallelAtomicReader((AtomicReader) wrappedReader);
+    wrappedReader = new ParallelLeafReader((LeafReader) wrappedReader);
 
     IndexSearcher searcher = newSearcher(wrappedReader);
 
@@ -81,13 +87,20 @@ public class TestReaderClosed extends LuceneTestCase {
     reader.close(); // close original child reader
     try {
       searcher.search(query, 5);
-    } catch (AlreadyClosedException ace) {
+    } catch (Exception e) {
+      AlreadyClosedException ace = null;
+      for (Throwable t = e; t != null; t = t.getCause()) {
+        if (t instanceof AlreadyClosedException) {
+          ace = (AlreadyClosedException) t;
+        }
+      }
+      assertNotNull("Query failed, but not due to an AlreadyClosedException", ace);
       assertEquals(
         "this IndexReader cannot be used anymore as one of its child readers was closed",
         ace.getMessage()
       );
     } finally {
-      // shutdown executor: in case of wrap-wrap-wrapping
+      // close executor: in case of wrap-wrap-wrapping
       searcher.getIndexReader().close();
     }
   }

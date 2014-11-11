@@ -17,8 +17,8 @@ package org.apache.lucene.queries.function;
  * limitations under the License.
  */
 
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.*;
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.util.Bits;
@@ -97,18 +97,16 @@ public class BoostedQuery extends Query {
     }
 
     @Override
-    public Scorer scorer(AtomicReaderContext context, boolean scoreDocsInOrder,
-        boolean topScorer, Bits acceptDocs) throws IOException {
-      // we are gonna advance() the subscorer
-      Scorer subQueryScorer = qWeight.scorer(context, true, false, acceptDocs);
-      if(subQueryScorer == null) {
+    public Scorer scorer(LeafReaderContext context, Bits acceptDocs) throws IOException {
+      Scorer subQueryScorer = qWeight.scorer(context, acceptDocs);
+      if (subQueryScorer == null) {
         return null;
       }
       return new BoostedQuery.CustomScorer(context, this, getBoost(), subQueryScorer, boostVal);
     }
 
     @Override
-    public Explanation explain(AtomicReaderContext readerContext, int doc) throws IOException {
+    public Explanation explain(LeafReaderContext readerContext, int doc) throws IOException {
       Explanation subQueryExpl = qWeight.explain(readerContext,doc);
       if (!subQueryExpl.isMatch()) {
         return subQueryExpl;
@@ -129,9 +127,9 @@ public class BoostedQuery extends Query {
     private final float qWeight;
     private final Scorer scorer;
     private final FunctionValues vals;
-    private final AtomicReaderContext readerContext;
+    private final LeafReaderContext readerContext;
 
-    private CustomScorer(AtomicReaderContext readerContext, BoostedQuery.BoostedWeight w, float qWeight,
+    private CustomScorer(LeafReaderContext readerContext, BoostedQuery.BoostedWeight w, float qWeight,
         Scorer scorer, ValueSource vs) throws IOException {
       super(w);
       this.weight = w;

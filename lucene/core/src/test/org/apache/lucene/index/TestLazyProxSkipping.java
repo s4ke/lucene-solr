@@ -18,7 +18,6 @@ package org.apache.lucene.index;
  */
 
 import java.io.IOException;
-import java.io.Reader;
 
 import org.apache.lucene.analysis.*;
 import org.apache.lucene.document.Document;
@@ -33,7 +32,7 @@ import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * Tests lazy skipping on the proximity file.
@@ -78,9 +77,9 @@ public class TestLazyProxSkipping extends LuceneTestCase {
         // note: test explicitly disables payloads
         IndexWriter writer = new IndexWriter(
             directory,
-            newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer).
-                setMaxBufferedDocs(10).
-                setMergePolicy(newLogMergePolicy(false))
+            newIndexWriterConfig(analyzer)
+              .setMaxBufferedDocs(10)
+              .setMergePolicy(newLogMergePolicy(false))
         );
         
         for (int i = 0; i < numDocs; i++) {
@@ -132,7 +131,7 @@ public class TestLazyProxSkipping extends LuceneTestCase {
     }
  
     public void testLazySkipping() throws IOException {
-      final String fieldFormat = _TestUtil.getPostingsFormat(this.field);
+      final String fieldFormat = TestUtil.getPostingsFormat(this.field);
       assumeFalse("This test cannot run with Memory postings format", fieldFormat.equals("Memory"));
       assumeFalse("This test cannot run with Direct postings format", fieldFormat.equals("Direct"));
       assumeFalse("This test cannot run with SimpleText postings format", fieldFormat.equals("SimpleText"));
@@ -145,7 +144,7 @@ public class TestLazyProxSkipping extends LuceneTestCase {
     
     public void testSeek() throws IOException {
         Directory directory = newDirectory();
-        IndexWriter writer = new IndexWriter(directory, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+        IndexWriter writer = new IndexWriter(directory, newIndexWriterConfig(new MockAnalyzer(random())));
         for (int i = 0; i < 10; i++) {
             Document doc = new Document();
             doc.add(newTextField(this.field, "a b", Field.Store.YES));
@@ -228,6 +227,10 @@ public class TestLazyProxSkipping extends LuceneTestCase {
           public SeeksCountingStream clone() {
               return new SeeksCountingStream(this.input.clone());
           }
-      
+
+          @Override
+          public IndexInput slice(String sliceDescription, long offset, long length) throws IOException {
+            return new SeeksCountingStream(this.input.slice(sliceDescription, offset, length));
+          }
     }
 }

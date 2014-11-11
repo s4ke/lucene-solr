@@ -27,36 +27,34 @@ import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.CannedTokenStream;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.analysis.MockPayloadAnalyzer;
+import org.apache.lucene.analysis.MockTokenizer;
 import org.apache.lucene.analysis.Token;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.IntField;
+import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.search.DocIdSetIterator;
-import org.apache.lucene.search.FieldCache;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.English;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 // TODO: we really need to test indexingoffsets, but then getting only docs / docs + freqs.
 // not all codecs store prx separate...
 // TODO: fix sep codec to index offsets so we can greatly reduce this list!
-@SuppressCodecs({"MockFixedIntBlock", "MockVariableIntBlock", "MockSep", "MockRandom"})
 public class TestPostingsOffsets extends LuceneTestCase {
   IndexWriterConfig iwc;
   
   @Override
   public void setUp() throws Exception {
     super.setUp();
-    iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    iwc = newIndexWriterConfig(new MockAnalyzer(random()));
   }
 
   public void testBasic() throws Exception {
@@ -66,7 +64,7 @@ public class TestPostingsOffsets extends LuceneTestCase {
     Document doc = new Document();
 
     FieldType ft = new FieldType(TextField.TYPE_NOT_STORED);
-    ft.setIndexOptions(FieldInfo.IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
+    ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
     if (random().nextBoolean()) {
       ft.setStoreTermVectors(true);
       ft.setStoreTermVectorPositions(random().nextBoolean());
@@ -129,12 +127,12 @@ public class TestPostingsOffsets extends LuceneTestCase {
   public void doTestNumbers(boolean withPayloads) throws Exception {
     Directory dir = newDirectory();
     Analyzer analyzer = withPayloads ? new MockPayloadAnalyzer() : new MockAnalyzer(random());
-    iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer);
+    iwc = newIndexWriterConfig(analyzer);
     iwc.setMergePolicy(newLogMergePolicy()); // will rely on docids a bit for skipping
     RandomIndexWriter w = new RandomIndexWriter(random(), dir, iwc);
     
     FieldType ft = new FieldType(TextField.TYPE_STORED);
-    ft.setIndexOptions(FieldInfo.IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
+    ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
     if (random().nextBoolean()) {
       ft.setStoreTermVectors(true);
       ft.setStoreTermVectorOffsets(random().nextBoolean());
@@ -183,7 +181,7 @@ public class TestPostingsOffsets extends LuceneTestCase {
     int numSkippingTests = atLeast(50);
     
     for (int j = 0; j < numSkippingTests; j++) {
-      int num = _TestUtil.nextInt(random(), 100, Math.min(numDocs-1, 999));
+      int num = TestUtil.nextInt(random(), 100, Math.min(numDocs - 1, 999));
       DocsAndPositionsEnum dp = MultiFields.getTermPositionsEnum(reader, null, "numbers", new BytesRef("hundred"));
       int doc = dp.advance(num);
       assertEquals(num, doc);
@@ -220,7 +218,7 @@ public class TestPostingsOffsets extends LuceneTestCase {
 
   public void testRandom() throws Exception {
     // token -> docID -> tokens
-    final Map<String,Map<Integer,List<Token>>> actualTokens = new HashMap<String,Map<Integer,List<Token>>>();
+    final Map<String,Map<Integer,List<Token>>> actualTokens = new HashMap<>();
 
     Directory dir = newDirectory();
     RandomIndexWriter w = new RandomIndexWriter(random(), dir, iwc);
@@ -232,7 +230,7 @@ public class TestPostingsOffsets extends LuceneTestCase {
 
     // TODO: randomize what IndexOptions we use; also test
     // changing this up in one IW buffered segment...:
-    ft.setIndexOptions(FieldInfo.IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
+    ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
     if (random().nextBoolean()) {
       ft.setStoreTermVectors(true);
       ft.setStoreTermVectorOffsets(random().nextBoolean());
@@ -242,7 +240,8 @@ public class TestPostingsOffsets extends LuceneTestCase {
     for(int docCount=0;docCount<numDocs;docCount++) {
       Document doc = new Document();
       doc.add(new IntField("id", docCount, Field.Store.YES));
-      List<Token> tokens = new ArrayList<Token>();
+      doc.add(new NumericDocValuesField("id", docCount));
+      List<Token> tokens = new ArrayList<>();
       final int numTokens = atLeast(100);
       //final int numTokens = atLeast(20);
       int pos = -1;
@@ -290,15 +289,15 @@ public class TestPostingsOffsets extends LuceneTestCase {
     w.close();
 
     final String[] terms = new String[] {"a", "b", "c", "d"};
-    for(AtomicReaderContext ctx : r.leaves()) {
+    for(LeafReaderContext ctx : r.leaves()) {
       // TODO: improve this
-      AtomicReader sub = ctx.reader();
+      LeafReader sub = ctx.reader();
       //System.out.println("\nsub=" + sub);
       final TermsEnum termsEnum = sub.fields().terms("content").iterator(null);
       DocsEnum docs = null;
       DocsAndPositionsEnum docsAndPositions = null;
       DocsAndPositionsEnum docsAndPositionsAndOffsets = null;
-      final FieldCache.Ints docIDToID = FieldCache.DEFAULT.getInts(sub, "id", false);
+      final NumericDocValues docIDToID = DocValues.getNumeric(sub, "id");
       for(String term : terms) {
         //System.out.println("  term=" + term);
         if (termsEnum.seekExact(new BytesRef(term))) {
@@ -307,7 +306,7 @@ public class TestPostingsOffsets extends LuceneTestCase {
           int doc;
           //System.out.println("    doc/freq");
           while((doc = docs.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
-            final List<Token> expected = actualTokens.get(term).get(docIDToID.get(doc));
+            final List<Token> expected = actualTokens.get(term).get((int) docIDToID.get(doc));
             //System.out.println("      doc=" + docIDToID.get(doc) + " docID=" + doc + " " + expected.size() + " freq");
             assertNotNull(expected);
             assertEquals(expected.size(), docs.freq());
@@ -318,7 +317,7 @@ public class TestPostingsOffsets extends LuceneTestCase {
           assertNotNull(docsAndPositions);
           //System.out.println("    doc/freq/pos");
           while((doc = docsAndPositions.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
-            final List<Token> expected = actualTokens.get(term).get(docIDToID.get(doc));
+            final List<Token> expected = actualTokens.get(term).get((int) docIDToID.get(doc));
             //System.out.println("      doc=" + docIDToID.get(doc) + " " + expected.size() + " freq");
             assertNotNull(expected);
             assertEquals(expected.size(), docsAndPositions.freq());
@@ -333,7 +332,7 @@ public class TestPostingsOffsets extends LuceneTestCase {
           assertNotNull(docsAndPositionsAndOffsets);
           //System.out.println("    doc/freq/pos/offs");
           while((doc = docsAndPositionsAndOffsets.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
-            final List<Token> expected = actualTokens.get(term).get(docIDToID.get(doc));
+            final List<Token> expected = actualTokens.get(term).get((int) docIDToID.get(doc));
             //System.out.println("      doc=" + docIDToID.get(doc) + " " + expected.size() + " freq");
             assertNotNull(expected);
             assertEquals(expected.size(), docsAndPositionsAndOffsets.freq());
@@ -362,7 +361,6 @@ public class TestPostingsOffsets extends LuceneTestCase {
       if (i < 99 && random().nextInt(2) == 0) {
         // stored only
         FieldType ft = new FieldType();
-        ft.setIndexed(false);
         ft.setStored(true);
         doc.add(new Field("foo", "boo!", ft));
       } else {
@@ -379,7 +377,7 @@ public class TestPostingsOffsets extends LuceneTestCase {
       riw.addDocument(doc);
     }
     CompositeReader ir = riw.getReader();
-    AtomicReader slow = SlowCompositeReaderWrapper.wrap(ir);
+    LeafReader slow = SlowCompositeReaderWrapper.wrap(ir);
     FieldInfos fis = slow.getFieldInfos();
     assertEquals(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS, fis.fieldInfo("foo").getIndexOptions());
     slow.close();
@@ -426,6 +424,16 @@ public class TestPostingsOffsets extends LuceneTestCase {
       //expected
     }
   }
+  
+  public void testIllegalOffsetsAcrossFieldInstances() throws Exception {
+    try {
+      checkTokens(new Token[] { makeToken("use", 1, 150, 160) }, 
+                  new Token[] { makeToken("use", 1, 50, 60) });
+      fail();
+    } catch (IllegalArgumentException expected) {
+      //expected
+    }
+  }
    
   public void testBackwardsOffsets() throws Exception {
     try {
@@ -447,10 +455,44 @@ public class TestPostingsOffsets extends LuceneTestCase {
         makeToken("foo", 0, 0, 3)
       });
   }
+  
+  public void testCrazyOffsetGap() throws Exception {
+    Directory dir = newDirectory();
+    Analyzer analyzer = new Analyzer() {
+      @Override
+      protected TokenStreamComponents createComponents(String fieldName) {
+        return new TokenStreamComponents(new MockTokenizer(MockTokenizer.KEYWORD, false));
+      }
+
+      @Override
+      public int getOffsetGap(String fieldName) {
+        return -10;
+      }
+    };
+    IndexWriter iw = new IndexWriter(dir, new IndexWriterConfig(analyzer));
+    // add good document
+    Document doc = new Document();
+    iw.addDocument(doc);
+    try {
+      FieldType ft = new FieldType(TextField.TYPE_NOT_STORED);
+      ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
+      doc.add(new Field("foo", "bar", ft));
+      doc.add(new Field("foo", "bar", ft));
+      iw.addDocument(doc);
+      fail("didn't get expected exception");
+    } catch (IllegalArgumentException expected) {}
+    iw.close();
+
+    // make sure we see our good doc
+    DirectoryReader r = DirectoryReader.open(dir);   
+    assertEquals(1, r.numDocs());
+    r.close();
+    dir.close();
+  }
 
   public void testLegalbutVeryLargeOffsets() throws Exception {
     Directory dir = newDirectory();
-    IndexWriter iw = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, null));
+    IndexWriter iw = new IndexWriter(dir, newIndexWriterConfig(null));
     Document doc = new Document();
     Token t1 = new Token("foo", 0, Integer.MAX_VALUE-500);
     if (random().nextBoolean()) {
@@ -474,6 +516,33 @@ public class TestPostingsOffsets extends LuceneTestCase {
   }
   // TODO: more tests with other possibilities
   
+  private void checkTokens(Token[] field1, Token[] field2) throws IOException {
+    Directory dir = newDirectory();
+    RandomIndexWriter riw = new RandomIndexWriter(random(), dir, iwc);
+    boolean success = false;
+    try {
+      FieldType ft = new FieldType(TextField.TYPE_NOT_STORED);
+      ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
+      // store some term vectors for the checkindex cross-check
+      ft.setStoreTermVectors(true);
+      ft.setStoreTermVectorPositions(true);
+      ft.setStoreTermVectorOffsets(true);
+     
+      Document doc = new Document();
+      doc.add(new Field("body", new CannedTokenStream(field1), ft));
+      doc.add(new Field("body", new CannedTokenStream(field2), ft));
+      riw.addDocument(doc);
+      riw.close();
+      success = true;
+    } finally {
+      if (success) {
+        IOUtils.close(dir);
+      } else {
+        IOUtils.closeWhileHandlingException(riw, dir);
+      }
+    }
+  }
+  
   private void checkTokens(Token[] tokens) throws IOException {
     Directory dir = newDirectory();
     RandomIndexWriter riw = new RandomIndexWriter(random(), dir, iwc);
@@ -489,10 +558,11 @@ public class TestPostingsOffsets extends LuceneTestCase {
       Document doc = new Document();
       doc.add(new Field("body", new CannedTokenStream(tokens), ft));
       riw.addDocument(doc);
+      riw.close();
       success = true;
     } finally {
       if (success) {
-        IOUtils.close(riw, dir);
+        IOUtils.close(dir);
       } else {
         IOUtils.closeWhileHandlingException(riw, dir);
       }

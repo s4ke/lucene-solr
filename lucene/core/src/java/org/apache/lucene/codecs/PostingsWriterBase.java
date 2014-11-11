@@ -20,9 +20,11 @@ package org.apache.lucene.codecs;
 import java.io.Closeable;
 import java.io.IOException;
 
+import org.apache.lucene.codecs.blocktree.BlockTreeTermsWriter;
 import org.apache.lucene.index.DocsAndPositionsEnum; // javadocs
 import org.apache.lucene.index.DocsEnum; // javadocs
 import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.store.IndexOutput;
@@ -49,7 +51,7 @@ public abstract class PostingsWriterBase implements Closeable {
   /** Called once after startup, before any terms have been
    *  added.  Implementations typically write a header to
    *  the provided {@code termsOut}. */
-  public abstract void init(IndexOutput termsOut) throws IOException;
+  public abstract void init(IndexOutput termsOut, SegmentWriteState state) throws IOException;
 
   /** Write all postings for one term; use the provided
    *  {@link TermsEnum} to pull a {@link DocsEnum} or {@link

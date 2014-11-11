@@ -34,7 +34,7 @@ public class TestJapaneseTokenizerFactory extends BaseTokenStreamTestCase {
   public void testSimple() throws IOException {
     JapaneseTokenizerFactory factory = new JapaneseTokenizerFactory(new HashMap<String,String>());
     factory.inform(new StringMockResourceLoader(""));
-    TokenStream ts = factory.create();
+    TokenStream ts = factory.create(newAttributeFactory());
     ((Tokenizer)ts).setReader(new StringReader("これは本ではない"));
     assertTokenStreamContents(ts,
         new String[] { "これ", "は", "本", "で", "は", "ない" },
@@ -49,7 +49,7 @@ public class TestJapaneseTokenizerFactory extends BaseTokenStreamTestCase {
   public void testDefaults() throws IOException {
     JapaneseTokenizerFactory factory = new JapaneseTokenizerFactory(new HashMap<String,String>());
     factory.inform(new StringMockResourceLoader(""));
-    TokenStream ts = factory.create();
+    TokenStream ts = factory.create(newAttributeFactory());
     ((Tokenizer)ts).setReader(new StringReader("シニアソフトウェアエンジニア"));
     assertTokenStreamContents(ts,
                               new String[] { "シニア", "シニアソフトウェアエンジニア", "ソフトウェア", "エンジニア" }
@@ -60,11 +60,11 @@ public class TestJapaneseTokenizerFactory extends BaseTokenStreamTestCase {
    * Test mode parameter: specifying normal mode
    */
   public void testMode() throws IOException {
-    Map<String,String> args = new HashMap<String,String>();
+    Map<String,String> args = new HashMap<>();
     args.put("mode", "normal");
     JapaneseTokenizerFactory factory = new JapaneseTokenizerFactory(args);
     factory.inform(new StringMockResourceLoader(""));
-    TokenStream ts = factory.create();
+    TokenStream ts = factory.create(newAttributeFactory());
     ((Tokenizer)ts).setReader(new StringReader("シニアソフトウェアエンジニア"));
     assertTokenStreamContents(ts,
         new String[] { "シニアソフトウェアエンジニア" }
@@ -81,11 +81,11 @@ public class TestJapaneseTokenizerFactory extends BaseTokenStreamTestCase {
         "関西国際空港,関西 国際 空港,カンサイ コクサイ クウコウ,テスト名詞\n" +
         "# Custom reading for sumo wrestler\n" +
         "朝青龍,朝青龍,アサショウリュウ,カスタム人名\n";
-    Map<String,String> args = new HashMap<String,String>();
+    Map<String,String> args = new HashMap<>();
     args.put("userDictionary", "userdict.txt");
     JapaneseTokenizerFactory factory = new JapaneseTokenizerFactory(args);
     factory.inform(new StringMockResourceLoader(userDict));
-    TokenStream ts = factory.create();
+    TokenStream ts = factory.create(newAttributeFactory());
     ((Tokenizer)ts).setReader(new StringReader("関西国際空港に行った"));
     assertTokenStreamContents(ts,
         new String[] { "関西", "国際", "空港", "に",  "行っ",  "た" }
@@ -96,11 +96,11 @@ public class TestJapaneseTokenizerFactory extends BaseTokenStreamTestCase {
    * Test preserving punctuation
    */
   public void testPreservePunctuation() throws IOException {
-    Map<String,String> args = new HashMap<String,String>();
+    Map<String,String> args = new HashMap<>();
     args.put("discardPunctuation", "false");
     JapaneseTokenizerFactory factory = new JapaneseTokenizerFactory(args);
     factory.inform(new StringMockResourceLoader(""));
-    TokenStream ts = factory.create();
+    TokenStream ts = factory.create(newAttributeFactory());
     ((Tokenizer)ts).setReader(new StringReader("今ノルウェーにいますが、来週の頭日本に戻ります。楽しみにしています！お寿司が食べたいな。。。"));
     assertTokenStreamContents(ts,
         new String[] { "今", "ノルウェー", "に", "い", "ます", "が", "、",

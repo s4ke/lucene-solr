@@ -19,9 +19,11 @@ package org.apache.solr.cloud;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.lucene.util.LuceneTestCase.Slow;
 import org.apache.solr.client.solrj.SolrQuery;
+import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.impl.CloudSolrServer;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.core.Diagnostics;
@@ -56,14 +58,14 @@ public class ChaosMonkeySafeLeaderTest extends AbstractFullDistribZkTestBase {
     SolrCmdDistributor.testing_errorHook = null;
   }
   
-  public static String[] fieldNames = new String[]{"f_i", "f_f", "f_d", "f_l", "f_dt"};
-  public static RandVal[] randVals = new RandVal[]{rint, rfloat, rdouble, rlong, rdate};
+  protected static final String[] fieldNames = new String[]{"f_i", "f_f", "f_d", "f_l", "f_dt"};
+  protected static final RandVal[] randVals = new RandVal[]{rint, rfloat, rdouble, rlong, rdate};
   
-  protected String[] getFieldNames() {
+  public String[] getFieldNames() {
     return fieldNames;
   }
 
-  protected RandVal[] getRandValues() {
+  public RandVal[] getRandValues() {
     return randVals;
   }
   
@@ -87,26 +89,32 @@ public class ChaosMonkeySafeLeaderTest extends AbstractFullDistribZkTestBase {
   
   public ChaosMonkeySafeLeaderTest() {
     super();
-    sliceCount = Integer.parseInt(System.getProperty("solr.tests.cloud.cm.slicecount", "3"));
-    shardCount = Integer.parseInt(System.getProperty("solr.tests.cloud.cm.shardcount", "12"));
+    sliceCount = Integer.parseInt(System.getProperty("solr.tests.cloud.cm.slicecount", "-1"));
+    shardCount = Integer.parseInt(System.getProperty("solr.tests.cloud.cm.shardcount", "-1"));
+    
+    if (sliceCount == -1) {
+      sliceCount = random().nextInt(TEST_NIGHTLY ? 5 : 3) + 1;
+    }
+    if (shardCount == -1) {
+      shardCount = sliceCount + random().nextInt(TEST_NIGHTLY ? 12 : 2);
+    }
   }
   
   @Override
   public void doTest() throws Exception {
     
     handle.clear();
-    handle.put("QTime", SKIPVAL);
     handle.put("timestamp", SKIPVAL);
     
     // randomly turn on 1 seconds 'soft' commit
     randomlyEnableAutoSoftCommit();
 
-    del("*:*");
+    tryDelete();
     
-    List<StopableIndexingThread> threads = new ArrayList<StopableIndexingThread>();
+    List<StopableIndexingThread> threads = new ArrayList<>();
     int threadCount = 2;
     for (int i = 0; i < threadCount; i++) {
-      StopableIndexingThread indexThread = new StopableIndexingThread(Integer.toString(i), true);
+      StopableIndexingThread indexThread = new StopableIndexingThread(controlClient, cloudClient, Integer.toString(i), true);
       threads.add(indexThread);
       indexThread.start();
     }
@@ -117,8 +125,13 @@ public class ChaosMonkeySafeLeaderTest extends AbstractFullDistribZkTestBase {
       if (RUN_LENGTH != -1) {
         runLength = RUN_LENGTH;
       } else {
-        int[] runTimes = new int[] {5000, 6000, 10000, 25000, 27000, 30000,
-            30000, 45000, 90000, 120000};
+        int[] runTimes;
+        if (TEST_NIGHTLY) {
+          runTimes = new int[] {5000, 6000, 10000, 15000, 25000, 30000,
+              30000, 45000, 90000, 120000};
+        } else {
+          runTimes = new int[] {5000, 7000, 15000};
+        }
         runLength = runTimes[random().nextInt(runTimes.length - 1)];
       }
       
@@ -137,7 +150,7 @@ public class ChaosMonkeySafeLeaderTest extends AbstractFullDistribZkTestBase {
     }
     
     for (StopableIndexingThread indexThread : threads) {
-      assertEquals(0, indexThread.getFails());
+      assertEquals(0, indexThread.getFailCount());
     }
     
     // try and wait for any replications and what not to finish...
@@ -167,17 +180,24 @@ public class ChaosMonkeySafeLeaderTest extends AbstractFullDistribZkTestBase {
     } finally {
       client.shutdown();
     }
-    List<Integer> numShardsNumReplicas = new ArrayList<Integer>(2);
+    List<Integer> numShardsNumReplicas = new ArrayList<>(2);
     numShardsNumReplicas.add(1);
     numShardsNumReplicas.add(1);
     checkForCollection("testcollection",numShardsNumReplicas, null);
   }
 
-  private void randomlyEnableAutoSoftCommit() {
-    if (r.nextBoolean()) {
-      enableAutoSoftCommit(1000);
-    } else {
-      log.info("Not turning on auto soft commit");
+  private void tryDelete() throws Exception {
+    long start = System.nanoTime();
+    long timeout = start + TimeUnit.NANOSECONDS.convert(10, TimeUnit.SECONDS);
+    while (System.nanoTime() < timeout) {
+      try {
+        del("*:*");
+        break;
+      } catch (SolrServerException e) {
+        // cluster may not be up yet
+        e.printStackTrace();
+      }
+      Thread.sleep(100);
     }
   }
   

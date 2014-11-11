@@ -23,7 +23,7 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.Arrays;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.queries.function.FunctionQuery;
@@ -174,7 +174,7 @@ public class CustomScoreQuery extends Query {
    * implementation as specified in the docs of {@link CustomScoreProvider}.
    * @since 2.9.2
    */
-  protected CustomScoreProvider getCustomScoreProvider(AtomicReaderContext context) throws IOException {
+  protected CustomScoreProvider getCustomScoreProvider(LeafReaderContext context) throws IOException {
     return new CustomScoreProvider(context);
   }
 
@@ -234,31 +234,25 @@ public class CustomScoreQuery extends Query {
     }
 
     @Override
-    public Scorer scorer(AtomicReaderContext context, boolean scoreDocsInOrder,
-        boolean topScorer, Bits acceptDocs) throws IOException {
-      // Pass true for "scoresDocsInOrder", because we
-      // require in-order scoring, even if caller does not,
-      // since we call advance on the valSrcScorers.  Pass
-      // false for "topScorer" because we will not invoke
-      // score(Collector) on these scorers:
-      Scorer subQueryScorer = subQueryWeight.scorer(context, true, false, acceptDocs);
+    public Scorer scorer(LeafReaderContext context, Bits acceptDocs) throws IOException {
+      Scorer subQueryScorer = subQueryWeight.scorer(context, acceptDocs);
       if (subQueryScorer == null) {
         return null;
       }
       Scorer[] valSrcScorers = new Scorer[valSrcWeights.length];
       for(int i = 0; i < valSrcScorers.length; i++) {
-         valSrcScorers[i] = valSrcWeights[i].scorer(context, true, topScorer, acceptDocs);
+         valSrcScorers[i] = valSrcWeights[i].scorer(context, acceptDocs);
       }
       return new CustomScorer(CustomScoreQuery.this.getCustomScoreProvider(context), this, queryWeight, subQueryScorer, valSrcScorers);
     }
 
     @Override
-    public Explanation explain(AtomicReaderContext context, int doc) throws IOException {
+    public Explanation explain(LeafReaderContext context, int doc) throws IOException {
       Explanation explain = doExplain(context, doc);
       return explain == null ? new Explanation(0.0f, "no matching docs") : explain;
     }
     
-    private Explanation doExplain(AtomicReaderContext info, int doc) throws IOException {
+    private Explanation doExplain(LeafReaderContext info, int doc) throws IOException {
       Explanation subQueryExpl = subQueryWeight.explain(info, doc);
       if (!subQueryExpl.isMatch()) {
         return subQueryExpl;
@@ -269,11 +263,11 @@ public class CustomScoreQuery extends Query {
         valSrcExpls[i] = valSrcWeights[i].explain(info, doc);
       }
       Explanation customExp = CustomScoreQuery.this.getCustomScoreProvider(info).customExplain(doc,subQueryExpl,valSrcExpls);
-      float sc = getBoost() * customExp.getValue();
+      float sc = queryWeight * customExp.getValue();
       Explanation res = new ComplexExplanation(
         true, sc, CustomScoreQuery.this.toString() + ", product of:");
       res.addDetail(customExp);
-      res.addDetail(new Explanation(getBoost(), "queryBoost")); // actually using the q boost as q weight (== weight value)
+      res.addDetail(new Explanation(queryWeight, "queryWeight"));
       return res;
     }
 

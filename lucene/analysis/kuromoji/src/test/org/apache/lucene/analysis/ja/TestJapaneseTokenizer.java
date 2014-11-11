@@ -22,6 +22,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.LineNumberReader;
 import java.io.Reader;
+import java.nio.charset.StandardCharsets;
 import java.util.Random;
 
 import org.apache.lucene.analysis.Analyzer;
@@ -34,9 +35,8 @@ import org.apache.lucene.analysis.ja.dict.ConnectionCosts;
 import org.apache.lucene.analysis.ja.dict.UserDictionary;
 import org.apache.lucene.analysis.ja.tokenattributes.*;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
-import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.UnicodeUtil;
-import org.apache.lucene.util._TestUtil;
 import org.apache.lucene.util.LuceneTestCase.Slow;
 
 @Slow
@@ -49,7 +49,7 @@ public class TestJapaneseTokenizer extends BaseTokenStreamTestCase {
     }
     try {
       try {
-        Reader reader = new InputStreamReader(is, IOUtils.CHARSET_UTF_8);
+        Reader reader = new InputStreamReader(is, StandardCharsets.UTF_8);
         return new UserDictionary(reader);
       } finally {
         is.close();
@@ -62,7 +62,7 @@ public class TestJapaneseTokenizer extends BaseTokenStreamTestCase {
   private Analyzer analyzer = new Analyzer() {
     @Override
     protected TokenStreamComponents createComponents(String fieldName) {
-      Tokenizer tokenizer = new JapaneseTokenizer(readDict(), false, Mode.SEARCH);
+      Tokenizer tokenizer = new JapaneseTokenizer(newAttributeFactory(), readDict(), false, Mode.SEARCH);
       return new TokenStreamComponents(tokenizer, tokenizer);
     }
   };
@@ -70,7 +70,7 @@ public class TestJapaneseTokenizer extends BaseTokenStreamTestCase {
   private Analyzer analyzerNormal = new Analyzer() {
     @Override
     protected TokenStreamComponents createComponents(String fieldName) {
-      Tokenizer tokenizer = new JapaneseTokenizer(readDict(), false, Mode.NORMAL);
+      Tokenizer tokenizer = new JapaneseTokenizer(newAttributeFactory(), readDict(), false, Mode.NORMAL);
       return new TokenStreamComponents(tokenizer, tokenizer);
     }
   };
@@ -78,7 +78,7 @@ public class TestJapaneseTokenizer extends BaseTokenStreamTestCase {
   private Analyzer analyzerNoPunct = new Analyzer() {
     @Override
     protected TokenStreamComponents createComponents(String fieldName) {
-      Tokenizer tokenizer = new JapaneseTokenizer(readDict(), true, Mode.SEARCH);
+      Tokenizer tokenizer = new JapaneseTokenizer(newAttributeFactory(), readDict(), true, Mode.SEARCH);
       return new TokenStreamComponents(tokenizer, tokenizer);
     }
   };
@@ -86,7 +86,7 @@ public class TestJapaneseTokenizer extends BaseTokenStreamTestCase {
   private Analyzer extendedModeAnalyzerNoPunct = new Analyzer() {
     @Override
     protected TokenStreamComponents createComponents(String fieldName) {
-      Tokenizer tokenizer = new JapaneseTokenizer(readDict(), true, Mode.EXTENDED);
+      Tokenizer tokenizer = new JapaneseTokenizer(newAttributeFactory(), readDict(), true, Mode.EXTENDED);
       return new TokenStreamComponents(tokenizer, tokenizer);
     }
   };
@@ -202,7 +202,7 @@ public class TestJapaneseTokenizer extends BaseTokenStreamTestCase {
                     new Analyzer() {
                       @Override
                       protected TokenStreamComponents createComponents(String fieldName) {
-                        Tokenizer tokenizer = new JapaneseTokenizer(readDict(), false, Mode.SEARCH);
+                        Tokenizer tokenizer = new JapaneseTokenizer(newAttributeFactory(), readDict(), false, Mode.SEARCH);
                         TokenStream graph = new MockGraphTokenFilter(random(), tokenizer);
                         return new TokenStreamComponents(tokenizer, graph);
                       }
@@ -212,7 +212,7 @@ public class TestJapaneseTokenizer extends BaseTokenStreamTestCase {
 
   public void testLargeDocReliability() throws Exception {
     for (int i = 0; i < 100; i++) {
-      String s = _TestUtil.randomUnicodeString(random(), 10000);
+      String s = TestUtil.randomUnicodeString(random(), 10000);
       try (TokenStream ts = analyzer.tokenStream("foo", s)) {
         ts.reset();
         while (ts.incrementToken()) {
@@ -235,7 +235,7 @@ public class TestJapaneseTokenizer extends BaseTokenStreamTestCase {
       if (VERBOSE) {
         System.out.println("\nTEST: iter=" + i);
       }
-      String s = _TestUtil.randomUnicodeString(random(), 100);
+      String s = TestUtil.randomUnicodeString(random(), 100);
       try (TokenStream ts = analyzer.tokenStream("foo", s)) {
         CharTermAttribute termAtt = ts.addAttribute(CharTermAttribute.class);
         ts.reset();
@@ -352,7 +352,7 @@ public class TestJapaneseTokenizer extends BaseTokenStreamTestCase {
     final Analyzer analyzer = new Analyzer() {
       @Override
       protected TokenStreamComponents createComponents(String fieldName) {
-        JapaneseTokenizer tokenizer = new JapaneseTokenizer(readDict(), false, Mode.SEARCH);
+        JapaneseTokenizer tokenizer = new JapaneseTokenizer(newAttributeFactory(), readDict(), false, Mode.SEARCH);
         tokenizer.setGraphvizFormatter(gv2);
         return new TokenStreamComponents(tokenizer, tokenizer);
       }
@@ -571,7 +571,7 @@ public class TestJapaneseTokenizer extends BaseTokenStreamTestCase {
   /*
   public void testWikipedia() throws Exception {
     final FileInputStream fis = new FileInputStream("/q/lucene/jawiki-20120220-pages-articles.xml");
-    final Reader r = new BufferedReader(new InputStreamReader(fis, "UTF-8"));
+    final Reader r = new BufferedReader(new InputStreamReader(fis, StandardCharsets.UTF_8));
 
     final long startTimeNS = System.nanoTime();
     boolean done = false;
@@ -618,7 +618,7 @@ public class TestJapaneseTokenizer extends BaseTokenStreamTestCase {
   
   private void doTestBocchan(int numIterations) throws Exception {
     LineNumberReader reader = new LineNumberReader(new InputStreamReader(
-        this.getClass().getResourceAsStream("bocchan.utf-8"), "UTF-8"));
+        this.getClass().getResourceAsStream("bocchan.utf-8"), StandardCharsets.UTF_8));
     String line = reader.readLine();
     reader.close();
     

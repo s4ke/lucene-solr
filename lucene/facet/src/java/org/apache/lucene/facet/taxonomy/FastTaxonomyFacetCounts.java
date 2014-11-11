@@ -21,11 +21,11 @@ import java.io.IOException;
 import java.util.List;
 
 import org.apache.lucene.facet.FacetsCollector;
-import org.apache.lucene.facet.FacetsConfig;
 import org.apache.lucene.facet.FacetsCollector.MatchingDocs;
+import org.apache.lucene.facet.FacetsConfig;
 import org.apache.lucene.index.BinaryDocValues;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.FixedBitSet;
 
 /** Computes facets counts, assuming the default encoding
  *  into DocValues was used.
@@ -55,17 +55,16 @@ public class FastTaxonomyFacetCounts extends IntTaxonomyFacets {
       if (dv == null) { // this reader does not have DocValues for the requested category list
         continue;
       }
-      FixedBitSet bits = hits.bits;
-    
-      final int length = hits.bits.length();
-      int doc = 0;
-      BytesRef scratch = new BytesRef();
-      while (doc < length && (doc = bits.nextSetBit(doc)) != -1) {
-        dv.get(doc, scratch);
-        byte[] bytes = scratch.bytes;
-        int end = scratch.offset + scratch.length;
+
+      DocIdSetIterator docs = hits.bits.iterator();
+      
+      int doc;
+      while ((doc = docs.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
+        final BytesRef bytesRef = dv.get(doc);
+        byte[] bytes = bytesRef.bytes;
+        int end = bytesRef.offset + bytesRef.length;
         int ord = 0;
-        int offset = scratch.offset;
+        int offset = bytesRef.offset;
         int prev = 0;
         while (offset < end) {
           byte b = bytes[offset++];
@@ -77,7 +76,6 @@ public class FastTaxonomyFacetCounts extends IntTaxonomyFacets {
             ord = (ord << 7) | (b & 0x7F);
           }
         }
-        ++doc;
       }
     }
 

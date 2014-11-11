@@ -17,14 +17,15 @@ package org.apache.lucene.search.suggest.analyzing;
  * limitations under the License.
  */
 
-import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 
@@ -33,33 +34,35 @@ import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.TokenStreamToAutomaton;
 import org.apache.lucene.search.suggest.InputIterator;
 import org.apache.lucene.search.suggest.Lookup;
-import org.apache.lucene.search.suggest.Sort;
 import org.apache.lucene.store.ByteArrayDataInput;
 import org.apache.lucene.store.ByteArrayDataOutput;
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
-import org.apache.lucene.store.InputStreamDataInput;
-import org.apache.lucene.store.OutputStreamDataOutput;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.CharsRef;
+import org.apache.lucene.util.BytesRefBuilder;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.IntsRef;
-import org.apache.lucene.util.UnicodeUtil;
+import org.apache.lucene.util.IntsRefBuilder;
+import org.apache.lucene.util.OfflineSorter;
 import org.apache.lucene.util.automaton.Automaton;
-import org.apache.lucene.util.automaton.BasicOperations;
-import org.apache.lucene.util.automaton.SpecialOperations;
-import org.apache.lucene.util.automaton.State;
+import org.apache.lucene.util.automaton.Operations;
 import org.apache.lucene.util.automaton.Transition;
 import org.apache.lucene.util.fst.Builder;
 import org.apache.lucene.util.fst.ByteSequenceOutputs;
-import org.apache.lucene.util.fst.FST.BytesReader;
 import org.apache.lucene.util.fst.FST;
-import org.apache.lucene.util.fst.PairOutputs.Pair;
+import org.apache.lucene.util.fst.FST.BytesReader;
 import org.apache.lucene.util.fst.PairOutputs;
+import org.apache.lucene.util.fst.PairOutputs.Pair;
 import org.apache.lucene.util.fst.PositiveIntOutputs;
-import org.apache.lucene.util.fst.Util.MinResult;
 import org.apache.lucene.util.fst.Util;
+import org.apache.lucene.util.fst.Util.Result;
+import org.apache.lucene.util.fst.Util.TopResults;
+
+import static org.apache.lucene.util.automaton.Operations.DEFAULT_MAX_DETERMINIZED_STATES;
 
 /**
  * Suggester that first analyzes the surface form, adds the
@@ -187,6 +190,9 @@ public class AnalyzingSuggester extends Lookup {
   /** Whether position holes should appear in the automaton. */
   private boolean preservePositionIncrements;
 
+  /** Number of entries the lookup was built with */
+  private long count = 0;
+
   /**
    * Calls {@link #AnalyzingSuggester(Analyzer,Analyzer,int,int,int,boolean)
    * AnalyzingSuggester(analyzer, analyzer, EXACT_FIRST |
@@ -251,41 +257,74 @@ public class AnalyzingSuggester extends Lookup {
 
   /** Returns byte size of the underlying FST. */
   @Override
-  public long sizeInBytes() {
-    return fst == null ? 0 : fst.sizeInBytes();
+  public long ramBytesUsed() {
+    return fst == null ? 0 : fst.ramBytesUsed();
   }
 
-  private void copyDestTransitions(State from, State to, List<Transition> transitions) {
-    if (to.isAccept()) {
-      from.setAccept(true);
-    }
-    for(Transition t : to.getTransitions()) {
-      transitions.add(t);
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    if (fst == null) {
+      return Collections.emptyList();
+    } else {
+      return Collections.singletonList(Accountables.namedAccountable("fst", fst));
     }
   }
+
+  private int[] topoSortStates(Automaton a) {
+    int numStates = a.getNumStates();
+    int[] states = new int[numStates];
+    final BitSet visited = new BitSet(numStates);
+    final LinkedList<Integer> worklist = new LinkedList<>();
+    worklist.add(0);
+    visited.set(0);
+    int upto = 0;
+    states[upto] = 0;
+    upto++;
+    Transition t = new Transition();
+    while (worklist.size() > 0) {
+      int s = worklist.removeFirst();
+      int count = a.initTransition(s, t);
+      for (int i=0;i<count;i++) {
+        a.getNextTransition(t);
+        if (!visited.get(t.dest)) {
+          visited.set(t.dest);
+          worklist.add(t.dest);
+          states[upto++] = t.dest;
+        }
+      }
+    }
+    return states;
+  }
+
 
   // Replaces SEP with epsilon or remaps them if
   // we were asked to preserve them:
-  private void replaceSep(Automaton a) {
+  private Automaton replaceSep(Automaton a) {
 
-    State[] states = a.getNumberedStates();
+    int numStates = a.getNumStates();
+    Automaton.Builder result = new Automaton.Builder(numStates, a.getNumTransitions());
+    // Copy all states over
+    result.copyStates(a);
 
     // Go in reverse topo sort so we know we only have to
     // make one pass:
-    for(int stateNumber=states.length-1;stateNumber >=0;stateNumber--) {
-      final State state = states[stateNumber];
-      List<Transition> newTransitions = new ArrayList<Transition>();
-      for(Transition t : state.getTransitions()) {
-        assert t.getMin() == t.getMax();
-        if (t.getMin() == TokenStreamToAutomaton.POS_SEP) {
+    Transition t = new Transition();
+    int[] topoSortStates = topoSortStates(a);
+    for(int i=0;i<topoSortStates.length;i++) {
+      int state = topoSortStates[topoSortStates.length-1-i];
+      int count = a.initTransition(state, t);
+      for(int j=0;j<count;j++) {
+        a.getNextTransition(t);
+        if (t.min == TokenStreamToAutomaton.POS_SEP) {
+          assert t.max == TokenStreamToAutomaton.POS_SEP;
           if (preserveSep) {
             // Remap to SEP_LABEL:
-            newTransitions.add(new Transition(SEP_LABEL, t.getDest()));
+            result.addTransition(state, t.dest, SEP_LABEL);
           } else {
-            copyDestTransitions(state, t.getDest(), newTransitions);
-            a.setDeterministic(false);
+            result.addEpsilon(state, t.dest);
           }
-        } else if (t.getMin() == TokenStreamToAutomaton.HOLE) {
+        } else if (t.min == TokenStreamToAutomaton.HOLE) {
+          assert t.max == TokenStreamToAutomaton.HOLE;
 
           // Just remove the hole: there will then be two
           // SEP tokens next to each other, which will only
@@ -294,14 +333,14 @@ public class AnalyzingSuggester extends Lookup {
           // that's somehow a problem we can always map HOLE
           // to a dedicated byte (and escape it in the
           // input).
-          copyDestTransitions(state, t.getDest(), newTransitions);
-          a.setDeterministic(false);
+          result.addEpsilon(state, t.dest);
         } else {
-          newTransitions.add(t);
+          result.addTransition(state, t.dest, t.min, t.max);
         }
       }
-      state.setTransitions(newTransitions.toArray(new Transition[newTransitions.size()]));
     }
+
+    return result.finish();
   }
 
   /** Used by subclass to change the lookup automaton, if
@@ -380,20 +419,24 @@ public class AnalyzingSuggester extends Lookup {
 
   @Override
   public void build(InputIterator iterator) throws IOException {
+    if (iterator.hasContexts()) {
+      throw new IllegalArgumentException("this suggester doesn't support contexts");
+    }
     String prefix = getClass().getSimpleName();
-    File directory = Sort.defaultTempDir();
-    File tempInput = File.createTempFile(prefix, ".input", directory);
-    File tempSorted = File.createTempFile(prefix, ".sorted", directory);
+    Path directory = OfflineSorter.defaultTempDir();
+    Path tempInput = Files.createTempFile(directory, prefix, ".input");
+    Path tempSorted = Files.createTempFile(directory, prefix, ".sorted");
 
     hasPayloads = iterator.hasPayloads();
 
-    Sort.ByteSequencesWriter writer = new Sort.ByteSequencesWriter(tempInput);
-    Sort.ByteSequencesReader reader = null;
-    BytesRef scratch = new BytesRef();
+    OfflineSorter.ByteSequencesWriter writer = new OfflineSorter.ByteSequencesWriter(tempInput);
+    OfflineSorter.ByteSequencesReader reader = null;
+    BytesRefBuilder scratch = new BytesRefBuilder();
 
     TokenStreamToAutomaton ts2a = getTokenStreamToAutomaton();
 
     boolean success = false;
+    count = 0;
     byte buffer[] = new byte[8];
     try {
       ByteArrayDataOutput output = new ByteArrayDataOutput(buffer);
@@ -409,10 +452,10 @@ public class AnalyzingSuggester extends Lookup {
           Util.toBytesRef(path, scratch);
           
           // length of the analyzed text (FST input)
-          if (scratch.length > Short.MAX_VALUE-2) {
-            throw new IllegalArgumentException("cannot handle analyzed forms > " + (Short.MAX_VALUE-2) + " in length (got " + scratch.length + ")");
+          if (scratch.length() > Short.MAX_VALUE-2) {
+            throw new IllegalArgumentException("cannot handle analyzed forms > " + (Short.MAX_VALUE-2) + " in length (got " + scratch.length() + ")");
           }
-          short analyzedLength = (short) scratch.length;
+          short analyzedLength = (short) scratch.length();
 
           // compute the required length:
           // analyzed sequence + weight (4) + surface + analyzedLength (short)
@@ -437,7 +480,7 @@ public class AnalyzingSuggester extends Lookup {
 
           output.writeShort(analyzedLength);
 
-          output.writeBytes(scratch.bytes, scratch.offset, scratch.length);
+          output.writeBytes(scratch.bytes(), 0, scratch.length());
 
           output.writeInt(encodeWeight(iterator.weight()));
 
@@ -455,60 +498,60 @@ public class AnalyzingSuggester extends Lookup {
           }
 
           assert output.getPosition() == requiredLength: output.getPosition() + " vs " + requiredLength;
-
           writer.write(buffer, 0, output.getPosition());
         }
+        count++;
       }
       writer.close();
 
       // Sort all input/output pairs (required by FST.Builder):
-      new Sort(new AnalyzingComparator(hasPayloads)).sort(tempInput, tempSorted);
+      new OfflineSorter(new AnalyzingComparator(hasPayloads)).sort(tempInput, tempSorted);
 
       // Free disk space:
-      tempInput.delete();
+      Files.delete(tempInput);
 
-      reader = new Sort.ByteSequencesReader(tempSorted);
+      reader = new OfflineSorter.ByteSequencesReader(tempSorted);
      
-      PairOutputs<Long,BytesRef> outputs = new PairOutputs<Long,BytesRef>(PositiveIntOutputs.getSingleton(), ByteSequenceOutputs.getSingleton());
-      Builder<Pair<Long,BytesRef>> builder = new Builder<Pair<Long,BytesRef>>(FST.INPUT_TYPE.BYTE1, outputs);
+      PairOutputs<Long,BytesRef> outputs = new PairOutputs<>(PositiveIntOutputs.getSingleton(), ByteSequenceOutputs.getSingleton());
+      Builder<Pair<Long,BytesRef>> builder = new Builder<>(FST.INPUT_TYPE.BYTE1, outputs);
 
       // Build FST:
-      BytesRef previousAnalyzed = null;
-      BytesRef analyzed = new BytesRef();
+      BytesRefBuilder previousAnalyzed = null;
+      BytesRefBuilder analyzed = new BytesRefBuilder();
       BytesRef surface = new BytesRef();
-      IntsRef scratchInts = new IntsRef();
+      IntsRefBuilder scratchInts = new IntsRefBuilder();
       ByteArrayDataInput input = new ByteArrayDataInput();
 
       // Used to remove duplicate surface forms (but we
       // still index the hightest-weight one).  We clear
       // this when we see a new analyzed form, so it cannot
       // grow unbounded (at most 256 entries):
-      Set<BytesRef> seenSurfaceForms = new HashSet<BytesRef>();
+      Set<BytesRef> seenSurfaceForms = new HashSet<>();
 
       int dedup = 0;
       while (reader.read(scratch)) {
-        input.reset(scratch.bytes, scratch.offset, scratch.length);
+        input.reset(scratch.bytes(), 0, scratch.length());
         short analyzedLength = input.readShort();
         analyzed.grow(analyzedLength+2);
-        input.readBytes(analyzed.bytes, 0, analyzedLength);
-        analyzed.length = analyzedLength;
+        input.readBytes(analyzed.bytes(), 0, analyzedLength);
+        analyzed.setLength(analyzedLength);
 
         long cost = input.readInt();
 
-        surface.bytes = scratch.bytes;
+        surface.bytes = scratch.bytes();
         if (hasPayloads) {
           surface.length = input.readShort();
           surface.offset = input.getPosition();
         } else {
           surface.offset = input.getPosition();
-          surface.length = scratch.length - surface.offset;
+          surface.length = scratch.length() - surface.offset;
         }
         
         if (previousAnalyzed == null) {
-          previousAnalyzed = new BytesRef();
-          previousAnalyzed.copyBytes(analyzed);
+          previousAnalyzed = new BytesRefBuilder();
+          previousAnalyzed.copyBytes(analyzed.get());
           seenSurfaceForms.add(BytesRef.deepCopyOf(surface));
-        } else if (analyzed.equals(previousAnalyzed)) {
+        } else if (analyzed.get().equals(previousAnalyzed.get())) {
           dedup++;
           if (dedup >= maxSurfaceFormsPerAnalyzedForm) {
             // More than maxSurfaceFormsPerAnalyzedForm
@@ -534,23 +577,22 @@ public class AnalyzingSuggester extends Lookup {
 
         // NOTE: must be byte 0 so we sort before whatever
         // is next
-        analyzed.bytes[analyzed.offset+analyzed.length] = 0;
-        analyzed.bytes[analyzed.offset+analyzed.length+1] = (byte) dedup;
-        analyzed.length += 2;
+        analyzed.append((byte) 0);
+        analyzed.append((byte) dedup);
 
-        Util.toIntsRef(analyzed, scratchInts);
+        Util.toIntsRef(analyzed.get(), scratchInts);
         //System.out.println("ADD: " + scratchInts + " -> " + cost + ": " + surface.utf8ToString());
         if (!hasPayloads) {
-          builder.add(scratchInts, outputs.newPair(cost, BytesRef.deepCopyOf(surface)));
+          builder.add(scratchInts.get(), outputs.newPair(cost, BytesRef.deepCopyOf(surface)));
         } else {
           int payloadOffset = input.getPosition() + surface.length;
-          int payloadLength = scratch.length - payloadOffset;
+          int payloadLength = scratch.length() - payloadOffset;
           BytesRef br = new BytesRef(surface.length + 1 + payloadLength);
           System.arraycopy(surface.bytes, surface.offset, br.bytes, 0, surface.length);
           br.bytes[surface.length] = PAYLOAD_SEP;
-          System.arraycopy(scratch.bytes, payloadOffset, br.bytes, surface.length+1, payloadLength);
+          System.arraycopy(scratch.bytes(), payloadOffset, br.bytes, surface.length+1, payloadLength);
           br.length = br.bytes.length;
-          builder.add(scratchInts, outputs.newPair(cost, br));
+          builder.add(scratchInts.get(), outputs.newPair(cost, br));
         }
       }
       fst = builder.finish();
@@ -559,48 +601,39 @@ public class AnalyzingSuggester extends Lookup {
       
       success = true;
     } finally {
-      if (success) {
-        IOUtils.close(reader, writer);
-      } else {
-        IOUtils.closeWhileHandlingException(reader, writer);
-      }
+      IOUtils.closeWhileHandlingException(reader, writer);
       
-      tempInput.delete();
-      tempSorted.delete();
-    }
-  }
-
-  @Override
-  public boolean store(OutputStream output) throws IOException {
-    DataOutput dataOut = new OutputStreamDataOutput(output);
-    try {
-      if (fst == null) {
-        return false;
+      if (success) {
+        IOUtils.deleteFilesIfExist(tempInput, tempSorted);
+      } else {
+        IOUtils.deleteFilesIgnoringExceptions(tempInput, tempSorted);
       }
-
-      fst.save(dataOut);
-      dataOut.writeVInt(maxAnalyzedPathsForOneInput);
-      dataOut.writeByte((byte) (hasPayloads ? 1 : 0));
-    } finally {
-      IOUtils.close(output);
     }
+  }
+
+  @Override
+  public boolean store(DataOutput output) throws IOException {
+    output.writeVLong(count);
+    if (fst == null) {
+      return false;
+    }
+
+    fst.save(output);
+    output.writeVInt(maxAnalyzedPathsForOneInput);
+    output.writeByte((byte) (hasPayloads ? 1 : 0));
     return true;
   }
 
   @Override
-  public boolean load(InputStream input) throws IOException {
-    DataInput dataIn = new InputStreamDataInput(input);
-    try {
-      this.fst = new FST<Pair<Long,BytesRef>>(dataIn, new PairOutputs<Long,BytesRef>(PositiveIntOutputs.getSingleton(), ByteSequenceOutputs.getSingleton()));
-      maxAnalyzedPathsForOneInput = dataIn.readVInt();
-      hasPayloads = dataIn.readByte() == 1;
-    } finally {
-      IOUtils.close(input);
-    }
+  public boolean load(DataInput input) throws IOException {
+    count = input.readVLong();
+    this.fst = new FST<>(input, new PairOutputs<>(PositiveIntOutputs.getSingleton(), ByteSequenceOutputs.getSingleton()));
+    maxAnalyzedPathsForOneInput = input.readVInt();
+    hasPayloads = input.readByte() == 1;
     return true;
   }
 
-  private LookupResult getLookupResult(Long output1, BytesRef output2, CharsRef spare) {
+  private LookupResult getLookupResult(Long output1, BytesRef output2, CharsRefBuilder spare) {
     LookupResult result;
     if (hasPayloads) {
       int sepIndex = -1;
@@ -613,14 +646,14 @@ public class AnalyzingSuggester extends Lookup {
       assert sepIndex != -1;
       spare.grow(sepIndex);
       final int payloadLen = output2.length - sepIndex - 1;
-      UnicodeUtil.UTF8toUTF16(output2.bytes, output2.offset, sepIndex, spare);
+      spare.copyUTF8Bytes(output2.bytes, output2.offset, sepIndex);
       BytesRef payload = new BytesRef(payloadLen);
       System.arraycopy(output2.bytes, sepIndex+1, payload.bytes, 0, payloadLen);
       payload.length = payloadLen;
       result = new LookupResult(spare.toString(), decodeWeight(output1), payload);
     } else {
       spare.grow(output2.length);
-      UnicodeUtil.UTF8toUTF16(output2, spare);
+      spare.copyUTF8Bytes(output2);
       result = new LookupResult(spare.toString(), decodeWeight(output1));
     }
 
@@ -645,11 +678,14 @@ public class AnalyzingSuggester extends Lookup {
   }
 
   @Override
-  public List<LookupResult> lookup(final CharSequence key, boolean onlyMorePopular, int num) {
+  public List<LookupResult> lookup(final CharSequence key, Set<BytesRef> contexts, boolean onlyMorePopular, int num) {
     assert num > 0;
 
     if (onlyMorePopular) {
       throw new IllegalArgumentException("this suggester only works with onlyMorePopular=false");
+    }
+    if (contexts != null) {
+      throw new IllegalArgumentException("this suggester doesn't support contexts");
     }
     if (fst == null) {
       return Collections.emptyList();
@@ -666,10 +702,9 @@ public class AnalyzingSuggester extends Lookup {
     }
     final BytesRef utf8Key = new BytesRef(key);
     try {
-
       Automaton lookupAutomaton = toLookupAutomaton(key);
 
-      final CharsRef spare = new CharsRef();
+      final CharsRefBuilder spare = new CharsRefBuilder();
 
       //System.out.println("  now intersect exactFirst=" + exactFirst);
     
@@ -681,9 +716,9 @@ public class AnalyzingSuggester extends Lookup {
 
       BytesReader bytesReader = fst.getBytesReader();
 
-      FST.Arc<Pair<Long,BytesRef>> scratchArc = new FST.Arc<Pair<Long,BytesRef>>();
+      FST.Arc<Pair<Long,BytesRef>> scratchArc = new FST.Arc<>();
 
-      final List<LookupResult> results = new ArrayList<LookupResult>();
+      final List<LookupResult> results = new ArrayList<>();
 
       List<FSTUtil.Path<Pair<Long,BytesRef>>> prefixPaths = FSTUtil.intersectPrefixPaths(convertAutomaton(lookupAutomaton), fst);
 
@@ -701,7 +736,7 @@ public class AnalyzingSuggester extends Lookup {
         // Searcher just to find the single exact only
         // match, if present:
         Util.TopNSearcher<Pair<Long,BytesRef>> searcher;
-        searcher = new Util.TopNSearcher<Pair<Long,BytesRef>>(fst, count * maxSurfaceFormsPerAnalyzedForm, count * maxSurfaceFormsPerAnalyzedForm, weightComparator);
+        searcher = new Util.TopNSearcher<>(fst, count * maxSurfaceFormsPerAnalyzedForm, count * maxSurfaceFormsPerAnalyzedForm, weightComparator);
 
         // NOTE: we could almost get away with only using
         // the first start node.  The only catch is if
@@ -716,7 +751,8 @@ public class AnalyzingSuggester extends Lookup {
           }
         }
 
-        MinResult<Pair<Long,BytesRef>> completions[] = searcher.search();
+        TopResults<Pair<Long,BytesRef>> completions = searcher.search();
+        assert completions.isComplete;
 
         // NOTE: this is rather inefficient: we enumerate
         // every matching "exactly the same analyzed form"
@@ -730,7 +766,7 @@ public class AnalyzingSuggester extends Lookup {
         // seach: it's bounded by how many prefix start
         // nodes we have and the
         // maxSurfaceFormsPerAnalyzedForm:
-        for(MinResult<Pair<Long,BytesRef>> completion : completions) {
+        for(Result<Pair<Long,BytesRef>> completion : completions) {
           BytesRef output2 = completion.output.output2;
           if (sameSurfaceForm(utf8Key, output2)) {
             results.add(getLookupResult(completion.output.output1, output2, spare));
@@ -749,7 +785,7 @@ public class AnalyzingSuggester extends Lookup {
                                                             num - results.size(),
                                                             num * maxAnalyzedPathsForOneInput,
                                                             weightComparator) {
-        private final Set<BytesRef> seen = new HashSet<BytesRef>();
+        private final Set<BytesRef> seen = new HashSet<>();
 
         @Override
         protected boolean acceptResult(IntsRef input, Pair<Long,BytesRef> output) {
@@ -785,9 +821,10 @@ public class AnalyzingSuggester extends Lookup {
         searcher.addStartPaths(path.fstNode, path.output, true, path.input);
       }
 
-      MinResult<Pair<Long,BytesRef>> completions[] = searcher.search();
+      TopResults<Pair<Long,BytesRef>> completions = searcher.search();
+      assert completions.isComplete;
 
-      for(MinResult<Pair<Long,BytesRef>> completion : completions) {
+      for(Result<Pair<Long,BytesRef>> completion : completions) {
 
         LookupResult result = getLookupResult(completion.output.output1, completion.output.output2, spare);
 
@@ -809,6 +846,11 @@ public class AnalyzingSuggester extends Lookup {
       throw new RuntimeException(bogus);
     }
   }
+  
+  @Override
+  public long getCount() {
+    return count;
+  }
 
   /** Returns all prefix paths to initialize the search. */
   protected List<FSTUtil.Path<Pair<Long,BytesRef>>> getFullPrefixPaths(List<FSTUtil.Path<Pair<Long,BytesRef>>> prefixPaths,
@@ -829,10 +871,11 @@ public class AnalyzingSuggester extends Lookup {
       automaton = ts2a.toAutomaton(ts);
     }
 
-    replaceSep(automaton);
+    automaton = replaceSep(automaton);
     automaton = convertAutomaton(automaton);
 
-    assert SpecialOperations.isFinite(automaton);
+    // TODO: LUCENE-5660 re-enable this once we disallow massive suggestion strings
+    // assert SpecialOperations.isFinite(automaton);
 
     // Get all paths from the automaton (there can be
     // more than one path, eg if the analyzer created a
@@ -841,7 +884,8 @@ public class AnalyzingSuggester extends Lookup {
     // TODO: we could walk & add simultaneously, so we
     // don't have to alloc [possibly biggish]
     // intermediate HashSet in RAM:
-    return SpecialOperations.getFiniteStrings(automaton, maxGraphExpansions);
+
+    return Operations.getFiniteStrings(automaton, maxGraphExpansions);
   }
 
   final Automaton toLookupAutomaton(final CharSequence key) throws IOException {
@@ -849,24 +893,16 @@ public class AnalyzingSuggester extends Lookup {
     // Turn tokenstream into automaton:
     Automaton automaton = null;
     try (TokenStream ts = queryAnalyzer.tokenStream("", key.toString())) {
-      automaton = (getTokenStreamToAutomaton()).toAutomaton(ts);
+        automaton = getTokenStreamToAutomaton().toAutomaton(ts);
     }
 
-    // TODO: we could use the end offset to "guess"
-    // whether the final token was a partial token; this
-    // would only be a heuristic ... but maybe an OK one.
-    // This way we could eg differentiate "net" from "net ",
-    // which we can't today...
-
-    replaceSep(automaton);
+    automaton = replaceSep(automaton);
 
     // TODO: we can optimize this somewhat by determinizing
     // while we convert
-    BasicOperations.determinize(automaton);
+    automaton = Operations.determinize(automaton, DEFAULT_MAX_DETERMINIZED_STATES);
     return automaton;
   }
-  
-  
 
   /**
    * Returns the weight associated with an input string,

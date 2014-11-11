@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.util.LuceneTestCase;
 
 public class TestNRTReaderWithThreads extends LuceneTestCase {
@@ -30,11 +31,14 @@ public class TestNRTReaderWithThreads extends LuceneTestCase {
 
   public void testIndexing() throws Exception {
     Directory mainDir = newDirectory();
+    if (mainDir instanceof MockDirectoryWrapper) {
+      ((MockDirectoryWrapper)mainDir).setAssertNoDeleteOpenFile(true);
+    }
     IndexWriter writer = new IndexWriter(
         mainDir,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).
-            setMaxBufferedDocs(10).
-            setMergePolicy(newLogMergePolicy(false,2))
+        newIndexWriterConfig(new MockAnalyzer(random()))
+           .setMaxBufferedDocs(10)
+           .setMergePolicy(newLogMergePolicy(false,2))
     );
     IndexReader reader = writer.getReader(); // start pooling readers
     reader.close();

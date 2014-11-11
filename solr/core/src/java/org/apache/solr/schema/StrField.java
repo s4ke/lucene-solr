@@ -28,9 +28,8 @@ import org.apache.lucene.document.SortedSetDocValuesField;
 import org.apache.lucene.index.StorableField;
 import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.search.SortField;
+import org.apache.lucene.uninverting.UninvertingReader.Type;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.CharsRef;
-import org.apache.lucene.util.UnicodeUtil;
 import org.apache.solr.response.TextResponseWriter;
 import org.apache.solr.search.QParser;
 
@@ -45,7 +44,7 @@ public class StrField extends PrimitiveFieldType {
   public List<StorableField> createFields(SchemaField field, Object value,
       float boost) {
     if (field.hasDocValues()) {
-      List<StorableField> fields = new ArrayList<StorableField>();
+      List<StorableField> fields = new ArrayList<>();
       fields.add(createField(field, value, boost));
       final BytesRef bytes = new BytesRef(value.toString());
       if (field.multiValued()) {
@@ -62,6 +61,15 @@ public class StrField extends PrimitiveFieldType {
   @Override
   public SortField getSortField(SchemaField field,boolean reverse) {
     return getStringSort(field,reverse);
+  }
+
+  @Override
+  public Type getUninversionType(SchemaField sf) {
+    if (sf.multiValued()) {
+      return Type.SORTED_SET_BINARY;
+    } else {
+      return Type.SORTED;
+    }
   }
 
   @Override
@@ -86,23 +94,12 @@ public class StrField extends PrimitiveFieldType {
 
   @Override
   public Object marshalSortValue(Object value) {
-    if (null == value) {
-      return null;
-    }
-    CharsRef spare = new CharsRef();
-    UnicodeUtil.UTF8toUTF16((BytesRef)value, spare);
-    return spare.toString();
+    return marshalStringSortValue(value);
   }
 
   @Override
   public Object unmarshalSortValue(Object value) {
-    if (null == value) {
-      return null;
-    }
-    BytesRef spare = new BytesRef();
-    String stringVal = (String)value;
-    UnicodeUtil.UTF16toUTF8(stringVal, 0, stringVal.length(), spare);
-    return spare;
+    return unmarshalStringSortValue(value);
   }
 }
 

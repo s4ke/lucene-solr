@@ -17,6 +17,17 @@ package org.apache.lucene.spatial.prefix;
  * limitations under the License.
  */
 
+import java.io.IOException;
+
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.search.DocIdSet;
+import org.apache.lucene.spatial.prefix.tree.Cell;
+import org.apache.lucene.spatial.prefix.tree.CellIterator;
+import org.apache.lucene.spatial.prefix.tree.SpatialPrefixTree;
+import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.BitDocIdSet;
+import org.apache.lucene.util.FixedBitSet;
+
 import com.spatial4j.core.context.SpatialContext;
 import com.spatial4j.core.distance.DistanceUtils;
 import com.spatial4j.core.shape.Circle;
@@ -24,16 +35,6 @@ import com.spatial4j.core.shape.Point;
 import com.spatial4j.core.shape.Rectangle;
 import com.spatial4j.core.shape.Shape;
 import com.spatial4j.core.shape.SpatialRelation;
-import org.apache.lucene.index.AtomicReaderContext;
-import org.apache.lucene.search.DocIdSet;
-import org.apache.lucene.spatial.prefix.tree.Cell;
-import org.apache.lucene.spatial.prefix.tree.SpatialPrefixTree;
-import org.apache.lucene.util.Bits;
-import org.apache.lucene.util.FixedBitSet;
-
-import java.io.IOException;
-import java.util.Collection;
-import java.util.Iterator;
 
 /**
  * Finds docs where its indexed shape is {@link org.apache.lucene.spatial.query.SpatialOperation#IsWithin
@@ -49,10 +50,13 @@ import java.util.Iterator;
  *
  * @lucene.experimental
  */
-//TODO LUCENE-4869: implement faster algorithm based on filtering out false-positives of a
-//  minimal query buffer by looking in a DocValues cache holding a representative
-//  point of each disjoint component of a document's shape(s).
 public class WithinPrefixTreeFilter extends AbstractVisitingPrefixTreeFilter {
+  //TODO LUCENE-4869: implement faster algorithm based on filtering out false-positives of a
+  //  minimal query buffer by looking in a DocValues cache holding a representative
+  //  point of each disjoint component of a document's shape(s).
+
+  //TODO Could the recursion in allCellsIntersectQuery() be eliminated when non-fuzzy or other
+  //  circumstances?
 
   private final Shape bufferedQueryShape;//if null then the whole world
 
@@ -117,7 +121,7 @@ public class WithinPrefixTreeFilter extends AbstractVisitingPrefixTreeFilter {
 
 
   @Override
-  public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs) throws IOException {
+  public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs) throws IOException {
     return new VisitorTemplate(context, acceptDocs, true) {
       private FixedBitSet inside;
       private FixedBitSet outside;
@@ -132,13 +136,13 @@ public class WithinPrefixTreeFilter extends AbstractVisitingPrefixTreeFilter {
       @Override
       protected DocIdSet finish() {
         inside.andNot(outside);
-        return inside;
+        return new BitDocIdSet(inside);
       }
 
       @Override
-      protected Iterator<Cell> findSubCellsToVisit(Cell cell) {
+      protected CellIterator findSubCellsToVisit(Cell cell) {
         //use buffered query shape instead of orig.  Works with null too.
-        return cell.getSubCells(bufferedQueryShape).iterator();
+        return cell.getNextLevelCells(bufferedQueryShape);
       }
 
       @Override
@@ -183,10 +187,10 @@ public class WithinPrefixTreeFilter extends AbstractVisitingPrefixTreeFilter {
         if (relate == SpatialRelation.DISJOINT)
           return false;
         // Note: Generating all these cells just to determine intersection is not ideal.
-        // It was easy to implement but could be optimized. For example if the docs
-        // in question are already marked in the 'outside' bitset then it can be avoided.
-        Collection<Cell> subCells = cell.getSubCells(null);
-        for (Cell subCell : subCells) {
+        // The real solution is LUCENE-4869.
+        CellIterator subCells = cell.getNextLevelCells(null);
+        while (subCells.hasNext()) {
+          Cell subCell = subCells.next();
           if (!allCellsIntersectQuery(subCell, null))//recursion
             return false;
         }

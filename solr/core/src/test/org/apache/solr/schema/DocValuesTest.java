@@ -17,10 +17,8 @@ package org.apache.solr.schema;
  * limitations under the License.
  */
 
-import java.io.IOException;
-
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.FieldInfo.DocValuesType;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.queries.function.FunctionValues;
 import org.apache.solr.SolrTestCaseJ4;
@@ -28,6 +26,8 @@ import org.apache.solr.core.SolrCore;
 import org.apache.solr.search.SolrIndexSearcher;
 import org.apache.solr.util.RefCounted;
 import org.junit.BeforeClass;
+
+import java.io.IOException;
 
 public class DocValuesTest extends SolrTestCaseJ4 {
 
@@ -43,13 +43,12 @@ public class DocValuesTest extends SolrTestCaseJ4 {
 
   public void testDocValues() throws IOException {
     assertU(adoc("id", "1"));
-    commit();
-    SolrCore core = h.getCoreInc();
-    try {
+    assertU(commit());
+    try (SolrCore core = h.getCoreInc()) {
       final RefCounted<SolrIndexSearcher> searcherRef = core.openNewSearcher(true, true);
       final SolrIndexSearcher searcher = searcherRef.get();
       try {
-        final AtomicReader reader = searcher.getAtomicReader();
+        final LeafReader reader = searcher.getLeafReader();
         assertEquals(1, reader.numDocs());
         final FieldInfos infos = reader.getFieldInfos();
         assertEquals(DocValuesType.NUMERIC, infos.fieldInfo("floatdv").getDocValuesType());
@@ -69,23 +68,21 @@ public class DocValuesTest extends SolrTestCaseJ4 {
         final SchemaField doubleDv = schema.getField("doubledv");
         final SchemaField longDv = schema.getField("longdv");
 
-        FunctionValues values = floatDv.getType().getValueSource(floatDv, null).getValues(null, searcher.getAtomicReader().leaves().get(0));
+        FunctionValues values = floatDv.getType().getValueSource(floatDv, null).getValues(null, searcher.getLeafReader().leaves().get(0));
         assertEquals(1f, values.floatVal(0), 0f);
         assertEquals(1f, values.objectVal(0));
-        values = intDv.getType().getValueSource(intDv, null).getValues(null, searcher.getAtomicReader().leaves().get(0));
+        values = intDv.getType().getValueSource(intDv, null).getValues(null, searcher.getLeafReader().leaves().get(0));
         assertEquals(2, values.intVal(0));
         assertEquals(2, values.objectVal(0));
-        values = doubleDv.getType().getValueSource(doubleDv, null).getValues(null, searcher.getAtomicReader().leaves().get(0));
+        values = doubleDv.getType().getValueSource(doubleDv, null).getValues(null, searcher.getLeafReader().leaves().get(0));
         assertEquals(3d, values.doubleVal(0), 0d);
         assertEquals(3d, values.objectVal(0));
-        values = longDv.getType().getValueSource(longDv, null).getValues(null, searcher.getAtomicReader().leaves().get(0));
+        values = longDv.getType().getValueSource(longDv, null).getValues(null, searcher.getLeafReader().leaves().get(0));
         assertEquals(4L, values.longVal(0));
         assertEquals(4L, values.objectVal(0));
       } finally {
         searcherRef.decref();
       }
-    } finally {
-      core.close();
     }
   }
 
@@ -147,7 +144,7 @@ public class DocValuesTest extends SolrTestCaseJ4 {
     }
     for (int i = 0; i < 50; ++i) {
       if (rarely()) {
-        commit(); // to have several segments
+        assertU(commit()); // to have several segments
       }
       assertU(adoc("id", "1000" + i, "floatdv", "" + i, "intdv", "" + i, "doubledv", "" + i, "longdv", "" + i, "datedv", (1900+i) + "-12-31T23:59:59.999Z", "stringdv", "abc" + i));
     }
@@ -192,7 +189,7 @@ public class DocValuesTest extends SolrTestCaseJ4 {
     for (int i = 0; i < 50; ++i) {
       assertU(adoc("id", "1000" + i, "floatdv", "" + i%2, "intdv", "" + i%3, "doubledv", "" + i%4, "longdv", "" + i%5, "datedv", (1900+i%6) + "-12-31T23:59:59.999Z", "stringdv", "abc" + i%7));
       if (rarely()) {
-        commit(); // to have several segments
+        assertU(commit()); // to have several segments
       }
     }
     assertU(commit());

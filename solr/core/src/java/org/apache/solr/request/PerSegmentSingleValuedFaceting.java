@@ -21,18 +21,18 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.*;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
-import org.apache.lucene.search.FieldCache;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.CharsRef;
+import org.apache.lucene.util.BytesRefBuilder;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.apache.lucene.util.PriorityQueue;
 import org.apache.lucene.util.UnicodeUtil;
-import org.apache.lucene.util.packed.PackedInts;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.FacetParams;
 import org.apache.solr.common.util.NamedList;
@@ -78,20 +78,20 @@ class PerSegmentSingleValuedFaceting {
 
   NamedList<Integer> getFacetCounts(Executor executor) throws IOException {
 
-    CompletionService<SegFacet> completionService = new ExecutorCompletionService<SegFacet>(executor);
+    CompletionService<SegFacet> completionService = new ExecutorCompletionService<>(executor);
 
     // reuse the translation logic to go from top level set to per-segment set
     baseSet = docs.getTopFilter();
 
-    final List<AtomicReaderContext> leaves = searcher.getTopReaderContext().leaves();
+    final List<LeafReaderContext> leaves = searcher.getTopReaderContext().leaves();
     // The list of pending tasks that aren't immediately submitted
     // TODO: Is there a completion service, or a delegating executor that can
     // limit the number of concurrent tasks submitted to a bigger executor?
-    LinkedList<Callable<SegFacet>> pending = new LinkedList<Callable<SegFacet>>();
+    LinkedList<Callable<SegFacet>> pending = new LinkedList<>();
 
     int threads = nThreads <= 0 ? Integer.MAX_VALUE : nThreads;
 
-    for (final AtomicReaderContext leave : leaves) {
+    for (final LeafReaderContext leave : leaves) {
       final SegFacet segFacet = new SegFacet(leave);
 
       Callable<SegFacet> task = new Callable<SegFacet>() {
@@ -169,7 +169,7 @@ class PerSegmentSingleValuedFaceting {
       collector = new IndexSortedFacetCollector(offset, limit, mincount);
     }
 
-    BytesRef val = new BytesRef();
+    BytesRefBuilder val = new BytesRefBuilder();
 
     while (queue.size() > 0) {
       SegFacet seg = queue.top();
@@ -194,9 +194,9 @@ class PerSegmentSingleValuedFaceting {
           seg.tempBR = seg.tenum.next();
           seg = queue.updateTop();
         }
-      } while (seg != null && val.compareTo(seg.tempBR) == 0);
+      } while (seg != null && val.get().compareTo(seg.tempBR) == 0);
 
-      boolean stop = collector.collect(val, count);
+      boolean stop = collector.collect(val.get(), count);
       if (stop) break;
     }
 
@@ -220,8 +220,8 @@ class PerSegmentSingleValuedFaceting {
   }
 
   class SegFacet {
-    AtomicReaderContext context;
-    SegFacet(AtomicReaderContext context) {
+    LeafReaderContext context;
+    SegFacet(LeafReaderContext context) {
       this.context = context;
     }
     
@@ -236,16 +236,17 @@ class PerSegmentSingleValuedFaceting {
     BytesRef tempBR = new BytesRef();
 
     void countTerms() throws IOException {
-      si = FieldCache.DEFAULT.getTermsIndex(context.reader(), fieldName);
+      si = DocValues.getSorted(context.reader(), fieldName);
       // SolrCore.log.info("reader= " + reader + "  FC=" + System.identityHashCode(si));
 
       if (prefix!=null) {
-        BytesRef prefixRef = new BytesRef(prefix);
-        startTermIndex = si.lookupTerm(prefixRef);
+        BytesRefBuilder prefixRef = new BytesRefBuilder();
+        prefixRef.copyChars(prefix);
+        startTermIndex = si.lookupTerm(prefixRef.get());
         if (startTermIndex<0) startTermIndex=-startTermIndex-1;
         prefixRef.append(UnicodeUtil.BIG_TERM);
         // TODO: we could constrain the lower endpoint if we had a binarySearch method that allowed passing start/end
-        endTermIndex = si.lookupTerm(prefixRef);
+        endTermIndex = si.lookupTerm(prefixRef.get());
         assert endTermIndex < 0;
         endTermIndex = -endTermIndex-1;
       } else {
@@ -295,7 +296,7 @@ abstract class FacetCollector {
 
 // This collector expects facets to be collected in index order
 class CountSortedFacetCollector extends FacetCollector {
-  private final CharsRef spare = new CharsRef();
+  private final CharsRefBuilder spare = new CharsRefBuilder();
 
   final int offset;
   final int limit;
@@ -308,7 +309,7 @@ class CountSortedFacetCollector extends FacetCollector {
     this.offset = offset;
     this.limit = limit;
     maxsize = limit>0 ? offset+limit : Integer.MAX_VALUE-1;
-    queue = new BoundedTreeSet<SimpleFacets.CountPair<String,Integer>>(maxsize);
+    queue = new BoundedTreeSet<>(maxsize);
     min=mincount-1;  // the smallest value in the top 'N' values
   }
 
@@ -318,8 +319,8 @@ class CountSortedFacetCollector extends FacetCollector {
       // NOTE: we use c>min rather than c>=min as an optimization because we are going in
       // index order, so we already know that the keys are ordered.  This can be very
       // important if a lot of the counts are repeated (like zero counts would be).
-      UnicodeUtil.UTF8toUTF16(term, spare);
-      queue.add(new SimpleFacets.CountPair<String,Integer>(spare.toString(), count));
+      spare.copyUTF8Bytes(term);
+      queue.add(new SimpleFacets.CountPair<>(spare.toString(), count));
       if (queue.size()>=maxsize) min=queue.last().val;
     }
     return false;
@@ -327,7 +328,7 @@ class CountSortedFacetCollector extends FacetCollector {
 
   @Override
   public NamedList<Integer> getFacetCounts() {
-    NamedList<Integer> res = new NamedList<Integer>();
+    NamedList<Integer> res = new NamedList<>();
     int off=offset;
     int lim=limit>=0 ? limit : Integer.MAX_VALUE;
      // now select the right page from the results
@@ -342,12 +343,12 @@ class CountSortedFacetCollector extends FacetCollector {
 
 // This collector expects facets to be collected in index order
 class IndexSortedFacetCollector extends FacetCollector {
-  private final CharsRef spare = new CharsRef();
+  private final CharsRefBuilder spare = new CharsRefBuilder();
 
   int offset;
   int limit;
   final int mincount;
-  final NamedList<Integer> res = new NamedList<Integer>();
+  final NamedList<Integer> res = new NamedList<>();
 
   public IndexSortedFacetCollector(int offset, int limit, int mincount) {
     this.offset = offset;
@@ -367,7 +368,7 @@ class IndexSortedFacetCollector extends FacetCollector {
     }
 
     if (limit > 0) {
-      UnicodeUtil.UTF8toUTF16(term, spare);
+      spare.copyUTF8Bytes(term);
       res.add(spare.toString(), count);
       limit--;
     }

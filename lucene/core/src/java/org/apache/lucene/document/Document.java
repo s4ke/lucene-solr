@@ -19,7 +19,9 @@ package org.apache.lucene.document;
 
 import java.util.*;
 
+import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.IndexDocument;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexReader;  // for javadoc
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.StorableField;
@@ -44,7 +46,7 @@ import org.apache.lucene.util.FilterIterator;
 
 public final class Document implements IndexDocument {
 
-  private final List<Field> fields = new ArrayList<Field>();
+  private final List<Field> fields = new ArrayList<>();
 
   /** Constructs a new document with no fields. */
   public Document() {}
@@ -60,16 +62,19 @@ public final class Document implements IndexDocument {
       Field newField = new Field(field.name(), (FieldType) field.fieldType());
      
       newField.fieldsData = field.stringValue();
-      if (newField.fieldsData == null) 
+      if (newField.fieldsData == null) {
         newField.fieldsData = field.numericValue();
-      if (newField.fieldsData == null) 
+      }
+      if (newField.fieldsData == null) {
         newField.fieldsData = field.binaryValue();
-      if (newField.fieldsData == null) 
+      }
+      if (newField.fieldsData == null) {
         newField.fieldsData = field.readerValue();
+      }
      
       add(newField);
     }
- }
+  }
 
   
   /**
@@ -137,7 +142,7 @@ public final class Document implements IndexDocument {
   * @return a <code>BytesRef[]</code> of binary field values
   */
   public final BytesRef[] getBinaryValues(String name) {
-    final List<BytesRef> result = new ArrayList<BytesRef>();
+    final List<BytesRef> result = new ArrayList<>();
 
     for (Iterator<StorableField> it = storedFieldsIterator(); it.hasNext(); ) {
       StorableField field = it.next();
@@ -196,7 +201,7 @@ public final class Document implements IndexDocument {
    * @return a <code>Field[]</code> array
    */
   public Field[] getFields(String name) {
-    List<Field> result = new ArrayList<Field>();
+    List<Field> result = new ArrayList<>();
     for (Field field : fields) {
       if (field.name().equals(name)) {
         result.add(field);
@@ -231,7 +236,7 @@ public final class Document implements IndexDocument {
    * @return a <code>String[]</code> of field values
    */
   public final String[] getValues(String name) {
-    List<String> result = new ArrayList<String>();
+    List<String> result = new ArrayList<>();
 
     for (Iterator<StorableField> it = storedFieldsIterator(); it.hasNext(); ) {
       StorableField field = it.next();
@@ -273,8 +278,9 @@ public final class Document implements IndexDocument {
     for (int i = 0; i < fields.size(); i++) {
       IndexableField field = fields.get(i);
       buffer.append(field.toString());
-      if (i != fields.size()-1)
+      if (i != fields.size()-1) {
         buffer.append(" ");
+      }
     }
     buffer.append(">");
     return buffer.toString();
@@ -306,7 +312,7 @@ public final class Document implements IndexDocument {
     return new FilterIterator<StorableField, Field>(fields.iterator()) {
       @Override
       protected boolean predicateFunction(Field field) {
-        return field.type.stored() || field.type.docValueType() != null;
+        return field.type.stored() || field.type.docValuesType() != DocValuesType.NONE;
       }
     };
   }
@@ -315,7 +321,7 @@ public final class Document implements IndexDocument {
     return new FilterIterator<IndexableField, Field>(fields.iterator()) {
       @Override
       protected boolean predicateFunction(Field field) {
-        return field.type.indexed();
+        return field.type.indexOptions() != IndexOptions.NONE;
       }
     };
   }

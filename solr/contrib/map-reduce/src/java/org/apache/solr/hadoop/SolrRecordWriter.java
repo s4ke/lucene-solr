@@ -16,18 +16,6 @@
  */
 package org.apache.solr.hadoop;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Properties;
-import java.util.Set;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.filecache.DistributedCache;
 import org.apache.hadoop.fs.FileSystem;
@@ -36,7 +24,6 @@ import org.apache.hadoop.mapreduce.RecordWriter;
 import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.TaskID;
-import org.apache.solr.hadoop.SolrOutputFormat;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.embedded.EmbeddedSolrServer;
 import org.apache.solr.common.SolrInputDocument;
@@ -48,14 +35,27 @@ import org.apache.solr.core.SolrResourceLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+
 class SolrRecordWriter<K, V> extends RecordWriter<K, V> {
   
   private static final Logger LOG = LoggerFactory.getLogger(SolrRecordWriter.class);
 
-  public final static List<String> allowedConfigDirectories = new ArrayList<String>(
+  public final static List<String> allowedConfigDirectories = new ArrayList<>(
       Arrays.asList(new String[] { "conf", "lib", "solr.xml" }));
 
-  public final static Set<String> requiredConfigDirectories = new HashSet<String>();
+  public final static Set<String> requiredConfigDirectories = new HashSet<>();
   
   static {
     requiredConfigDirectories.add("conf");
@@ -98,9 +98,9 @@ class SolrRecordWriter<K, V> extends RecordWriter<K, V> {
   private final List<SolrInputDocument> batch;
   private final int batchSize;
   private long numDocsWritten = 0;
-  private long nextLogTime = System.currentTimeMillis();
+  private long nextLogTime = System.nanoTime();
 
-  private static HashMap<TaskID, Reducer<?,?,?,?>.Context> contextMap = new HashMap<TaskID, Reducer<?,?,?,?>.Context>();
+  private static HashMap<TaskID, Reducer<?,?,?,?>.Context> contextMap = new HashMap<>();
   
   public SolrRecordWriter(TaskAttemptContext context, Path outputShardDir, int batchSize) {
     this.batchSize = batchSize;
@@ -156,7 +156,7 @@ class SolrRecordWriter<K, V> extends RecordWriter<K, V> {
     System.setProperty("solr.lock.type", "hdfs"); 
     System.setProperty("solr.hdfs.nrtcachingdirectory", "false");
     System.setProperty("solr.hdfs.blockcache.enabled", "false");
-    System.setProperty("solr.autoCommit.maxTime", "-1");
+    System.setProperty("solr.autoCommit.maxTime", "600000");
     System.setProperty("solr.autoSoftCommit.maxTime", "-1");
     
     CoreContainer container = new CoreContainer(loader);
@@ -174,8 +174,6 @@ class SolrRecordWriter<K, V> extends RecordWriter<K, V> {
           "Invalid configuration. Currently, the only DirectoryFactory supported is "
               + HdfsDirectoryFactory.class.getSimpleName());
     }
-
-    container.register(core, false);
 
     EmbeddedSolrServer solr = new EmbeddedSolrServer(container, "core1");
     return solr;
@@ -237,7 +235,7 @@ class SolrRecordWriter<K, V> extends RecordWriter<K, V> {
         } catch (InterruptedException e) {
           exitValue = "interrupted";
         }
-        System.err.format("Exit value of 'ls -lR' is %s%n", exitValue);
+        System.err.format(Locale.ENGLISH, "Exit value of 'ls -lR' is %s%n", exitValue);
       }
       if (unpackedDir.getName().equals(SolrOutputFormat.getZipName(conf))) {
         LOG.info("Using this unpacked directory as solr home: {}", unpackedDir);
@@ -266,9 +264,9 @@ class SolrRecordWriter<K, V> extends RecordWriter<K, V> {
         if (batch.size() >= batchSize) {
           batchWriter.queueBatch(batch);
           numDocsWritten += batch.size();
-          if (System.currentTimeMillis() >= nextLogTime) {
+          if (System.nanoTime() >= nextLogTime) {
             LOG.info("docsWritten: {}", numDocsWritten);
-            nextLogTime += 10000;
+            nextLogTime += TimeUnit.NANOSECONDS.convert(10, TimeUnit.SECONDS);
           }
           batch.clear();
         }

@@ -4,11 +4,9 @@ import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -28,8 +26,8 @@ import org.apache.lucene.facet.taxonomy.TaxonomyWriter;
 import org.apache.lucene.facet.taxonomy.writercache.TaxonomyWriterCache;
 import org.apache.lucene.facet.taxonomy.writercache.Cl2oTaxonomyWriterCache;
 import org.apache.lucene.facet.taxonomy.writercache.LruTaxonomyWriterCache;
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.CorruptIndexException; // javadocs
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.DocsEnum;
@@ -49,7 +47,6 @@ import org.apache.lucene.store.LockObtainFailedException; // javadocs
 import org.apache.lucene.store.NativeFSLockFactory;
 import org.apache.lucene.store.SimpleFSLockFactory;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.Version;
 
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
@@ -134,8 +131,7 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
 
   /** Reads the commit data from a Directory. */
   private static Map<String, String> readCommitData(Directory dir) throws IOException {
-    SegmentInfos infos = new SegmentInfos();
-    infos.read(dir);
+    SegmentInfos infos = SegmentInfos.readLatestCommit(dir);
     return infos.getUserData();
   }
   
@@ -280,13 +276,12 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
    * @param openMode see {@link OpenMode}
    */
   protected IndexWriterConfig createIndexWriterConfig(OpenMode openMode) {
-    // TODO: should we use a more optimized Codec, e.g. Pulsing (or write custom)?
+    // TODO: should we use a more optimized Codec?
     // The taxonomy has a unique structure, where each term is associated with one document
 
-    // :Post-Release-Update-Version.LUCENE_XY:
     // Make sure we use a MergePolicy which always merges adjacent segments and thus
     // keeps the doc IDs ordered as well (this is crucial for the taxonomy index).
-    return new IndexWriterConfig(Version.LUCENE_50, null).setOpenMode(openMode).setMergePolicy(
+    return new IndexWriterConfig(null).setOpenMode(openMode).setMergePolicy(
         new LogByteSizeMergePolicy());
   }
   
@@ -340,12 +335,12 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
   public synchronized void close() throws IOException {
     if (!isClosed) {
       commit();
+      indexWriter.close();
       doClose();
     }
   }
   
   private void doClose() throws IOException {
-    indexWriter.close();
     isClosed = true;
     closeResources();
   }
@@ -409,7 +404,7 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
       final BytesRef catTerm = new BytesRef(FacetsConfig.pathToString(categoryPath.components, categoryPath.length));
       TermsEnum termsEnum = null; // reuse
       DocsEnum docs = null; // reuse
-      for (AtomicReaderContext ctx : reader.leaves()) {
+      for (LeafReaderContext ctx : reader.leaves()) {
         Terms terms = ctx.reader().terms(Consts.FULL);
         if (terms != null) {
           termsEnum = terms.iterator(termsEnum);
@@ -620,7 +615,7 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
 
   /** Combine original user data with the taxonomy epoch. */
   private Map<String,String> combinedCommitData(Map<String,String> commitData) {
-    Map<String,String> m = new HashMap<String, String>();
+    Map<String,String> m = new HashMap<>();
     if (commitData != null) {
       m.putAll(commitData);
     }
@@ -702,7 +697,7 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
     try {
       TermsEnum termsEnum = null;
       DocsEnum docsEnum = null;
-      for (AtomicReaderContext ctx : reader.leaves()) {
+      for (LeafReaderContext ctx : reader.leaves()) {
         Terms terms = ctx.reader().terms(Consts.FULL);
         if (terms != null) { // cannot really happen, but be on the safe side
           termsEnum = terms.iterator(termsEnum);
@@ -798,8 +793,8 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
       int base = 0;
       TermsEnum te = null;
       DocsEnum docs = null;
-      for (final AtomicReaderContext ctx : r.leaves()) {
-        final AtomicReader ar = ctx.reader();
+      for (final LeafReaderContext ctx : r.leaves()) {
+        final LeafReader ar = ctx.reader();
         final Terms terms = ar.terms(Consts.FULL);
         te = terms.iterator(te);
         while (te.next() != null) {
@@ -892,14 +887,14 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
    * {@link OrdinalMap} maintained on file system
    */
   public static final class DiskOrdinalMap implements OrdinalMap {
-    File tmpfile;
+    Path tmpfile;
     DataOutputStream out;
 
     /** Sole constructor. */
-    public DiskOrdinalMap(File tmpfile) throws FileNotFoundException {
+    public DiskOrdinalMap(Path tmpfile) throws IOException {
       this.tmpfile = tmpfile;
       out = new DataOutputStream(new BufferedOutputStream(
-          new FileOutputStream(tmpfile)));
+          Files.newOutputStream(tmpfile)));
     }
 
     @Override
@@ -930,7 +925,7 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
       }
       addDone(); // in case this wasn't previously called
       DataInputStream in = new DataInputStream(new BufferedInputStream(
-          new FileInputStream(tmpfile)));
+          Files.newInputStream(tmpfile)));
       map = new int[in.readInt()];
       // NOTE: The current code assumes here that the map is complete,
       // i.e., every ordinal gets one and exactly one value. Otherwise,
@@ -941,10 +936,10 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
         map[origordinal] = newordinal;
       }
       in.close();
+
       // Delete the temporary file, which is no longer needed.
-      if (!tmpfile.delete()) {
-        tmpfile.deleteOnExit();
-      }
+      Files.delete(tmpfile);
+
       return map;
     }
   }

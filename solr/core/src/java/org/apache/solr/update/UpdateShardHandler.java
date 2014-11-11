@@ -23,6 +23,7 @@ import java.util.concurrent.Executors;
 import org.apache.http.client.HttpClient;
 import org.apache.http.conn.ClientConnectionManager;
 import org.apache.http.impl.conn.PoolingClientConnectionManager;
+import org.apache.http.impl.conn.SchemeRegistryFactory;
 import org.apache.solr.client.solrj.impl.HttpClientUtil;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.ModifiableSolrParams;
@@ -45,15 +46,22 @@ public class UpdateShardHandler {
 
   public UpdateShardHandler(ConfigSolr cfg) {
     
-    clientConnectionManager = new PoolingClientConnectionManager();
-    clientConnectionManager.setDefaultMaxPerRoute(cfg.getMaxUpdateConnections());
-    clientConnectionManager.setDefaultMaxPerRoute(cfg.getMaxUpdateConnectionsPerHost());
+    clientConnectionManager = new PoolingClientConnectionManager(SchemeRegistryFactory.createSystemDefault());
+    if (cfg != null ) {
+      clientConnectionManager.setMaxTotal(cfg.getMaxUpdateConnections());
+      clientConnectionManager.setDefaultMaxPerRoute(cfg.getMaxUpdateConnectionsPerHost());
+    }
     
     
     ModifiableSolrParams params = new ModifiableSolrParams();
-    params.set(HttpClientUtil.PROP_SO_TIMEOUT, cfg.getDistributedSocketTimeout());
-    params.set(HttpClientUtil.PROP_CONNECTION_TIMEOUT, cfg.getDistributedConnectionTimeout());
+    if (cfg != null) {
+      params.set(HttpClientUtil.PROP_SO_TIMEOUT,
+          cfg.getDistributedSocketTimeout());
+      params.set(HttpClientUtil.PROP_CONNECTION_TIMEOUT,
+          cfg.getDistributedConnectionTimeout());
+    }
     params.set(HttpClientUtil.PROP_USE_RETRY, false);
+    log.info("Creating UpdateShardHandler HTTP client with params: {}", params);
     client = HttpClientUtil.createClient(params, clientConnectionManager);
   }
   

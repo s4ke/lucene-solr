@@ -23,12 +23,12 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * 
@@ -53,7 +53,7 @@ public class TestOmitPositions extends LuceneTestCase {
     
     assertNull(MultiFields.getTermPositionsEnum(reader, null, "foo", new BytesRef("test")));
     
-    DocsEnum de = _TestUtil.docs(random(), reader, "foo", new BytesRef("test"), null, null, DocsEnum.FLAG_FREQS);
+    DocsEnum de = TestUtil.docs(random(), reader, "foo", new BytesRef("test"), null, null, DocsEnum.FLAG_FREQS);
     while (de.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
       assertEquals(2, de.freq());
     }
@@ -67,12 +67,12 @@ public class TestOmitPositions extends LuceneTestCase {
   public void testPositions() throws Exception {
     Directory ram = newDirectory();
     Analyzer analyzer = new MockAnalyzer(random());
-    IndexWriter writer = new IndexWriter(ram, newIndexWriterConfig( TEST_VERSION_CURRENT, analyzer));
+    IndexWriter writer = new IndexWriter(ram, newIndexWriterConfig(analyzer));
     Document d = new Document();
         
     // f1,f2,f3: docs only
     FieldType ft = new FieldType(TextField.TYPE_NOT_STORED);
-    ft.setIndexOptions(IndexOptions.DOCS_ONLY);
+    ft.setIndexOptions(IndexOptions.DOCS);
     
     Field f1 = newField("f1", "This field has docs only", ft);
     d.add(f1);
@@ -156,19 +156,19 @@ public class TestOmitPositions extends LuceneTestCase {
     SegmentReader reader = getOnlySegmentReader(DirectoryReader.open(ram));
     FieldInfos fi = reader.getFieldInfos();
     // docs + docs = docs
-    assertEquals(IndexOptions.DOCS_ONLY, fi.fieldInfo("f1").getIndexOptions());
+    assertEquals(IndexOptions.DOCS, fi.fieldInfo("f1").getIndexOptions());
     // docs + docs/freqs = docs
-    assertEquals(IndexOptions.DOCS_ONLY, fi.fieldInfo("f2").getIndexOptions());
+    assertEquals(IndexOptions.DOCS, fi.fieldInfo("f2").getIndexOptions());
     // docs + docs/freqs/pos = docs
-    assertEquals(IndexOptions.DOCS_ONLY, fi.fieldInfo("f3").getIndexOptions());
+    assertEquals(IndexOptions.DOCS, fi.fieldInfo("f3").getIndexOptions());
     // docs/freqs + docs = docs
-    assertEquals(IndexOptions.DOCS_ONLY, fi.fieldInfo("f4").getIndexOptions());
+    assertEquals(IndexOptions.DOCS, fi.fieldInfo("f4").getIndexOptions());
     // docs/freqs + docs/freqs = docs/freqs
     assertEquals(IndexOptions.DOCS_AND_FREQS, fi.fieldInfo("f5").getIndexOptions());
     // docs/freqs + docs/freqs/pos = docs/freqs
     assertEquals(IndexOptions.DOCS_AND_FREQS, fi.fieldInfo("f6").getIndexOptions());
     // docs/freqs/pos + docs = docs
-    assertEquals(IndexOptions.DOCS_ONLY, fi.fieldInfo("f7").getIndexOptions());
+    assertEquals(IndexOptions.DOCS, fi.fieldInfo("f7").getIndexOptions());
     // docs/freqs/pos + docs/freqs = docs/freqs
     assertEquals(IndexOptions.DOCS_AND_FREQS, fi.fieldInfo("f8").getIndexOptions());
     // docs/freqs/pos + docs/freqs/pos = docs/freqs/pos
@@ -189,9 +189,14 @@ public class TestOmitPositions extends LuceneTestCase {
   // Verifies no *.prx exists when all fields omit term positions:
   public void testNoPrxFile() throws Throwable {
     Directory ram = newDirectory();
+    if (ram instanceof MockDirectoryWrapper) {
+      // we verify some files get deleted
+      ((MockDirectoryWrapper)ram).setEnableVirusScanner(false);
+    }
     Analyzer analyzer = new MockAnalyzer(random());
-    IndexWriter writer = new IndexWriter(ram, newIndexWriterConfig(
-                                                                   TEST_VERSION_CURRENT, analyzer).setMaxBufferedDocs(3).setMergePolicy(newLogMergePolicy()));
+    IndexWriter writer = new IndexWriter(ram, newIndexWriterConfig(analyzer)
+                                                .setMaxBufferedDocs(3)
+                                                .setMergePolicy(newLogMergePolicy()));
     LogMergePolicy lmp = (LogMergePolicy) writer.getConfig().getMergePolicy();
     lmp.setMergeFactor(2);
     lmp.setNoCFSRatio(0.0);

@@ -58,7 +58,7 @@ public class StressRamUsageEstimator extends LuceneTestCase {
       while (true) {
         // Check the current memory consumption and provide the estimate.
         long jvmUsed = memoryMXBean.getHeapMemoryUsage().getUsed(); 
-        long estimated = RamUsageEstimator.sizeOf(first);
+        long estimated = RamUsageTester.sizeOf(first);
         System.out.println(String.format(Locale.ROOT, "%10d, %10d",
             jvmUsed, estimated));
 
@@ -149,11 +149,11 @@ public class StressRamUsageEstimator extends LuceneTestCase {
    */
   private void causeGc() {
     List<GarbageCollectorMXBean> garbageCollectorMXBeans = ManagementFactory.getGarbageCollectorMXBeans();
-    List<Long> ccounts = new ArrayList<Long>();
+    List<Long> ccounts = new ArrayList<>();
     for (GarbageCollectorMXBean g : garbageCollectorMXBeans) {
       ccounts.add(g.getCollectionCount());
     }
-    List<Long> ccounts2 = new ArrayList<Long>();
+    List<Long> ccounts2 = new ArrayList<>();
     do {
       System.gc();
       ccounts.clear();

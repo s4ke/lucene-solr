@@ -20,9 +20,9 @@ package org.apache.lucene.search;
 import java.io.IOException;
 import java.util.*;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.DocsAndPositionsEnum;
-import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.DocsEnum;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexReaderContext;
@@ -50,15 +50,20 @@ import org.apache.lucene.util.ToStringUtils;
  */
 public class MultiPhraseQuery extends Query {
   private String field;
-  private ArrayList<Term[]> termArrays = new ArrayList<Term[]>();
-  private ArrayList<Integer> positions = new ArrayList<Integer>();
+  private ArrayList<Term[]> termArrays = new ArrayList<>();
+  private ArrayList<Integer> positions = new ArrayList<>();
 
   private int slop = 0;
 
   /** Sets the phrase slop for this query.
    * @see PhraseQuery#setSlop(int)
    */
-  public void setSlop(int s) { slop = s; }
+  public void setSlop(int s) {
+    if (s < 0) {
+      throw new IllegalArgumentException("slop value cannot be negative");
+    }
+    slop = s; 
+  }
 
   /** Sets the phrase slop for this query.
    * @see PhraseQuery#getSlop()
@@ -136,7 +141,7 @@ public class MultiPhraseQuery extends Query {
   private class MultiPhraseWeight extends Weight {
     private final Similarity similarity;
     private final Similarity.SimWeight stats;
-    private final Map<Term,TermContext> termContexts = new HashMap<Term,TermContext>();
+    private final Map<Term,TermContext> termContexts = new HashMap<>();
 
     public MultiPhraseWeight(IndexSearcher searcher)
       throws IOException {
@@ -144,7 +149,7 @@ public class MultiPhraseQuery extends Query {
       final IndexReaderContext context = searcher.getTopReaderContext();
       
       // compute idf
-      ArrayList<TermStatistics> allTermStats = new ArrayList<TermStatistics>();
+      ArrayList<TermStatistics> allTermStats = new ArrayList<>();
       for(final Term[] terms: termArrays) {
         for (Term term: terms) {
           TermContext termContext = termContexts.get(term);
@@ -174,10 +179,9 @@ public class MultiPhraseQuery extends Query {
     }
 
     @Override
-    public Scorer scorer(AtomicReaderContext context, boolean scoreDocsInOrder,
-        boolean topScorer, Bits acceptDocs) throws IOException {
+    public Scorer scorer(LeafReaderContext context, Bits acceptDocs) throws IOException {
       assert !termArrays.isEmpty();
-      final AtomicReader reader = context.reader();
+      final LeafReader reader = context.reader();
       final Bits liveDocs = acceptDocs;
       
       PhraseQuery.PostingsAndFreq[] postingsFreqs = new PhraseQuery.PostingsAndFreq[termArrays.size()];
@@ -245,20 +249,15 @@ public class MultiPhraseQuery extends Query {
       }
 
       if (slop == 0) {
-        ExactPhraseScorer s = new ExactPhraseScorer(this, postingsFreqs, similarity.simScorer(stats, context));
-        if (s.noDocs) {
-          return null;
-        } else {
-          return s;
-        }
+        return new ExactPhraseScorer(this, postingsFreqs, similarity.simScorer(stats, context));
       } else {
         return new SloppyPhraseScorer(this, postingsFreqs, slop, similarity.simScorer(stats, context));
       }
     }
 
     @Override
-    public Explanation explain(AtomicReaderContext context, int doc) throws IOException {
-      Scorer scorer = scorer(context, true, false, context.reader().getLiveDocs());
+    public Explanation explain(LeafReaderContext context, int doc) throws IOException {
+      Scorer scorer = scorer(context, context.reader().getLiveDocs());
       if (scorer != null) {
         int newDoc = scorer.advance(doc);
         if (newDoc == doc) {
@@ -468,14 +467,14 @@ class UnionDocsAndPositionsEnum extends DocsAndPositionsEnum {
     }
   }
 
-  private int _doc;
+  private int _doc = -1;
   private int _freq;
   private DocsQueue _queue;
   private IntQueue _posList;
   private long cost;
 
-  public UnionDocsAndPositionsEnum(Bits liveDocs, AtomicReaderContext context, Term[] terms, Map<Term,TermContext> termContexts, TermsEnum termsEnum) throws IOException {
-    List<DocsAndPositionsEnum> docsEnums = new LinkedList<DocsAndPositionsEnum>();
+  public UnionDocsAndPositionsEnum(Bits liveDocs, LeafReaderContext context, Term[] terms, Map<Term,TermContext> termContexts, TermsEnum termsEnum) throws IOException {
+    List<DocsAndPositionsEnum> docsEnums = new LinkedList<>();
     for (int i = 0; i < terms.length; i++) {
       final Term term = terms[i];
       TermState termState = termContexts.get(term).get(context.ord);

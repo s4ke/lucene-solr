@@ -19,7 +19,7 @@ package org.apache.lucene.classification;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
-import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.MultiFields;
 import org.apache.lucene.index.StorableField;
 import org.apache.lucene.index.StoredDocument;
@@ -33,13 +33,15 @@ import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.WildcardQuery;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.util.BytesRefBuilder;
+import org.apache.lucene.util.IntsRefBuilder;
 import org.apache.lucene.util.fst.Builder;
 import org.apache.lucene.util.fst.FST;
 import org.apache.lucene.util.fst.PositiveIntOutputs;
 import org.apache.lucene.util.fst.Util;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 import java.util.SortedMap;
 import java.util.TreeMap;
@@ -77,7 +79,7 @@ public class BooleanPerceptronClassifier implements Classifier<Boolean> {
   /**
    * Default constructor, no batch updates of FST, perceptron threshold is
    * calculated via underlying index metrics during
-   * {@link #train(org.apache.lucene.index.AtomicReader, String, String, org.apache.lucene.analysis.Analyzer)
+   * {@link #train(org.apache.lucene.index.LeafReader, String, String, org.apache.lucene.analysis.Analyzer)
    * training}
    */
   public BooleanPerceptronClassifier() {
@@ -115,23 +117,21 @@ public class BooleanPerceptronClassifier implements Classifier<Boolean> {
    * {@inheritDoc}
    */
   @Override
-  public void train(AtomicReader atomicReader, String textFieldName,
+  public void train(LeafReader leafReader, String textFieldName,
                     String classFieldName, Analyzer analyzer) throws IOException {
-    train(atomicReader, textFieldName, classFieldName, analyzer, null);
+    train(leafReader, textFieldName, classFieldName, analyzer, null);
   }
 
   /**
    * {@inheritDoc}
    */
   @Override
-  public void train(AtomicReader atomicReader, String textFieldName,
+  public void train(LeafReader leafReader, String textFieldName,
       String classFieldName, Analyzer analyzer, Query query) throws IOException {
-    this.textTerms = MultiFields.getTerms(atomicReader, textFieldName);
+    this.textTerms = MultiFields.getTerms(leafReader, textFieldName);
 
     if (textTerms == null) {
-      throw new IOException(new StringBuilder(
-          "term vectors need to be available for field ").append(textFieldName)
-          .toString());
+      throw new IOException("term vectors need to be available for field " + textFieldName);
     }
 
     this.analyzer = analyzer;
@@ -139,7 +139,7 @@ public class BooleanPerceptronClassifier implements Classifier<Boolean> {
 
     if (threshold == null || threshold == 0d) {
       // automatic assign a threshold
-      long sumDocFreq = atomicReader.getSumDocFreq(textFieldName);
+      long sumDocFreq = leafReader.getSumDocFreq(textFieldName);
       if (sumDocFreq != -1) {
         this.threshold = (double) sumDocFreq / 2d;
       } else {
@@ -159,7 +159,7 @@ public class BooleanPerceptronClassifier implements Classifier<Boolean> {
     }
     updateFST(weights);
 
-    IndexSearcher indexSearcher = new IndexSearcher(atomicReader);
+    IndexSearcher indexSearcher = new IndexSearcher(leafReader);
 
     int batchCount = 0;
 
@@ -184,7 +184,7 @@ public class BooleanPerceptronClassifier implements Classifier<Boolean> {
       Boolean correctClass = Boolean.valueOf(field.stringValue());
       long modifier = correctClass.compareTo(assignedClass);
       if (modifier != 0) {
-        reuse = updateWeights(atomicReader, reuse, scoreDoc.doc, assignedClass,
+        reuse = updateWeights(leafReader, reuse, scoreDoc.doc, assignedClass,
             weights, modifier, batchCount % batchSize == 0);
       }
       batchCount++;
@@ -193,17 +193,17 @@ public class BooleanPerceptronClassifier implements Classifier<Boolean> {
   }
 
   @Override
-  public void train(AtomicReader atomicReader, String[] textFieldNames, String classFieldName, Analyzer analyzer, Query query) throws IOException {
+  public void train(LeafReader leafReader, String[] textFieldNames, String classFieldName, Analyzer analyzer, Query query) throws IOException {
     throw new IOException("training with multiple fields not supported by boolean perceptron classifier");
   }
 
-  private TermsEnum updateWeights(AtomicReader atomicReader, TermsEnum reuse,
+  private TermsEnum updateWeights(LeafReader leafReader, TermsEnum reuse,
       int docId, Boolean assignedClass, SortedMap<String,Double> weights,
       double modifier, boolean updateFST) throws IOException {
     TermsEnum cte = textTerms.iterator(reuse);
 
     // get the doc term vectors
-    Terms terms = atomicReader.getTermVector(docId, textFieldName);
+    Terms terms = leafReader.getTermVector(docId, textFieldName);
 
     if (terms == null) {
       throw new IOException("term vectors must be stored for field "
@@ -234,14 +234,32 @@ public class BooleanPerceptronClassifier implements Classifier<Boolean> {
   private void updateFST(SortedMap<String,Double> weights) throws IOException {
     PositiveIntOutputs outputs = PositiveIntOutputs.getSingleton();
     Builder<Long> fstBuilder = new Builder<>(FST.INPUT_TYPE.BYTE1, outputs);
-    BytesRef scratchBytes = new BytesRef();
-    IntsRef scratchInts = new IntsRef();
+    BytesRefBuilder scratchBytes = new BytesRefBuilder();
+    IntsRefBuilder scratchInts = new IntsRefBuilder();
     for (Map.Entry<String,Double> entry : weights.entrySet()) {
       scratchBytes.copyChars(entry.getKey());
-      fstBuilder.add(Util.toIntsRef(scratchBytes, scratchInts), entry
+      fstBuilder.add(Util.toIntsRef(scratchBytes.get(), scratchInts), entry
           .getValue().longValue());
     }
     fst = fstBuilder.finish();
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public List<ClassificationResult<BytesRef>> getClasses(String text)
+      throws IOException {
+    return null;
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public List<ClassificationResult<BytesRef>> getClasses(String text, int max)
+      throws IOException {
+    return null;
   }
 
 }

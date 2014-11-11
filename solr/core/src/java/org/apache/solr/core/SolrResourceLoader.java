@@ -33,6 +33,7 @@ import org.apache.solr.handler.component.SearchComponent;
 import org.apache.solr.handler.component.ShardHandlerFactory;
 import org.apache.solr.request.SolrRequestHandler;
 import org.apache.solr.response.QueryResponseWriter;
+import org.apache.solr.rest.RestManager;
 import org.apache.solr.schema.FieldType;
 import org.apache.solr.schema.ManagedIndexSchemaFactory;
 import org.apache.solr.schema.SimilarityFactory;
@@ -47,12 +48,15 @@ import javax.naming.Context;
 import javax.naming.InitialContext;
 import javax.naming.NamingException;
 import javax.naming.NoInitialContextException;
+
 import java.io.Closeable;
 import java.io.File;
 import java.io.FileFilter;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStreamWriter;
 import java.lang.reflect.Constructor;
 import java.net.MalformedURLException;
 import java.net.URI;
@@ -60,6 +64,7 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -79,7 +84,11 @@ public class SolrResourceLoader implements ResourceLoader,Closeable
 
   static final String project = "solr";
   static final String base = "org.apache" + "." + project;
-  static final String[] packages = {"","analysis.","schema.","handler.","search.","update.","core.","response.","request.","update.processor.","util.", "spelling.", "handler.component.", "handler.dataimport.", "spelling.suggest.", "spelling.suggest.fst." };
+  static final String[] packages = {
+      "", "analysis.", "schema.", "handler.", "search.", "update.", "core.", "response.", "request.",
+      "update.processor.", "util.", "spelling.", "handler.component.", "handler.dataimport.",
+      "spelling.suggest.", "spelling.suggest.fst.", "rest.schema.analysis."
+  };
 
   protected URLClassLoader classLoader;
   private final String instanceDir;
@@ -88,13 +97,26 @@ public class SolrResourceLoader implements ResourceLoader,Closeable
   private final List<SolrCoreAware> waitingForCore = Collections.synchronizedList(new ArrayList<SolrCoreAware>());
   private final List<SolrInfoMBean> infoMBeans = Collections.synchronizedList(new ArrayList<SolrInfoMBean>());
   private final List<ResourceLoaderAware> waitingForResources = Collections.synchronizedList(new ArrayList<ResourceLoaderAware>());
-  private static final Charset UTF_8 = Charset.forName("UTF-8");
+  private static final Charset UTF_8 = StandardCharsets.UTF_8;
 
   //TODO: Solr5. Remove this completely when you obsolete putting <core> tags in solr.xml (See Solr-4196)
   private final Properties coreProperties;
 
   private volatile boolean live;
-
+  
+  // Provide a registry so that managed resources can register themselves while the XML configuration
+  // documents are being parsed ... after all are registered, they are asked by the RestManager to
+  // initialize themselves. This two-step process is required because not all resources are available
+  // (such as the SolrZkClient) when XML docs are being parsed.    
+  private RestManager.Registry managedResourceRegistry;
+  
+  public synchronized RestManager.Registry getManagedResourceRegistry() {
+    if (managedResourceRegistry == null) {
+      managedResourceRegistry = new RestManager.Registry();      
+    }
+    return managedResourceRegistry; 
+  }
+  
   /**
    * <p>
    * This loader will delegate to the context classloader when possible,
@@ -390,7 +412,7 @@ public class SolrResourceLoader implements ResourceLoader,Closeable
   /*
    * A static map of short class name to fully qualified class name 
    */
-  private static final Map<String, String> classNameCache = new ConcurrentHashMap<String, String>();
+  private static final Map<String, String> classNameCache = new ConcurrentHashMap<>();
 
   // Using this pattern, legacy analysis components from previous Solr versions are identified and delegated to SPI loader:
   private static final Pattern legacyAnalysisPattern = 
@@ -742,7 +764,7 @@ public class SolrResourceLoader implements ResourceLoader,Closeable
    */
   private static final Map<Class, Class[]> awareCompatibility;
   static {
-    awareCompatibility = new HashMap<Class, Class[]>();
+    awareCompatibility = new HashMap<>();
     awareCompatibility.put( 
       SolrCoreAware.class, new Class[] {
         CodecFactory.class,
@@ -795,5 +817,40 @@ public class SolrResourceLoader implements ResourceLoader,Closeable
   @Override
   public void close() throws IOException {
     IOUtils.close(classLoader);
+  }
+  public List<SolrInfoMBean> getInfoMBeans(){
+    return Collections.unmodifiableList(infoMBeans);
+  }
+
+
+  public static void persistConfLocally(SolrResourceLoader loader, String resourceName, byte[] content) {
+    // Persist locally
+    File managedSchemaFile = new File(loader.getConfigDir(), resourceName);
+    OutputStreamWriter writer = null;
+    try {
+      File parentDir = managedSchemaFile.getParentFile();
+      if ( ! parentDir.isDirectory()) {
+        if ( ! parentDir.mkdirs()) {
+          final String msg = "Can't create managed schema directory " + parentDir.getAbsolutePath();
+          log.error(msg);
+          throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, msg);
+        }
+      }
+      final FileOutputStream out = new FileOutputStream(managedSchemaFile);
+      out.write(content);
+      log.info("Upgraded to managed schema at " + managedSchemaFile.getPath());
+    } catch (IOException e) {
+      final String msg = "Error persisting managed schema " + managedSchemaFile;
+      log.error(msg, e);
+      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, msg, e);
+    } finally {
+      org.apache.commons.io.IOUtils.closeQuietly(writer);
+      try {
+        FileUtils.sync(managedSchemaFile);
+      } catch (IOException e) {
+        final String msg = "Error syncing the managed schema file " + managedSchemaFile;
+        log.error(msg, e);
+      }
+    }
   }
 }

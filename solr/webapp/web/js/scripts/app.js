@@ -144,6 +144,8 @@ var sammy = $.sammy
 
           this.active_core = active_element;
         }
+
+        check_fixed_menu();
       }
     );
   }
@@ -281,29 +283,48 @@ var solr_admin = function( app_config )
         .css( 'width', ( selector_width - 2 ) + 'px' );
     }
 
-    if( cores.initFailures )
-    {
-      var failures = [];
-      for( var core_name in cores.initFailures )
-      {
-        failures.push
-        (
-          '<li>' +
-            '<strong>' + core_name.esc() + ':</strong>' + "\n" +
-            cores.initFailures[core_name].esc() + "\n" +
-          '</li>'
-        );
-      }
-
-      if( 0 !== failures.length )
-      {
-        var init_failures = $( '#init-failures' );
-
-        init_failures.show();
-        $( 'ul', init_failures ).html( failures.join( "\n" ) );
-      }
-    }
+    this.check_for_init_failures( cores );
   };
+
+  this.remove_init_failures = function remove_init_failures()
+  {
+    $( '#init-failures' )
+      .hide()
+      .find( 'ul' )
+        .empty();
+  }
+
+  this.check_for_init_failures = function check_for_init_failures( cores )
+  {
+    if( !cores.initFailures )
+    {
+      this.remove_init_failures();
+      return false;
+    }
+
+    var failures = [];
+    for( var core_name in cores.initFailures )
+    {
+      failures.push
+      (
+        '<li>' +
+          '<strong>' + core_name.esc() + ':</strong>' + "\n" +
+          cores.initFailures[core_name].esc() + "\n" +
+        '</li>'
+      );
+    }
+
+    if( 0 === failures.length )
+    {
+      this.remove_init_failures();
+      return false;
+    }
+
+    $( '#init-failures' )
+      .show()
+      .find( 'ul' )
+        .html( failures.join( "\n" ) );
+  }
 
   this.run = function()
   {
@@ -383,6 +404,9 @@ var solr_admin = function( app_config )
                 }
               }
             );
+
+          check_fixed_menu();
+          $( window ).resize( check_fixed_menu );
 
           var system_url = config.solr_path + '/admin/info/system?wt=json';
           $.ajax
@@ -574,6 +598,11 @@ var solr_admin = function( app_config )
       sep[ browser.locale ] || sep[ browser.language ] || sep['_']
     );
   };
+
+  check_fixed_menu = function check_fixed_menu()
+  {
+    $( '#wrapper' ).toggleClass( 'scroll', $( window ).height() < $( '#menu-wrapper' ).height() + $( '#header' ).height() + 40 );
+  }
 
 };
 

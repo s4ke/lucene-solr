@@ -41,9 +41,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.apache.solr.cloud.OverseerCollectionProcessor.MAX_SHARDS_PER_NODE;
 import static org.apache.solr.cloud.OverseerCollectionProcessor.NUM_SLICES;
-import static org.apache.solr.cloud.OverseerCollectionProcessor.REPLICATION_FACTOR;
+import static org.apache.solr.common.cloud.ZkStateReader.REPLICATION_FACTOR;
+import static org.apache.solr.common.cloud.ZkStateReader.MAX_SHARDS_PER_NODE;
 
 public class MigrateRouteKeyTest extends BasicDistributedZkTest {
 
@@ -90,6 +90,10 @@ public class MigrateRouteKeyTest extends BasicDistributedZkTest {
   public void doTest() throws Exception {
     waitForThingsToLevelOut(15);
 
+    if (usually()) {
+      log.info("Using legacyCloud=false for cluster");
+      CollectionsAPIDistributedZkTest.setClusterProp(cloudClient, "legacyCloud", "false");
+    }
     multipleShardMigrateTest();
     printLayout();
   }
@@ -114,7 +118,7 @@ public class MigrateRouteKeyTest extends BasicDistributedZkTest {
     return ruleRemoved;
   }
 
-  private void invokeMigrateApi(String sourceCollection, String splitKey, String targetCollection) throws SolrServerException, IOException {
+  protected void invokeMigrateApi(String sourceCollection, String splitKey, String targetCollection) throws SolrServerException, IOException {
     ModifiableSolrParams params = new ModifiableSolrParams();
     params.set("action", CollectionParams.CollectionAction.MIGRATE.toString());
     params.set("collection", sourceCollection);
@@ -125,7 +129,7 @@ public class MigrateRouteKeyTest extends BasicDistributedZkTest {
     invoke(params);
   }
 
-  private void invoke(ModifiableSolrParams params) throws SolrServerException, IOException {
+  protected void invoke(ModifiableSolrParams params) throws SolrServerException, IOException {
     SolrRequest request = new QueryRequest(params);
     request.setPath("/admin/collections");
 
@@ -141,7 +145,7 @@ public class MigrateRouteKeyTest extends BasicDistributedZkTest {
   }
 
   private void createCollection(String targetCollection) throws Exception {
-    HashMap<String, List<Integer>> collectionInfos = new HashMap<String, List<Integer>>();
+    HashMap<String, List<Integer>> collectionInfos = new HashMap<>();
     CloudSolrServer client = null;
     try {
       client = createCloudClient(null);
@@ -161,7 +165,7 @@ public class MigrateRouteKeyTest extends BasicDistributedZkTest {
     waitForRecoveriesToFinish(targetCollection, false);
   }
 
-  private void multipleShardMigrateTest() throws Exception  {
+  protected void multipleShardMigrateTest() throws Exception  {
     del("*:*");
     commit();
     assertTrue(cloudClient.query(new SolrQuery("*:*")).getResults().getNumFound() == 0);
@@ -214,6 +218,8 @@ public class MigrateRouteKeyTest extends BasicDistributedZkTest {
     QueryResponse response = collectionClient.query(solrQuery);
     log.info("Response from target collection: " + response);
     assertEquals("DocCount on target collection does not match", splitKeyCount[0], response.getResults().getNumFound());
+    collectionClient.shutdown();
+    collectionClient = null;
 
     getCommonCloudSolrServer().getZkStateReader().updateClusterState(true);
     ClusterState state = getCommonCloudSolrServer().getZkStateReader().getClusterState();

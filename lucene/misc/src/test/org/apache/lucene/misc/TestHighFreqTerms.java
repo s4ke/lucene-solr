@@ -28,7 +28,7 @@ import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 
@@ -42,11 +42,11 @@ public class TestHighFreqTerms extends LuceneTestCase {
   public static void setUpClass() throws Exception {
     dir = newDirectory();
     writer = new IndexWriter(dir, newIndexWriterConfig(random(),
-       TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false))
+       new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false))
        .setMaxBufferedDocs(2));
     indexDocs(writer);
     reader = DirectoryReader.open(dir);
-    _TestUtil.checkIndex(dir);
+    TestUtil.checkIndex(dir);
   }
   
   @AfterClass

@@ -35,7 +35,7 @@ public class SimpleQQParser implements QualityQueryParser {
 
   private String qqNames[];
   private String indexField;
-  ThreadLocal<QueryParser> queryParser = new ThreadLocal<QueryParser>();
+  ThreadLocal<QueryParser> queryParser = new ThreadLocal<>();
 
   /**
    * Constructor of a simple qq parser.
@@ -63,7 +63,7 @@ public class SimpleQQParser implements QualityQueryParser {
   public Query parse(QualityQuery qq) throws ParseException {
     QueryParser qp = queryParser.get();
     if (qp==null) {
-      qp = new QueryParser(Version.LUCENE_CURRENT, indexField, new StandardAnalyzer(Version.LUCENE_CURRENT));
+      qp = new QueryParser(indexField, new StandardAnalyzer());
       queryParser.set(qp);
     }
     BooleanQuery bq = new BooleanQuery();

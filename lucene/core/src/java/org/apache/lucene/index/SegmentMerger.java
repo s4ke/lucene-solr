@@ -18,18 +18,16 @@ package org.apache.lucene.index;
  */
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.DocValuesConsumer;
-import org.apache.lucene.codecs.FieldInfosWriter;
+import org.apache.lucene.codecs.FieldsConsumer;
+import org.apache.lucene.codecs.NormsConsumer;
 import org.apache.lucene.codecs.StoredFieldsWriter;
 import org.apache.lucene.codecs.TermVectorsWriter;
-import org.apache.lucene.index.FieldInfo.DocValuesType;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
-import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.InfoStream;
 
@@ -47,18 +45,26 @@ final class SegmentMerger {
   
   private final IOContext context;
   
-  private final MergeState mergeState;
+  final MergeState mergeState;
   private final FieldInfos.Builder fieldInfosBuilder;
 
   // note, just like in codec apis Directory 'dir' is NOT the same as segmentInfo.dir!!
-  SegmentMerger(List<AtomicReader> readers, SegmentInfo segmentInfo, InfoStream infoStream, Directory dir,
+  SegmentMerger(List<LeafReader> readers, SegmentInfo segmentInfo, InfoStream infoStream, Directory dir,
                 MergeState.CheckAbort checkAbort, FieldInfos.FieldNumbers fieldNumbers, IOContext context) throws IOException {
+    // validate incoming readers
+    for (LeafReader reader : readers) {
+      if ((reader instanceof SegmentReader) == false) {
+        // We only validate foreign readers up front: each index component
+        // calls .checkIntegrity itself for each incoming producer
+        reader.checkIntegrity();
+      }
+    }
+
     mergeState = new MergeState(readers, segmentInfo, infoStream, checkAbort);
     directory = dir;
     this.codec = segmentInfo.getCodec();
     this.context = context;
     this.fieldInfosBuilder = new FieldInfos.Builder(fieldNumbers);
-    mergeState.segmentInfo.setDocCount(setDocMaps());
   }
   
   /** True if any merging should happen */
@@ -81,9 +87,8 @@ final class SegmentMerger {
     // method that will spend alot of time.  The frequency
     // of this check impacts how long
     // IndexWriter.close(false) takes to actually stop the
-    // threads.
+    // background merge threads.
     mergeFieldInfos();
-    setMatchingSegmentReaders();
     long t0 = 0;
     if (mergeState.infoStream.isEnabled("SM")) {
       t0 = System.nanoTime();
@@ -93,10 +98,10 @@ final class SegmentMerger {
       long t1 = System.nanoTime();
       mergeState.infoStream.message("SM", ((t1-t0)/1000000) + " msec to merge stored fields [" + numMerged + " docs]");
     }
-    assert numMerged == mergeState.segmentInfo.getDocCount();
+    assert numMerged == mergeState.segmentInfo.getDocCount(): "numMerged=" + numMerged + " vs mergeState.segmentInfo.getDocCount()=" + mergeState.segmentInfo.getDocCount();
 
     final SegmentWriteState segmentWriteState = new SegmentWriteState(mergeState.infoStream, directory, mergeState.segmentInfo,
-                                                                      mergeState.fieldInfos, null, context);
+                                                                      mergeState.mergeFieldInfos, null, context);
     if (mergeState.infoStream.isEnabled("SM")) {
       t0 = System.nanoTime();
     }
@@ -109,7 +114,7 @@ final class SegmentMerger {
     if (mergeState.infoStream.isEnabled("SM")) {
       t0 = System.nanoTime();
     }
-    if (mergeState.fieldInfos.hasDocValues()) {
+    if (mergeState.mergeFieldInfos.hasDocValues()) {
       mergeDocValues(segmentWriteState);
     }
     if (mergeState.infoStream.isEnabled("SM")) {
@@ -117,7 +122,7 @@ final class SegmentMerger {
       mergeState.infoStream.message("SM", ((t1-t0)/1000000) + " msec to merge doc values [" + numMerged + " docs]");
     }
     
-    if (mergeState.fieldInfos.hasNorms()) {
+    if (mergeState.mergeFieldInfos.hasNorms()) {
       if (mergeState.infoStream.isEnabled("SM")) {
         t0 = System.nanoTime();
       }
@@ -128,7 +133,7 @@ final class SegmentMerger {
       }
     }
 
-    if (mergeState.fieldInfos.hasVectors()) {
+    if (mergeState.mergeFieldInfos.hasVectors()) {
       if (mergeState.infoStream.isEnabled("SM")) {
         t0 = System.nanoTime();
       }
@@ -141,8 +146,7 @@ final class SegmentMerger {
     }
     
     // write the merged infos
-    FieldInfosWriter fieldInfosWriter = codec.fieldInfosFormat().getFieldInfosWriter();
-    fieldInfosWriter.write(directory, mergeState.segmentInfo.name, "", mergeState.fieldInfos, context);
+    codec.fieldInfosFormat().write(directory, mergeState.segmentInfo, "", mergeState.mergeFieldInfos, context);
 
     return mergeState;
   }
@@ -151,62 +155,7 @@ final class SegmentMerger {
     DocValuesConsumer consumer = codec.docValuesFormat().fieldsConsumer(segmentWriteState);
     boolean success = false;
     try {
-      for (FieldInfo field : mergeState.fieldInfos) {
-        DocValuesType type = field.getDocValuesType();
-        if (type != null) {
-          if (type == DocValuesType.NUMERIC) {
-            List<NumericDocValues> toMerge = new ArrayList<NumericDocValues>();
-            List<Bits> docsWithField = new ArrayList<Bits>();
-            for (AtomicReader reader : mergeState.readers) {
-              NumericDocValues values = reader.getNumericDocValues(field.name);
-              Bits bits = reader.getDocsWithField(field.name);
-              if (values == null) {
-                values = NumericDocValues.EMPTY;
-                bits = new Bits.MatchNoBits(reader.maxDoc());
-              }
-              toMerge.add(values);
-              docsWithField.add(bits);
-            }
-            consumer.mergeNumericField(field, mergeState, toMerge, docsWithField);
-          } else if (type == DocValuesType.BINARY) {
-            List<BinaryDocValues> toMerge = new ArrayList<BinaryDocValues>();
-            List<Bits> docsWithField = new ArrayList<Bits>();
-            for (AtomicReader reader : mergeState.readers) {
-              BinaryDocValues values = reader.getBinaryDocValues(field.name);
-              Bits bits = reader.getDocsWithField(field.name);
-              if (values == null) {
-                values = BinaryDocValues.EMPTY;
-                bits = new Bits.MatchNoBits(reader.maxDoc());
-              }
-              toMerge.add(values);
-              docsWithField.add(bits);
-            }
-            consumer.mergeBinaryField(field, mergeState, toMerge, docsWithField);
-          } else if (type == DocValuesType.SORTED) {
-            List<SortedDocValues> toMerge = new ArrayList<SortedDocValues>();
-            for (AtomicReader reader : mergeState.readers) {
-              SortedDocValues values = reader.getSortedDocValues(field.name);
-              if (values == null) {
-                values = SortedDocValues.EMPTY;
-              }
-              toMerge.add(values);
-            }
-            consumer.mergeSortedField(field, mergeState, toMerge);
-          } else if (type == DocValuesType.SORTED_SET) {
-            List<SortedSetDocValues> toMerge = new ArrayList<SortedSetDocValues>();
-            for (AtomicReader reader : mergeState.readers) {
-              SortedSetDocValues values = reader.getSortedSetDocValues(field.name);
-              if (values == null) {
-                values = SortedSetDocValues.EMPTY;
-              }
-              toMerge.add(values);
-            }
-            consumer.mergeSortedSetField(field, mergeState, toMerge);
-          } else {
-            throw new AssertionError("type=" + type);
-          }
-        }
-      }
+      consumer.merge(mergeState);
       success = true;
     } finally {
       if (success) {
@@ -218,24 +167,10 @@ final class SegmentMerger {
   }
 
   private void mergeNorms(SegmentWriteState segmentWriteState) throws IOException {
-    DocValuesConsumer consumer = codec.normsFormat().normsConsumer(segmentWriteState);
+    NormsConsumer consumer = codec.normsFormat().normsConsumer(segmentWriteState);
     boolean success = false;
     try {
-      for (FieldInfo field : mergeState.fieldInfos) {
-        if (field.hasNorms()) {
-          List<NumericDocValues> toMerge = new ArrayList<NumericDocValues>();
-          List<Bits> docsWithField = new ArrayList<Bits>();
-          for (AtomicReader reader : mergeState.readers) {
-            NumericDocValues norms = reader.getNormValues(field.name);
-            if (norms == null) {
-              norms = NumericDocValues.EMPTY;
-            }
-            toMerge.add(norms);
-            docsWithField.add(new Bits.MatchAllBits(reader.maxDoc()));
-          }
-          consumer.mergeNumericField(field, mergeState, toMerge, docsWithField);
-        }
-      }
+      consumer.merge(mergeState);
       success = true;
     } finally {
       if (success) {
@@ -245,63 +180,18 @@ final class SegmentMerger {
       }
     }
   }
-
-  private void setMatchingSegmentReaders() {
-    // If the i'th reader is a SegmentReader and has
-    // identical fieldName -> number mapping, then this
-    // array will be non-null at position i:
-    int numReaders = mergeState.readers.size();
-    mergeState.matchingSegmentReaders = new SegmentReader[numReaders];
-
-    // If this reader is a SegmentReader, and all of its
-    // field name -> number mappings match the "merged"
-    // FieldInfos, then we can do a bulk copy of the
-    // stored fields:
-    for (int i = 0; i < numReaders; i++) {
-      AtomicReader reader = mergeState.readers.get(i);
-      // TODO: we may be able to broaden this to
-      // non-SegmentReaders, since FieldInfos is now
-      // required?  But... this'd also require exposing
-      // bulk-copy (TVs and stored fields) API in foreign
-      // readers..
-      if (reader instanceof SegmentReader) {
-        SegmentReader segmentReader = (SegmentReader) reader;
-        boolean same = true;
-        FieldInfos segmentFieldInfos = segmentReader.getFieldInfos();
-        for (FieldInfo fi : segmentFieldInfos) {
-          FieldInfo other = mergeState.fieldInfos.fieldInfo(fi.number);
-          if (other == null || !other.name.equals(fi.name)) {
-            same = false;
-            break;
-          }
-        }
-        if (same) {
-          mergeState.matchingSegmentReaders[i] = segmentReader;
-          mergeState.matchedCount++;
-        }
-      }
-    }
-
-    if (mergeState.infoStream.isEnabled("SM")) {
-      mergeState.infoStream.message("SM", "merge store matchedCount=" + mergeState.matchedCount + " vs " + mergeState.readers.size());
-      if (mergeState.matchedCount != mergeState.readers.size()) {
-        mergeState.infoStream.message("SM", "" + (mergeState.readers.size() - mergeState.matchedCount) + " non-bulk merges");
-      }
-    }
-  }
   
   public void mergeFieldInfos() throws IOException {
-    for (AtomicReader reader : mergeState.readers) {
-      FieldInfos readerFieldInfos = reader.getFieldInfos();
+    for (FieldInfos readerFieldInfos : mergeState.fieldInfos) {
       for (FieldInfo fi : readerFieldInfos) {
         fieldInfosBuilder.add(fi);
       }
     }
-    mergeState.fieldInfos = fieldInfosBuilder.finish();
+    mergeState.mergeFieldInfos = fieldInfosBuilder.finish();
   }
 
   /**
-   *
+   * Merge stored fields from each of the segments into the new one.
    * @return The number of documents in all of the readers
    * @throws CorruptIndexException if the index is corrupt
    * @throws IOException if there is a low-level IO error
@@ -309,11 +199,19 @@ final class SegmentMerger {
   private int mergeFields() throws IOException {
     final StoredFieldsWriter fieldsWriter = codec.storedFieldsFormat().fieldsWriter(directory, mergeState.segmentInfo, context);
     
+    boolean success = false;
+    int numDocs;
     try {
-      return fieldsWriter.merge(mergeState);
+      numDocs = fieldsWriter.merge(mergeState);
+      success = true;
     } finally {
-      fieldsWriter.close();
+      if (success) {
+        IOUtils.close(fieldsWriter);
+      } else {
+        IOUtils.closeWhileHandlingException(fieldsWriter);
+      }
     }
+    return numDocs;
   }
 
   /**
@@ -323,61 +221,33 @@ final class SegmentMerger {
   private int mergeVectors() throws IOException {
     final TermVectorsWriter termVectorsWriter = codec.termVectorsFormat().vectorsWriter(directory, mergeState.segmentInfo, context);
     
+    boolean success = false;
+    int numDocs;
     try {
-      return termVectorsWriter.merge(mergeState);
+      numDocs = termVectorsWriter.merge(mergeState);
+      success = true;
     } finally {
-      termVectorsWriter.close();
+      if (success) {
+        IOUtils.close(termVectorsWriter);
+      } else {
+        IOUtils.closeWhileHandlingException(termVectorsWriter);
+      }
     }
-  }
-
-  // NOTE: removes any "all deleted" readers from mergeState.readers
-  private int setDocMaps() throws IOException {
-    final int numReaders = mergeState.readers.size();
-
-    // Remap docIDs
-    mergeState.docMaps = new MergeState.DocMap[numReaders];
-    mergeState.docBase = new int[numReaders];
-
-    int docBase = 0;
-
-    int i = 0;
-    while(i < mergeState.readers.size()) {
-
-      final AtomicReader reader = mergeState.readers.get(i);
-
-      mergeState.docBase[i] = docBase;
-      final MergeState.DocMap docMap = MergeState.DocMap.build(reader);
-      mergeState.docMaps[i] = docMap;
-      docBase += docMap.numDocs();
-
-      i++;
-    }
-
-    return docBase;
+    return numDocs;
   }
 
   private void mergeTerms(SegmentWriteState segmentWriteState) throws IOException {
-    
-    final List<Fields> fields = new ArrayList<Fields>();
-    final List<ReaderSlice> slices = new ArrayList<ReaderSlice>();
-
-    int docBase = 0;
-
-    for(int readerIndex=0;readerIndex<mergeState.readers.size();readerIndex++) {
-      final AtomicReader reader = mergeState.readers.get(readerIndex);
-      final Fields f = reader.fields();
-      final int maxDoc = reader.maxDoc();
-      if (f != null) {
-        slices.add(new ReaderSlice(docBase, maxDoc, readerIndex));
-        fields.add(f);
+    FieldsConsumer consumer = codec.postingsFormat().fieldsConsumer(segmentWriteState);
+    boolean success = false;
+    try {
+      consumer.merge(mergeState);
+      success = true;
+    } finally {
+      if (success) {
+        IOUtils.close(consumer);
+      } else {
+        IOUtils.closeWhileHandlingException(consumer);
       }
-      docBase += maxDoc;
     }
-
-    Fields mergedFields = new MappedMultiFields(mergeState, 
-                                                new MultiFields(fields.toArray(Fields.EMPTY_ARRAY),
-                                                                slices.toArray(ReaderSlice.EMPTY_ARRAY)));
-
-    codec.postingsFormat().fieldsConsumer(segmentWriteState).write(mergedFields);
   }
 }

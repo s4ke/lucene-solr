@@ -19,6 +19,8 @@ package org.apache.lucene.util.automaton;
 
 import org.apache.lucene.util.LuceneTestCase;
 
+import static org.apache.lucene.util.automaton.Operations.DEFAULT_MAX_DETERMINIZED_STATES;
+
 /**
  * Not completely thorough, but tries to test determinism correctness
  * somewhat randomly.
@@ -28,8 +30,9 @@ public class TestDeterminism extends LuceneTestCase {
   /** test a bunch of random regular expressions */
   public void testRegexps() throws Exception {
       int num = atLeast(500);
-      for (int i = 0; i < num; i++)
+      for (int i = 0; i < num; i++) {
         assertAutomaton(new RegExp(AutomatonTestUtil.randomRegexp(random()), RegExp.NONE).toAutomaton());
+      }
   }
   
   /** test against a simple, unoptimized det */
@@ -37,42 +40,45 @@ public class TestDeterminism extends LuceneTestCase {
     int num = atLeast(200);
     for (int i = 0; i < num; i++) {
       Automaton a = AutomatonTestUtil.randomAutomaton(random());
-      Automaton b = a.clone();
-      AutomatonTestUtil.determinizeSimple(a);
-      b.deterministic = false; // force det
-      b.determinize();
+      a = AutomatonTestUtil.determinizeSimple(a);
+      Automaton b = Operations.determinize(a, Integer.MAX_VALUE);
       // TODO: more verifications possible?
-      assertTrue(BasicOperations.sameLanguage(a, b));
+      assertTrue(Operations.sameLanguage(a, b));
     }
   }
   
   private static void assertAutomaton(Automaton a) {
-    Automaton clone = a.clone();
+    a = Operations.determinize(Operations.removeDeadStates(a), DEFAULT_MAX_DETERMINIZED_STATES);
+
     // complement(complement(a)) = a
-    Automaton equivalent = BasicOperations.complement(BasicOperations.complement(a));
-    assertTrue(BasicOperations.sameLanguage(a, equivalent));
+    Automaton equivalent = Operations.complement(Operations.complement(a,
+      DEFAULT_MAX_DETERMINIZED_STATES), DEFAULT_MAX_DETERMINIZED_STATES);
+    assertTrue(Operations.sameLanguage(a, equivalent));
     
     // a union a = a
-    equivalent = BasicOperations.union(a, clone);
-    assertTrue(BasicOperations.sameLanguage(a, equivalent));
+    equivalent = Operations.determinize(Operations.removeDeadStates(Operations.union(a, a)),
+      DEFAULT_MAX_DETERMINIZED_STATES);
+    assertTrue(Operations.sameLanguage(a, equivalent));
     
     // a intersect a = a
-    equivalent = BasicOperations.intersection(a, clone);
-    assertTrue(BasicOperations.sameLanguage(a, equivalent));
+    equivalent = Operations.determinize(Operations.removeDeadStates(Operations.intersection(a, a)),
+      DEFAULT_MAX_DETERMINIZED_STATES);
+    assertTrue(Operations.sameLanguage(a, equivalent));
     
     // a minus a = empty
-    Automaton empty = BasicOperations.minus(a, clone);
-    assertTrue(BasicOperations.isEmpty(empty));
+    Automaton empty = Operations.minus(a, a, DEFAULT_MAX_DETERMINIZED_STATES);
+    assertTrue(Operations.isEmpty(empty));
     
     // as long as don't accept the empty string
     // then optional(a) - empty = a
-    if (!BasicOperations.run(a, "")) {
+    if (!Operations.run(a, "")) {
       //System.out.println("test " + a);
-      Automaton optional = BasicOperations.optional(a);
+      Automaton optional = Operations.optional(a);
       //System.out.println("optional " + optional);
-      equivalent = BasicOperations.minus(optional, BasicAutomata.makeEmptyString());
+      equivalent = Operations.minus(optional, Automata.makeEmptyString(),
+        DEFAULT_MAX_DETERMINIZED_STATES);
       //System.out.println("equiv " + equivalent);
-      assertTrue(BasicOperations.sameLanguage(a, equivalent));
+      assertTrue(Operations.sameLanguage(a, equivalent));
     }
   } 
 }

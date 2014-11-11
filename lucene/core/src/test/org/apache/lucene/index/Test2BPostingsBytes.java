@@ -26,16 +26,12 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.store.BaseDirectoryWrapper;
 import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.TimeUnits;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
+import org.apache.lucene.util.LuceneTestCase.Monster;
 import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
-import org.junit.Ignore;
-
-import com.carrotsearch.randomizedtesting.annotations.TimeoutSuite;
 
 /**
  * Test indexes 2B docs with 65k freqs each, 
@@ -43,25 +39,23 @@ import com.carrotsearch.randomizedtesting.annotations.TimeoutSuite;
  * @lucene.experimental
  */
 @SuppressCodecs({ "SimpleText", "Memory", "Direct" })
-@TimeoutSuite(millis = 4 * TimeUnits.HOUR)
+@Monster("takes ~20GB-30GB of space and 10 minutes, and more heap space sometimes")
 public class Test2BPostingsBytes extends LuceneTestCase {
 
-  // @Absurd @Ignore takes ~20GB-30GB of space and 10 minutes.
-  // with some codecs needs more heap space as well.
-  @Ignore("Very slow. Enable manually by removing @Ignore.")
   public void test() throws Exception {
-    BaseDirectoryWrapper dir = newFSDirectory(_TestUtil.getTempDir("2BPostingsBytes1"));
+    BaseDirectoryWrapper dir = newFSDirectory(createTempDir("2BPostingsBytes1"));
     if (dir instanceof MockDirectoryWrapper) {
       ((MockDirectoryWrapper)dir).setThrottling(MockDirectoryWrapper.Throttling.NEVER);
     }
     
     IndexWriter w = new IndexWriter(dir,
-        new IndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()))
+        new IndexWriterConfig(new MockAnalyzer(random()))
         .setMaxBufferedDocs(IndexWriterConfig.DISABLE_AUTO_FLUSH)
         .setRAMBufferSizeMB(256.0)
         .setMergeScheduler(new ConcurrentMergeScheduler())
         .setMergePolicy(newLogMergePolicy(false, 10))
-        .setOpenMode(IndexWriterConfig.OpenMode.CREATE));
+        .setOpenMode(IndexWriterConfig.OpenMode.CREATE)
+        .setCodec(TestUtil.getDefaultCodec()));
 
     MergePolicy mp = w.getConfig().getMergePolicy();
     if (mp instanceof LogByteSizeMergePolicy) {
@@ -93,12 +87,12 @@ public class Test2BPostingsBytes extends LuceneTestCase {
     IndexReader subReaders[] = new IndexReader[1000];
     Arrays.fill(subReaders, oneThousand);
     MultiReader mr = new MultiReader(subReaders);
-    BaseDirectoryWrapper dir2 = newFSDirectory(_TestUtil.getTempDir("2BPostingsBytes2"));
+    BaseDirectoryWrapper dir2 = newFSDirectory(createTempDir("2BPostingsBytes2"));
     if (dir2 instanceof MockDirectoryWrapper) {
       ((MockDirectoryWrapper)dir2).setThrottling(MockDirectoryWrapper.Throttling.NEVER);
     }
     IndexWriter w2 = new IndexWriter(dir2,
-        new IndexWriterConfig(TEST_VERSION_CURRENT, null));
+        new IndexWriterConfig(null));
     w2.addIndexes(mr);
     w2.forceMerge(1);
     w2.close();
@@ -108,12 +102,12 @@ public class Test2BPostingsBytes extends LuceneTestCase {
     subReaders = new IndexReader[2000];
     Arrays.fill(subReaders, oneMillion);
     mr = new MultiReader(subReaders);
-    BaseDirectoryWrapper dir3 = newFSDirectory(_TestUtil.getTempDir("2BPostingsBytes3"));
+    BaseDirectoryWrapper dir3 = newFSDirectory(createTempDir("2BPostingsBytes3"));
     if (dir3 instanceof MockDirectoryWrapper) {
       ((MockDirectoryWrapper)dir3).setThrottling(MockDirectoryWrapper.Throttling.NEVER);
     }
     IndexWriter w3 = new IndexWriter(dir3,
-        new IndexWriterConfig(TEST_VERSION_CURRENT, null));
+        new IndexWriterConfig(null));
     w3.addIndexes(mr);
     w3.forceMerge(1);
     w3.close();

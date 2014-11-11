@@ -17,8 +17,10 @@ package org.apache.lucene.index;
  * limitations under the License.
  */
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Queue;
 import java.util.Set;
@@ -33,25 +35,20 @@ import org.apache.lucene.index.IndexWriter.Event;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.InfoStream;
 
 /**
  * This class accepts multiple added documents and directly
  * writes segment files.
  *
- * Each added document is passed to the {@link DocConsumer},
- * which in turn processes the document and interacts with
- * other consumers in the indexing chain.  Certain
- * consumers, like {@link StoredFieldsConsumer} and {@link
- * TermVectorsConsumer}, digest a document and
- * immediately write bytes to the "doc store" files (ie,
- * they do not consume RAM per document, except while they
- * are processing the document).
+ * Each added document is passed to the indexing chain,
+ * which in turn processes the document into the different
+ * codec formats.  Some formats write bytes to files
+ * immediately, e.g. stored fields and term vectors, while
+ * others are buffered by the indexing chain and written
+ * only on flush.
  *
- * Other consumers, eg {@link FreqProxTermsWriter} and
- * {@link NormsConsumer}, buffer bytes in RAM and flush only
- * when a new segment is produced.
-
  * Once we have used our allowed RAM buffer, or the number
  * of added docs is large enough (in the case we are
  * flushing by doc count instead of RAM usage), we create a
@@ -99,7 +96,7 @@ import org.apache.lucene.util.InfoStream;
  * or none") added to the index.
  */
 
-final class DocumentsWriter {
+final class DocumentsWriter implements Closeable, Accountable {
   private final Directory directory;
 
   private volatile boolean closed;
@@ -135,7 +132,7 @@ final class DocumentsWriter {
     this.perThreadPool = config.getIndexerThreadPool();
     flushPolicy = config.getFlushPolicy();
     this.writer = writer;
-    this.events = new ConcurrentLinkedQueue<Event>();
+    this.events = new ConcurrentLinkedQueue<>();
     flushControl = new DocumentsWriterFlushControl(this, config, writer.bufferedUpdatesStream);
   }
   
@@ -158,13 +155,13 @@ final class DocumentsWriter {
     return applyAllDeletes( deleteQueue);
   }
 
-  synchronized boolean updateNumericDocValue(Term term, String field, Long value) throws IOException {
+  synchronized boolean updateDocValues(DocValuesUpdate... updates) throws IOException {
     final DocumentsWriterDeleteQueue deleteQueue = this.deleteQueue;
-    deleteQueue.addNumericUpdate(new NumericUpdate(term, field, value));
+    deleteQueue.addDocValuesUpdates(updates);
     flushControl.doOnDelete();
     return applyAllDeletes(deleteQueue);
   }
-
+  
   DocumentsWriterDeleteQueue currentDeleteSession() {
     return deleteQueue;
   }
@@ -207,7 +204,7 @@ final class DocumentsWriter {
   synchronized void abort(IndexWriter writer) {
     assert !Thread.holdsLock(writer) : "IndexWriter lock should never be hold when aborting";
     boolean success = false;
-    final Set<String> newFilesSet = new HashSet<String>();
+    final Set<String> newFilesSet = new HashSet<>();
     try {
       deleteQueue.clear();
       if (infoStream.isEnabled("DW")) {
@@ -243,7 +240,7 @@ final class DocumentsWriter {
     try {
       deleteQueue.clear();
       final int limit = perThreadPool.getMaxThreadStates();
-      final Set<String> newFilesSet = new HashSet<String>();
+      final Set<String> newFilesSet = new HashSet<>();
       for (int i = 0; i < limit; i++) {
         final ThreadState perThread = perThreadPool.getThreadState(i);
         perThread.lock();
@@ -335,7 +332,8 @@ final class DocumentsWriter {
     return deleteQueue.anyChanges();
   }
 
-  void close() {
+  @Override
+  public void close() {
     closed = true;
     flushControl.setClosed();
   }
@@ -386,12 +384,13 @@ final class DocumentsWriter {
     return hasEvents;
   }
   
-  private final void ensureInitialized(ThreadState state) {
+  private final void ensureInitialized(ThreadState state) throws IOException {
     if (state.isActive() && state.dwpt == null) {
       final FieldInfos.Builder infos = new FieldInfos.Builder(
           writer.globalFieldNumberMap);
       state.dwpt = new DocumentsWriterPerThread(writer.newSegmentName(),
-          directory, config, infoStream, deleteQueue, infos);
+                                                directory, config, infoStream, deleteQueue, infos,
+                                                writer.pendingNumDocs);
     }
   }
 
@@ -412,9 +411,12 @@ final class DocumentsWriter {
       final DocumentsWriterPerThread dwpt = perThread.dwpt;
       final int dwptNumDocs = dwpt.getNumDocsInRAM();
       try {
-        final int docCount = dwpt.updateDocuments(docs, analyzer, delTerm);
-        numDocsInRAM.addAndGet(docCount);
+        dwpt.updateDocuments(docs, analyzer, delTerm);
       } finally {
+        // We don't know how many documents were actually
+        // counted as indexed, so we must subtract here to
+        // accumulate our separate counter:
+        numDocsInRAM.addAndGet(dwpt.getNumDocsInRAM() - dwptNumDocs);
         if (dwpt.checkAndResetHasAborted()) {
           if (!dwpt.pendingFilesToDelete().isEmpty()) {
             putEvent(new DeleteNewFilesEvent(dwpt.pendingFilesToDelete()));
@@ -426,7 +428,7 @@ final class DocumentsWriter {
       final boolean isUpdate = delTerm != null;
       flushingDWPT = flushControl.doAfterDocument(perThread, isUpdate);
     } finally {
-      perThread.unlock();
+      perThreadPool.release(perThread);
     }
 
     return postUpdate(flushingDWPT, hasEvents);
@@ -451,8 +453,11 @@ final class DocumentsWriter {
       final int dwptNumDocs = dwpt.getNumDocsInRAM();
       try {
         dwpt.updateDocument(doc, analyzer, delTerm); 
-        numDocsInRAM.incrementAndGet();
       } finally {
+        // We don't know whether the document actually
+        // counted as being indexed, so we must subtract here to
+        // accumulate our separate counter:
+        numDocsInRAM.addAndGet(dwpt.getNumDocsInRAM() - dwptNumDocs);
         if (dwpt.checkAndResetHasAborted()) {
           if (!dwpt.pendingFilesToDelete().isEmpty()) {
             putEvent(new DeleteNewFilesEvent(dwpt.pendingFilesToDelete()));
@@ -464,7 +469,7 @@ final class DocumentsWriter {
       final boolean isUpdate = delTerm != null;
       flushingDWPT = flushControl.doAfterDocument(perThread, isUpdate);
     } finally {
-      perThread.unlock();
+      perThreadPool.release(perThread);
     }
 
     return postUpdate(flushingDWPT, hasEvents);
@@ -573,6 +578,7 @@ final class DocumentsWriter {
     while (!numDocsInRAM.compareAndSet(oldValue, oldValue - numFlushed)) {
       oldValue = numDocsInRAM.get();
     }
+    assert numDocsInRAM.get() >= 0;
   }
   
   // for asserts
@@ -593,7 +599,7 @@ final class DocumentsWriter {
     throws IOException {
     final DocumentsWriterDeleteQueue flushingDeleteQueue;
     if (infoStream.isEnabled("DW")) {
-      infoStream.message("DW", Thread.currentThread().getName() + " startFullFlush");
+      infoStream.message("DW", "startFullFlush");
     }
     
     synchronized (this) {
@@ -659,7 +665,17 @@ final class DocumentsWriter {
   private void putEvent(Event event) {
     events.add(event);
   }
+
+  @Override
+  public long ramBytesUsed() {
+    return flushControl.ramBytesUsed();
+  }
   
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Collections.emptyList();
+  }
+
   static final class ApplyDeletesEvent implements Event {
     static final Event INSTANCE = new ApplyDeletesEvent();
     private int instCount = 0;

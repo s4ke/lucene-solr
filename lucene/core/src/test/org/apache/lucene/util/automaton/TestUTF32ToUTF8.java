@@ -17,12 +17,18 @@ package org.apache.lucene.util.automaton;
  * limitations under the License.
  */
 
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
-import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.UnicodeUtil;
-
+import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
 import java.util.Random;
+import java.util.Set;
+
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.util.IntsRefBuilder;
+import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.TestUtil;
+import org.apache.lucene.util.UnicodeUtil;
+import org.apache.lucene.util.fst.Util;
 
 public class TestUTF32ToUTF8 extends LuceneTestCase {
   
@@ -33,12 +39,11 @@ public class TestUTF32ToUTF8 extends LuceneTestCase {
 
   private static final int MAX_UNICODE = 0x10FFFF;
 
-  final BytesRef b = new BytesRef(4);
-
   private boolean matches(ByteRunAutomaton a, int code) {
     char[] chars = Character.toChars(code);
-    UnicodeUtil.UTF16toUTF8(chars, 0, chars.length, b);
-    return a.run(b.bytes, 0, b.length);
+    byte[] b = new byte[UnicodeUtil.MAX_UTF8_BYTES_PER_CHAR * chars.length];
+    final int len = UnicodeUtil.UTF16toUTF8(chars, 0, chars.length, b);
+    return a.run(b, 0, len);
   }
 
   private void testOne(Random r, ByteRunAutomaton a, int startCode, int endCode, int iters) {
@@ -90,7 +95,7 @@ public class TestUTF32ToUTF8 extends LuceneTestCase {
     final int invalidRange = MAX_UNICODE - (endCode - startCode + 1);
     if (invalidRange > 0) {
       for(int iter=0;iter<iters;iter++) {
-        int x = _TestUtil.nextInt(r, 0, invalidRange-1);
+        int x = TestUtil.nextInt(r, 0, invalidRange - 1);
         final int code;
         if (x >= startCode) {
           code = endCode + 1 + x - startCode;
@@ -114,13 +119,13 @@ public class TestUTF32ToUTF8 extends LuceneTestCase {
   private int getCodeStart(Random r) {
     switch(r.nextInt(4)) {
     case 0:
-      return _TestUtil.nextInt(r, 0, 128);
+      return TestUtil.nextInt(r, 0, 128);
     case 1:
-      return _TestUtil.nextInt(r, 128, 2048);
+      return TestUtil.nextInt(r, 128, 2048);
     case 2:
-      return _TestUtil.nextInt(r, 2048, 65536);
+      return TestUtil.nextInt(r, 2048, 65536);
     default:
-      return _TestUtil.nextInt(r, 65536, 1+MAX_UNICODE);
+      return TestUtil.nextInt(r, 65536, 1 + MAX_UNICODE);
     }
   }
 
@@ -150,12 +155,7 @@ public class TestUTF32ToUTF8 extends LuceneTestCase {
         continue;
       }
       
-      final Automaton a = new Automaton();
-      final State end = new State();
-      end.setAccept(true);
-      a.getInitialState().addTransition(new Transition(startCode, endCode, end));
-      a.setDeterministic(true);
-
+      Automaton a = Automata.makeCharRange(startCode, endCode);
       testOne(r, new ByteRunAutomaton(a), startCode, endCode, ITERS_PER_DFA);
     }
   }
@@ -184,7 +184,7 @@ public class TestUTF32ToUTF8 extends LuceneTestCase {
 
     assertTrue(cra.run(input));
     
-    byte[] bytes = input.getBytes("UTF-8");
+    byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
     assertTrue(bra.run(bytes, 0, bytes.length)); // this one fails!
   }
   
@@ -197,7 +197,7 @@ public class TestUTF32ToUTF8 extends LuceneTestCase {
 
     assertTrue(cra.run(input));
     
-    byte[] bytes = input.getBytes("UTF-8");
+    byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
     assertTrue(bra.run(bytes, 0, bytes.length));
   }
   
@@ -205,6 +205,20 @@ public class TestUTF32ToUTF8 extends LuceneTestCase {
     int num = atLeast(250);
     for (int i = 0; i < num; i++) {
       assertAutomaton(new RegExp(AutomatonTestUtil.randomRegexp(random()), RegExp.NONE).toAutomaton());
+    }
+  }
+
+  public void testSingleton() throws Exception {
+    int iters = atLeast(100);
+    for(int iter=0;iter<iters;iter++) {
+      String s = TestUtil.randomRealisticUnicodeString(random());
+      Automaton a = Automata.makeString(s);
+      Automaton utf8 = new UTF32ToUTF8().convert(a);
+      IntsRefBuilder ints = new IntsRefBuilder();
+      Util.toIntsRef(new BytesRef(s), ints);
+      Set<IntsRef> set = new HashSet<>();
+      set.add(ints.get());
+      assertEquals(set, Operations.getFiniteStrings(utf8, -1));
     }
   }
   
@@ -218,7 +232,7 @@ public class TestUTF32ToUTF8 extends LuceneTestCase {
       final String string;
       if (random().nextBoolean()) {
         // likely not accepted
-        string = _TestUtil.randomUnicodeString(random());
+        string = TestUtil.randomUnicodeString(random());
       } else {
         // will be accepted
         int[] codepoints = ras.getRandomAcceptedString(random());
@@ -232,7 +246,7 @@ public class TestUTF32ToUTF8 extends LuceneTestCase {
           throw e;
         }
       }
-      byte bytes[] = string.getBytes("UTF-8");
+      byte bytes[] = string.getBytes(StandardCharsets.UTF_8);
       assertEquals(cra.run(string), bra.run(bytes, 0, bytes.length));
     }
   }

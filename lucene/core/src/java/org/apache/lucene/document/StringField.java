@@ -1,7 +1,5 @@
 package org.apache.lucene.document;
 
-import org.apache.lucene.index.FieldInfo.IndexOptions;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -18,6 +16,8 @@ import org.apache.lucene.index.FieldInfo.IndexOptions;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+import org.apache.lucene.index.IndexOptions;
 
 /** A field that is indexed but not tokenized: the entire
  *  String value is indexed as a single token.  For example
@@ -36,15 +36,13 @@ public final class StringField extends Field {
   public static final FieldType TYPE_STORED = new FieldType();
 
   static {
-    TYPE_NOT_STORED.setIndexed(true);
     TYPE_NOT_STORED.setOmitNorms(true);
-    TYPE_NOT_STORED.setIndexOptions(IndexOptions.DOCS_ONLY);
+    TYPE_NOT_STORED.setIndexOptions(IndexOptions.DOCS);
     TYPE_NOT_STORED.setTokenized(false);
     TYPE_NOT_STORED.freeze();
 
-    TYPE_STORED.setIndexed(true);
     TYPE_STORED.setOmitNorms(true);
-    TYPE_STORED.setIndexOptions(IndexOptions.DOCS_ONLY);
+    TYPE_STORED.setIndexOptions(IndexOptions.DOCS);
     TYPE_STORED.setStored(true);
     TYPE_STORED.setTokenized(false);
     TYPE_STORED.freeze();

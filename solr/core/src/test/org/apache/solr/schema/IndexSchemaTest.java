@@ -48,7 +48,7 @@ public class IndexSchemaTest extends SolrTestCaseJ4 {
     assertU(adoc("id", "10", "title", "test", "aaa_dynamic", "aaa"));
     assertU(commit());
 
-    Map<String,String> args = new HashMap<String, String>();
+    Map<String,String> args = new HashMap<>();
     args.put( CommonParams.Q, "title:test" );
     args.put( "indent", "true" );
     SolrQueryRequest req = new LocalSolrQueryRequest( core, new MapSolrParams( args) );
@@ -58,7 +58,7 @@ public class IndexSchemaTest extends SolrTestCaseJ4 {
             ,"//result/doc[1]/int[@name='id'][.='10']"
             );
 
-    args = new HashMap<String, String>();
+    args = new HashMap<>();
     args.put( CommonParams.Q, "aaa_dynamic:aaa" );
     args.put( "indent", "true" );
     req = new LocalSolrQueryRequest( core, new MapSolrParams( args) );
@@ -67,7 +67,7 @@ public class IndexSchemaTest extends SolrTestCaseJ4 {
             ,"//result/doc[1]/int[@name='id'][.='10']"
             );
 
-    args = new HashMap<String, String>();
+    args = new HashMap<>();
     args.put( CommonParams.Q, "dynamic_aaa:aaa" );
     args.put( "indent", "true" );
     req = new LocalSolrQueryRequest( core, new MapSolrParams( args) );
@@ -92,5 +92,20 @@ public class IndexSchemaTest extends SolrTestCaseJ4 {
     SolrCore core = h.getCore();
     IndexSchema schema = core.getLatestSchema();
     assertFalse(schema.getField("id").multiValued());
+    
+    // Test TrieDate fields. The following asserts are expecting a field type defined as:
+    String expectedDefinition = "<fieldtype name=\"tdatedv\" class=\"solr.TrieDateField\" " +
+        "precisionStep=\"6\" docValues=\"true\" multiValued=\"true\"/>";
+    FieldType tdatedv = schema.getFieldType("foo_tdtdv");
+    assertTrue("Expecting a field type defined as " + expectedDefinition, 
+        tdatedv instanceof TrieDateField);
+    assertTrue("Expecting a field type defined as " + expectedDefinition,
+        tdatedv.hasProperty(FieldProperties.DOC_VALUES));
+    assertTrue("Expecting a field type defined as " + expectedDefinition,
+        tdatedv.isMultiValued());
+    assertEquals("Expecting a field type defined as " + expectedDefinition,
+        6, ((TrieDateField)tdatedv).getPrecisionStep());
   }
+  
+  
 }

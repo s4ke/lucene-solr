@@ -17,18 +17,19 @@ package org.apache.solr.spelling.suggest;
  * limitations under the License.
  */
 
+import java.text.ParseException;
 import java.util.HashSet;
 import java.util.Set;
 
+import org.apache.lucene.expressions.Expression;
+import org.apache.lucene.expressions.SimpleBindings;
+import org.apache.lucene.expressions.js.JavascriptCompiler;
+import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.spell.Dictionary;
-import org.apache.lucene.search.suggest.DocumentExpressionDictionary;
+import org.apache.lucene.search.suggest.DocumentValueSourceDictionary;
 import org.apache.solr.core.SolrCore;
-import org.apache.solr.schema.DoubleField;
 import org.apache.solr.schema.FieldType;
-import org.apache.solr.schema.FloatField;
-import org.apache.solr.schema.IntField;
-import org.apache.solr.schema.LongField;
 import org.apache.solr.schema.TrieDoubleField;
 import org.apache.solr.schema.TrieFloatField;
 import org.apache.solr.schema.TrieIntField;
@@ -36,7 +37,7 @@ import org.apache.solr.schema.TrieLongField;
 import org.apache.solr.search.SolrIndexSearcher;
 
 /**
- * Factory for {@link DocumentExpressionDictionary}
+ * Factory for {@link org.apache.lucene.search.suggest.DocumentValueSourceDictionary}
  */
 public class DocumentExpressionDictionaryFactory extends DictionaryFactory {
 
@@ -63,7 +64,7 @@ public class DocumentExpressionDictionaryFactory extends DictionaryFactory {
     String field = (String) params.get(FIELD);
     String payloadField = (String) params.get(PAYLOAD_FIELD);
     String weightExpression = (String) params.get(WEIGHT_EXPRESSION);
-    Set<SortField> sortFields = new HashSet<SortField>();
+    Set<SortField> sortFields = new HashSet<>();
     
     if (field == null) {
       throw new IllegalArgumentException(FIELD + " is a mandatory parameter");
@@ -89,21 +90,35 @@ public class DocumentExpressionDictionaryFactory extends DictionaryFactory {
       }
     }
    
-    return new DocumentExpressionDictionary(searcher.getIndexReader(), field, weightExpression, 
-        sortFields, payloadField);
+    return new DocumentValueSourceDictionary(searcher.getIndexReader(), field, fromExpression(weightExpression,
+        sortFields), payloadField);
+  }
+
+  public ValueSource fromExpression(String weightExpression, Set<SortField> sortFields) {
+    Expression expression = null;
+    try {
+      expression = JavascriptCompiler.compile(weightExpression);
+    } catch (ParseException e) {
+      throw new RuntimeException();
+    }
+    SimpleBindings bindings = new SimpleBindings();
+    for (SortField sortField : sortFields) {
+      bindings.add(sortField);
+    }
+    return expression.getValueSource(bindings);
   }
   
   private SortField.Type getSortFieldType(SolrCore core, String sortFieldName) {
     SortField.Type type = null;
     String fieldTypeName = core.getLatestSchema().getField(sortFieldName).getType().getTypeName();
     FieldType ft = core.getLatestSchema().getFieldTypes().get(fieldTypeName);
-    if (ft instanceof FloatField || ft instanceof TrieFloatField) {
+    if (ft instanceof TrieFloatField) {
       type = SortField.Type.FLOAT;
-    } else if (ft instanceof IntField || ft instanceof TrieIntField) {
+    } else if (ft instanceof TrieIntField) {
       type = SortField.Type.INT;
-    } else if (ft instanceof LongField || ft instanceof TrieLongField) {
+    } else if (ft instanceof TrieLongField) {
       type = SortField.Type.LONG;
-    } else if (ft instanceof DoubleField || ft instanceof TrieDoubleField) {
+    } else if (ft instanceof TrieDoubleField) {
       type = SortField.Type.DOUBLE;
     }
     return type;

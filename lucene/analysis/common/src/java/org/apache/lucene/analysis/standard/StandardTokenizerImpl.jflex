@@ -43,46 +43,26 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 %final
 %public
 %class StandardTokenizerImpl
-%implements StandardTokenizerInterface
 %function getNextToken
 %char
-%buffer 4096
-
-%include SUPPLEMENTARY.jflex-macro
-ALetter           = (\p{WB:ALetter}                                     | {ALetterSupp})
-Format            = (\p{WB:Format}                                      | {FormatSupp})
-Numeric           = ([\p{WB:Numeric}[\p{Blk:HalfAndFullForms}&&\p{Nd}]] | {NumericSupp})
-Extend            = (\p{WB:Extend}                                      | {ExtendSupp})
-Katakana          = (\p{WB:Katakana}                                    | {KatakanaSupp})
-MidLetter         = (\p{WB:MidLetter}                                   | {MidLetterSupp})
-MidNum            = (\p{WB:MidNum}                                      | {MidNumSupp})
-MidNumLet         = (\p{WB:MidNumLet}                                   | {MidNumLetSupp})
-ExtendNumLet      = (\p{WB:ExtendNumLet}                                | {ExtendNumLetSupp})
-ComplexContext    = (\p{LB:Complex_Context}                             | {ComplexContextSupp})
-Han               = (\p{Script:Han}                                     | {HanSupp})
-Hiragana          = (\p{Script:Hiragana}                                | {HiraganaSupp})
-SingleQuote       = (\p{WB:Single_Quote}                                | {SingleQuoteSupp})
-DoubleQuote       = (\p{WB:Double_Quote}                                | {DoubleQuoteSupp})
-HebrewLetter      = (\p{WB:Hebrew_Letter}                               | {HebrewLetterSupp})
-RegionalIndicator = (\p{WB:Regional_Indicator}                          | {RegionalIndicatorSupp})
-HebrewOrALetter   = ({HebrewLetter} | {ALetter})
+%buffer 255
 
 // UAX#29 WB4. X (Extend | Format)* --> X
 //
-HangulEx            = [\p{Script:Hangul}&&[\p{WB:ALetter}\p{WB:Hebrew_Letter}]] ({Format} | {Extend})*
-HebrewOrALetterEx   = {HebrewOrALetter}                                         ({Format} | {Extend})*
-NumericEx           = {Numeric}                                                 ({Format} | {Extend})*
-KatakanaEx          = {Katakana}                                                ({Format} | {Extend})* 
-MidLetterEx         = ({MidLetter} | {MidNumLet} | {SingleQuote})               ({Format} | {Extend})* 
-MidNumericEx        = ({MidNum} | {MidNumLet} | {SingleQuote})                  ({Format} | {Extend})*
-ExtendNumLetEx      = {ExtendNumLet}                                            ({Format} | {Extend})*
-HanEx               = {Han}                                                     ({Format} | {Extend})*
-HiraganaEx          = {Hiragana}                                                ({Format} | {Extend})*
-SingleQuoteEx       = {SingleQuote}                                             ({Format} | {Extend})*                                            
-DoubleQuoteEx       = {DoubleQuote}                                             ({Format} | {Extend})*
-HebrewLetterEx      = {HebrewLetter}                                            ({Format} | {Extend})*
-RegionalIndicatorEx = {RegionalIndicator}                                       ({Format} | {Extend})*
-
+HangulEx            = [\p{Script:Hangul}&&[\p{WB:ALetter}\p{WB:Hebrew_Letter}]] [\p{WB:Format}\p{WB:Extend}]*
+HebrewOrALetterEx   = [\p{WB:HebrewLetter}\p{WB:ALetter}]                       [\p{WB:Format}\p{WB:Extend}]*
+NumericEx           = [\p{WB:Numeric}[\p{Blk:HalfAndFullForms}&&\p{Nd}]]        [\p{WB:Format}\p{WB:Extend}]*
+KatakanaEx          = \p{WB:Katakana}                                           [\p{WB:Format}\p{WB:Extend}]* 
+MidLetterEx         = [\p{WB:MidLetter}\p{WB:MidNumLet}\p{WB:SingleQuote}]      [\p{WB:Format}\p{WB:Extend}]* 
+MidNumericEx        = [\p{WB:MidNum}\p{WB:MidNumLet}\p{WB:SingleQuote}]         [\p{WB:Format}\p{WB:Extend}]*
+ExtendNumLetEx      = \p{WB:ExtendNumLet}                                       [\p{WB:Format}\p{WB:Extend}]*
+HanEx               = \p{Script:Han}                                            [\p{WB:Format}\p{WB:Extend}]*
+HiraganaEx          = \p{Script:Hiragana}                                       [\p{WB:Format}\p{WB:Extend}]*
+SingleQuoteEx       = \p{WB:Single_Quote}                                       [\p{WB:Format}\p{WB:Extend}]*
+DoubleQuoteEx       = \p{WB:Double_Quote}                                       [\p{WB:Format}\p{WB:Extend}]*
+HebrewLetterEx      = \p{WB:Hebrew_Letter}                                      [\p{WB:Format}\p{WB:Extend}]*
+RegionalIndicatorEx = \p{WB:RegionalIndicator}                                  [\p{WB:Format}\p{WB:Extend}]*
+ComplexContextEx    = \p{LB:Complex_Context}                                    [\p{WB:Format}\p{WB:Extend}]*
 
 %{
   /** Alphanumeric sequences */
@@ -120,6 +100,16 @@ RegionalIndicatorEx = {RegionalIndicator}                                       
   public final void getText(CharTermAttribute t) {
     t.copyBuffer(zzBuffer, zzStartRead, zzMarkedPos-zzStartRead);
   }
+  
+  /**
+   * Sets the scanner buffer size in chars
+   */
+   public final void setBufferSize(int numChars) {
+     ZZ_BUFFERSIZE = numChars;
+     char[] newZzBuffer = new char[ZZ_BUFFERSIZE];
+     System.arraycopy(zzBuffer, 0, newZzBuffer, 0, Math.min(zzBuffer.length, ZZ_BUFFERSIZE));
+     zzBuffer = newZzBuffer;
+   }
 %}
 
 %%
@@ -127,7 +117,7 @@ RegionalIndicatorEx = {RegionalIndicator}                                       
 // UAX#29 WB1.   sot   ÷
 //        WB2.     ÷   eot
 //
-<<EOF>> { return StandardTokenizerInterface.YYEOF; }
+<<EOF>> { return YYEOF; }
 
 // UAX#29 WB8.   Numeric × Numeric
 //        WB11.  Numeric (MidNum | MidNumLet | Single_Quote) × Numeric
@@ -157,16 +147,16 @@ RegionalIndicatorEx = {RegionalIndicator}                                       
 //        WB13a. (ALetter | Hebrew_Letter | Numeric | Katakana | ExtendNumLet) × ExtendNumLet
 //        WB13b. ExtendNumLet × (ALetter | Hebrew_Letter | Numeric | Katakana) 
 //
-{ExtendNumLetEx}*  ( {KatakanaEx}          ( {ExtendNumLetEx}*   {KatakanaEx}                            )*
-                   | ( {HebrewLetterEx}    ( {SingleQuoteEx}     | {DoubleQuoteEx} {HebrewLetterEx}      )
-                     | {NumericEx}         ( ( {ExtendNumLetEx}* | {MidNumericEx} )* {NumericEx}         )*
-                     | {HebrewOrALetterEx} ( ( {ExtendNumLetEx}* | {MidLetterEx}  )* {HebrewOrALetterEx} )*
+{ExtendNumLetEx}*  ( {KatakanaEx}          ( {ExtendNumLetEx}*   {KatakanaEx}                           )*
+                   | ( {HebrewLetterEx}    ( {SingleQuoteEx}     | {DoubleQuoteEx}  {HebrewLetterEx}    )
+                     | {NumericEx}         ( ( {ExtendNumLetEx}* | {MidNumericEx} ) {NumericEx}         )*
+                     | {HebrewOrALetterEx} ( ( {ExtendNumLetEx}* | {MidLetterEx}  ) {HebrewOrALetterEx} )*
                      )+
                    )
-({ExtendNumLetEx}+ ( {KatakanaEx}          ( {ExtendNumLetEx}*   {KatakanaEx}                            )*
-                   | ( {HebrewLetterEx}    ( {SingleQuoteEx}     | {DoubleQuoteEx}   {HebrewLetterEx}    )
-                     | {NumericEx}         ( ( {ExtendNumLetEx}* | {MidNumericEx} )* {NumericEx}         )*
-                     | {HebrewOrALetterEx} ( ( {ExtendNumLetEx}* | {MidLetterEx}  )* {HebrewOrALetterEx} )*
+({ExtendNumLetEx}+ ( {KatakanaEx}          ( {ExtendNumLetEx}*   {KatakanaEx}                           )*
+                   | ( {HebrewLetterEx}    ( {SingleQuoteEx}     | {DoubleQuoteEx}  {HebrewLetterEx}    )
+                     | {NumericEx}         ( ( {ExtendNumLetEx}* | {MidNumericEx} ) {NumericEx}         )*
+                     | {HebrewOrALetterEx} ( ( {ExtendNumLetEx}* | {MidLetterEx}  ) {HebrewOrALetterEx} )*
                      )+
                    )
 )*
@@ -193,7 +183,7 @@ RegionalIndicatorEx = {RegionalIndicator}                                       
 //
 //    http://www.unicode.org/reports/tr14/#SA
 //
-{ComplexContext}+ { return SOUTH_EAST_ASIAN_TYPE; }
+{ComplexContextEx}+ { return SOUTH_EAST_ASIAN_TYPE; }
 
 // UAX#29 WB14.  Any ÷ Any
 //

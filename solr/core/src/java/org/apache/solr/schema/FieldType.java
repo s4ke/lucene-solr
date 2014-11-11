@@ -25,28 +25,33 @@ import org.apache.lucene.analysis.util.CharFilterFactory;
 import org.apache.lucene.analysis.util.TokenFilterFactory;
 import org.apache.lucene.analysis.util.TokenizerFactory;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.StorableField;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.DocTermOrdsRangeFilter;
 import org.apache.lucene.search.DocTermOrdsRewriteMethod;
-import org.apache.lucene.search.FieldCacheRangeFilter;
-import org.apache.lucene.search.FieldCacheRewriteMethod;
+import org.apache.lucene.search.DocValuesRangeFilter;
+import org.apache.lucene.search.DocValuesRewriteMethod;
 import org.apache.lucene.search.MultiTermQuery;
+import org.apache.lucene.search.PrefixQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TermRangeQuery;
 import org.apache.lucene.search.similarities.Similarity;
+import org.apache.lucene.uninverting.UninvertingReader;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.CharsRef;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.apache.lucene.util.UnicodeUtil;
 import org.apache.solr.analysis.SolrAnalyzer;
 import org.apache.solr.analysis.TokenizerChain;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrException.ErrorCode;
+import org.apache.solr.common.util.Base64;
 import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.common.util.StrUtils;
 import org.apache.solr.response.TextResponseWriter;
@@ -56,7 +61,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.io.Reader;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -150,7 +154,7 @@ public abstract class FieldType extends FieldProperties {
     }
 
     this.args = Collections.unmodifiableMap(args);
-    Map<String,String> initArgs = new HashMap<String,String>(args);
+    Map<String,String> initArgs = new HashMap<>(args);
     initArgs.remove(CLASS_NAME); // consume the class arg 
 
     trueProperties = FieldProperties.parseProperties(initArgs,true,false);
@@ -165,7 +169,7 @@ public abstract class FieldType extends FieldProperties {
 
     String positionInc = initArgs.get(POSITION_INCREMENT_GAP);
     if (positionInc != null) {
-      Analyzer analyzer = getAnalyzer();
+      Analyzer analyzer = getIndexAnalyzer();
       if (analyzer instanceof SolrAnalyzer) {
         ((SolrAnalyzer)analyzer).setPositionIncrementGap(Integer.parseInt(positionInc));
       } else {
@@ -212,7 +216,7 @@ public abstract class FieldType extends FieldProperties {
   public String toString() {
     return typeName + "{class=" + this.getClass().getName()
 //            + propertiesToString(properties)
-            + (analyzer != null ? ",analyzer=" + analyzer.getClass().getName() : "")
+            + (indexAnalyzer != null ? ",analyzer=" + indexAnalyzer.getClass().getName() : "")
             + ",args=" + args
             +"}";
   }
@@ -261,11 +265,10 @@ public abstract class FieldType extends FieldProperties {
     if (val==null) return null;
 
     org.apache.lucene.document.FieldType newType = new org.apache.lucene.document.FieldType();
-    newType.setIndexed(field.indexed());
     newType.setTokenized(field.isTokenized());
     newType.setStored(field.stored());
     newType.setOmitNorms(field.omitNorms());
-    newType.setIndexOptions(getIndexOptions(field, val));
+    newType.setIndexOptions(field.indexed() ? getIndexOptions(field, val) : IndexOptions.NONE);
     newType.setStoreTermVectors(field.storeTermVector());
     newType.setStoreTermVectorOffsets(field.storeTermOffsets());
     newType.setStoreTermVectorPositions(field.storeTermPositions());
@@ -300,7 +303,7 @@ public abstract class FieldType extends FieldProperties {
    */
   public List<StorableField> createFields(SchemaField field, Object value, float boost) {
     StorableField f = createField( field, value, boost);
-    if (field.hasDocValues() && f.fieldType().docValueType() == null) {
+    if (field.hasDocValues() && f.fieldType().docValuesType() == null) {
       // field types that support doc values should either override createField
       // to return a field with doc values or extend createFields if this can't
       // be done in a single field instance (see StrField for example)
@@ -313,7 +316,7 @@ public abstract class FieldType extends FieldProperties {
 
     IndexOptions options = IndexOptions.DOCS_AND_FREQS_AND_POSITIONS;
     if (field.omitTermFreqAndPositions()) {
-      options = IndexOptions.DOCS_ONLY;
+      options = IndexOptions.DOCS;
     } else if (field.omitPositions()) {
       options = IndexOptions.DOCS_AND_FREQS;
     } else if (field.storeOffsetsWithPositions()) {
@@ -356,7 +359,7 @@ public abstract class FieldType extends FieldProperties {
   }
 
   public Object toObject(SchemaField sf, BytesRef term) {
-    final CharsRef ref = new CharsRef(term.length);
+    final CharsRefBuilder ref = new CharsRefBuilder();
     indexedToReadable(term, ref);
     final StorableField f = createField(sf, ref.toString(), 1.0f);
     return toObject(f);
@@ -368,9 +371,9 @@ public abstract class FieldType extends FieldProperties {
   }
 
   /** Given an indexed term, append the human readable representation*/
-  public CharsRef indexedToReadable(BytesRef input, CharsRef output) {
-    UnicodeUtil.UTF8toUTF16(input, output);
-    return output;
+  public CharsRef indexedToReadable(BytesRef input, CharsRefBuilder output) {
+    output.copyUTF8Bytes(input);
+    return output.get();
   }
 
   /** Given the stored field, return the human readable representation */
@@ -392,9 +395,9 @@ public abstract class FieldType extends FieldProperties {
   }
 
   /** Given the readable value, return the term value that will match it. */
-  public void readableToIndexed(CharSequence val, BytesRef result) {
+  public void readableToIndexed(CharSequence val, BytesRefBuilder result) {
     final String internal = readableToIndexed(val.toString());
-    UnicodeUtil.UTF16toUTF8(internal, 0, internal.length(), result);
+    result.copyChars(internal);
   }
 
   public void setIsExplicitQueryAnalyzer(boolean isExplicitQueryAnalyzer) {
@@ -426,6 +429,35 @@ public abstract class FieldType extends FieldProperties {
     }
     return getClass().getName();
   }
+
+
+  /**
+   * Returns a Query instance for doing prefix searches on this field type.
+   * Also, other QueryParser implementations may have different semantics.
+   * <p/>
+   * Sub-classes should override this method to provide their own range query implementation.
+   *
+   * @param parser       the {@link org.apache.solr.search.QParser} calling the method
+   * @param sf           the schema field
+   * @param termStr      the term string for prefix query
+   * @return a Query instance to perform prefix search
+   *
+   */
+  public Query getPrefixQuery(QParser parser, SchemaField sf, String termStr) {
+    PrefixQuery query = new PrefixQuery(new Term(sf.getName(), termStr));
+    query.setRewriteMethod(sf.getType().getRewriteMethod(parser, sf));
+    return query;
+  }
+  
+  /**
+   * DocValues is not enabled for a field, but its indexed, docvalues can be constructed 
+   * on the fly (uninverted, aka fieldcache) on the first request to sort, facet, etc. 
+   * This specifies the structure to use.
+   * 
+   * @param sf field instance
+   * @return type to uninvert, or {@code null} (to disallow uninversion for the field)
+   */
+  public abstract UninvertingReader.Type getUninversionType(SchemaField sf);
 
   /**
    * Default analyzer for types that only produce 1 verbatim token...
@@ -460,23 +492,9 @@ public abstract class FieldType extends FieldProperties {
     }
   }
 
-  /**
-   * Analyzer set by schema for text types to use when indexing fields
-   * of this type, subclasses can set analyzer themselves or override
-   * getAnalyzer()
-   * @see #getAnalyzer
-   * @see #setAnalyzer
-   */
-  protected Analyzer analyzer=new DefaultAnalyzer(256);
+  private Analyzer indexAnalyzer = new DefaultAnalyzer(256);
 
-  /**
-   * Analyzer set by schema for text types to use when searching fields
-   * of this type, subclasses can set analyzer themselves or override
-   * getAnalyzer()
-   * @see #getQueryAnalyzer
-   * @see #setQueryAnalyzer
-   */
-  protected Analyzer queryAnalyzer=analyzer;
+  private Analyzer queryAnalyzer = indexAnalyzer;
 
   /**
    * Returns the Analyzer to be used when indexing fields of this type.
@@ -485,8 +503,8 @@ public abstract class FieldType extends FieldProperties {
    * </p>
    * @see #getQueryAnalyzer
    */
-  public Analyzer getAnalyzer() {
-    return analyzer;
+  public Analyzer getIndexAnalyzer() {
+    return indexAnalyzer;
   }
 
   /**
@@ -494,10 +512,17 @@ public abstract class FieldType extends FieldProperties {
    * <p>
    * This method may be called many times, at any time.
    * </p>
-   * @see #getAnalyzer
+   * @see #getIndexAnalyzer
    */
   public Analyzer getQueryAnalyzer() {
     return queryAnalyzer;
+  }
+
+  /**
+   * Returns true if this type supports index and query analyzers, false otherwise.
+   */
+  protected boolean supportsAnalyzers() {
+    return false;
   }
 
 
@@ -505,40 +530,46 @@ public abstract class FieldType extends FieldProperties {
    * Sets the Analyzer to be used when indexing fields of this type.
    *
    * <p>
-   * The default implementation throws a SolrException.  
-   * Subclasses that override this method need to ensure the behavior 
-   * of the analyzer is consistent with the implementation of toInternal.
+   * Subclasses should override {@link #supportsAnalyzers()} to
+   * enable this function.
    * </p>
-   * 
-   * @see #toInternal
+   *
+   * @see #supportsAnalyzers()
    * @see #setQueryAnalyzer
-   * @see #getAnalyzer
+   * @see #getIndexAnalyzer
    */
-  public void setAnalyzer(Analyzer analyzer) {
-    throw new SolrException
-      (ErrorCode.SERVER_ERROR,
-       "FieldType: " + this.getClass().getSimpleName() + 
-       " (" + typeName + ") does not support specifying an analyzer");
+  public final void setIndexAnalyzer(Analyzer analyzer) {
+    if (supportsAnalyzers()) {
+      indexAnalyzer = analyzer;
+    } else {
+      throw new SolrException
+        (ErrorCode.SERVER_ERROR,
+         "FieldType: " + this.getClass().getSimpleName() +
+         " (" + typeName + ") does not support specifying an analyzer");
+    }
   }
 
   /**
    * Sets the Analyzer to be used when querying fields of this type.
    *
    * <p>
-   * The default implementation throws a SolrException.  
-   * Subclasses that override this method need to ensure the behavior 
-   * of the analyzer is consistent with the implementation of toInternal.
+   * Subclasses should override {@link #supportsAnalyzers()} to
+   * enable this function.
    * </p>
-   * 
-   * @see #toInternal
-   * @see #setAnalyzer
+   *
+   * @see #supportsAnalyzers()
+   * @see #setIndexAnalyzer
    * @see #getQueryAnalyzer
    */
-  public void setQueryAnalyzer(Analyzer analyzer) {
-    throw new SolrException
-      (ErrorCode.SERVER_ERROR,
-       "FieldType: " + this.getClass().getSimpleName() +
-       " (" + typeName + ") does not support specifying an analyzer");
+  public final void setQueryAnalyzer(Analyzer analyzer) {
+    if (supportsAnalyzers()) {
+      queryAnalyzer = analyzer;
+    } else {
+      throw new SolrException
+        (ErrorCode.SERVER_ERROR,
+         "FieldType: " + this.getClass().getSimpleName() +
+         " (" + typeName + ") does not support specifying an analyzer");
+    }
   }
 
   /** @lucene.internal */
@@ -668,7 +699,7 @@ public abstract class FieldType extends FieldProperties {
             part2 == null ? null : new BytesRef(toInternal(part2)),
             minInclusive, maxInclusive));
       } else {
-        return new ConstantScoreQuery(FieldCacheRangeFilter.newStringRange(
+        return new ConstantScoreQuery(DocValuesRangeFilter.newStringRange(
             field.getName(), 
             part1 == null ? null : toInternal(part1),
             part2 == null ? null : toInternal(part2),
@@ -694,13 +725,13 @@ public abstract class FieldType extends FieldProperties {
    * 
    */
   public Query getFieldQuery(QParser parser, SchemaField field, String externalVal) {
-    BytesRef br = new BytesRef();
+    BytesRefBuilder br = new BytesRefBuilder();
     readableToIndexed(externalVal, br);
     if (field.hasDocValues() && !field.indexed()) {
       // match-only
       return getRangeQuery(parser, field, externalVal, externalVal, true, true);
     } else {
-      return new TermQuery(new Term(field.getName(), br));
+      return new TermQuery(new Term(field.getName(), br.toBytesRef()));
     }
   }
   
@@ -712,9 +743,9 @@ public abstract class FieldType extends FieldProperties {
    */
   public MultiTermQuery.RewriteMethod getRewriteMethod(QParser parser, SchemaField field) {
     if (!field.indexed() && field.hasDocValues()) {
-      return field.multiValued() ? new DocTermOrdsRewriteMethod() : new FieldCacheRewriteMethod();
+      return field.multiValued() ? new DocTermOrdsRewriteMethod() : new DocValuesRewriteMethod();
     } else {
-      return MultiTermQuery.CONSTANT_SCORE_AUTO_REWRITE_DEFAULT;
+      return MultiTermQuery.CONSTANT_SCORE_FILTER_REWRITE;
     }
   }
 
@@ -765,7 +796,7 @@ public abstract class FieldType extends FieldProperties {
    * @param showDefaults if true, include default properties.
    */
   public SimpleOrderedMap<Object> getNamedPropertyValues(boolean showDefaults) {
-    SimpleOrderedMap<Object> namedPropertyValues = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> namedPropertyValues = new SimpleOrderedMap<>();
     namedPropertyValues.add(TYPE_NAME, getTypeName());
     namedPropertyValues.add(CLASS_NAME, getClassArg());
     if (showDefaults) {
@@ -809,14 +840,15 @@ public abstract class FieldType extends FieldProperties {
         namedPropertyValues.add(DOC_VALUES_FORMAT, getDocValuesFormat());
       }
     } else { // Don't show defaults
-      Set<String> fieldProperties = new HashSet<String>();
+      Set<String> fieldProperties = new HashSet<>();
       for (String propertyName : FieldProperties.propertyNames) {
         fieldProperties.add(propertyName);
       }
+
       for (String key : args.keySet()) {
         if (fieldProperties.contains(key)) {
           namedPropertyValues.add(key, StrUtils.parseBool(args.get(key)));
-        } else if ( ! CLASS_NAME.equals(key) && ! TYPE_NAME.equals(key)) {
+        } else if (!CLASS_NAME.equals(key) && !TYPE_NAME.equals(key)) {
           namedPropertyValues.add(key, args.get(key));
         }
       }
@@ -824,7 +856,7 @@ public abstract class FieldType extends FieldProperties {
     
     if (isExplicitAnalyzer()) {
       String analyzerProperty = isExplicitQueryAnalyzer() ? INDEX_ANALYZER : ANALYZER;
-      namedPropertyValues.add(analyzerProperty, getAnalyzerProperties(getAnalyzer()));
+      namedPropertyValues.add(analyzerProperty, getAnalyzerProperties(getIndexAnalyzer()));
     } 
     if (isExplicitQueryAnalyzer()) {
       String analyzerProperty = isExplicitAnalyzer() ? QUERY_ANALYZER : ANALYZER;
@@ -841,7 +873,7 @@ public abstract class FieldType extends FieldProperties {
 
   /** Returns args to this field type that aren't standard field properties */
   protected Map<String,String> getNonFieldPropertyArgs() {
-    Map<String,String> initArgs =  new HashMap<String,String>(args);
+    Map<String,String> initArgs =  new HashMap<>(args);
     for (String prop : FieldProperties.propertyNames) {
       initArgs.remove(prop);
     }
@@ -854,16 +886,16 @@ public abstract class FieldType extends FieldProperties {
    * name and args.
    */
   protected static SimpleOrderedMap<Object> getAnalyzerProperties(Analyzer analyzer) {
-    SimpleOrderedMap<Object> analyzerProps = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> analyzerProps = new SimpleOrderedMap<>();
 
     if (analyzer instanceof TokenizerChain) {
       Map<String,String> factoryArgs;
       TokenizerChain tokenizerChain = (TokenizerChain)analyzer;
       CharFilterFactory[] charFilterFactories = tokenizerChain.getCharFilterFactories();
       if (null != charFilterFactories && charFilterFactories.length > 0) {
-        List<SimpleOrderedMap<Object>> charFilterProps = new ArrayList<SimpleOrderedMap<Object>>();
+        List<SimpleOrderedMap<Object>> charFilterProps = new ArrayList<>();
         for (CharFilterFactory charFilterFactory : charFilterFactories) {
-          SimpleOrderedMap<Object> props = new SimpleOrderedMap<Object>();
+          SimpleOrderedMap<Object> props = new SimpleOrderedMap<>();
           props.add(CLASS_NAME, charFilterFactory.getClassArg());
           factoryArgs = charFilterFactory.getOriginalArgs();
           if (null != factoryArgs) {
@@ -884,7 +916,7 @@ public abstract class FieldType extends FieldProperties {
         analyzerProps.add(CHAR_FILTERS, charFilterProps);
       }
 
-      SimpleOrderedMap<Object> tokenizerProps = new SimpleOrderedMap<Object>();
+      SimpleOrderedMap<Object> tokenizerProps = new SimpleOrderedMap<>();
       TokenizerFactory tokenizerFactory = tokenizerChain.getTokenizerFactory();
       tokenizerProps.add(CLASS_NAME, tokenizerFactory.getClassArg());
       factoryArgs = tokenizerFactory.getOriginalArgs();
@@ -905,9 +937,9 @@ public abstract class FieldType extends FieldProperties {
 
       TokenFilterFactory[] filterFactories = tokenizerChain.getTokenFilterFactories();
       if (null != filterFactories && filterFactories.length > 0) {
-        List<SimpleOrderedMap<Object>> filterProps = new ArrayList<SimpleOrderedMap<Object>>();
+        List<SimpleOrderedMap<Object>> filterProps = new ArrayList<>();
         for (TokenFilterFactory filterFactory : filterFactories) {
-          SimpleOrderedMap<Object> props = new SimpleOrderedMap<Object>();
+          SimpleOrderedMap<Object> props = new SimpleOrderedMap<>();
           props.add(CLASS_NAME, filterFactory.getClassArg());
           factoryArgs = filterFactory.getOriginalArgs();
           if (null != factoryArgs) {
@@ -932,6 +964,12 @@ public abstract class FieldType extends FieldProperties {
     }
     return analyzerProps;
   }
+
+  /**Converts any Object to a java Object native to this field type
+   */
+  public Object toNativeType(Object val) {
+    return val;
+  }
   
   /** 
    * Convert a value used by the FieldComparator for this FieldType's SortField
@@ -947,5 +985,53 @@ public abstract class FieldType extends FieldProperties {
    */
   public Object unmarshalSortValue(Object value) {
     return value;
+  }
+
+  /**
+   * Marshals a string-based field value.
+   */
+  protected static Object marshalStringSortValue(Object value) {
+    if (null == value) {
+      return null;
+    }
+    CharsRefBuilder spare = new CharsRefBuilder();
+    spare.copyUTF8Bytes((BytesRef)value);
+    return spare.toString();
+  }
+
+  /**
+   * Unmarshals a string-based field value.
+   */
+  protected static Object unmarshalStringSortValue(Object value) {
+    if (null == value) {
+      return null;
+    }
+    BytesRefBuilder spare = new BytesRefBuilder();
+    String stringVal = (String)value;
+    spare.copyChars(stringVal);
+    return spare.get();
+  }
+
+  /**
+   * Marshals a binary field value.
+   */
+  protected static Object marshalBase64SortValue(Object value) {
+    if (null == value) {
+      return null;
+    }
+    final BytesRef val = (BytesRef)value;
+    return Base64.byteArrayToBase64(val.bytes, val.offset, val.length);
+  }
+
+  /**
+   * Unmarshals a binary field value.
+   */
+  protected static Object unmarshalBase64SortValue(Object value) {
+    if (null == value) {
+      return null;
+    }
+    final String val = (String)value;
+    final byte[] bytes = Base64.base64ToByteArray(val);
+    return new BytesRef(bytes);
   }
 }

@@ -32,7 +32,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.DirectoryReader; // javadocs
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.MultiFields;
@@ -81,7 +81,7 @@ public class IndexSearcher {
   // NOTE: these members might change in incompatible ways
   // in the next release
   protected final IndexReaderContext readerContext;
-  protected final List<AtomicReaderContext> leafContexts;
+  protected final List<LeafReaderContext> leafContexts;
   /** used with executor - each slice holds a set of leafs executed within one thread */
   protected final LeafSlice[] leafSlices;
 
@@ -112,7 +112,7 @@ public class IndexSearcher {
 
   /** Runs searches for each segment separately, using the
    *  provided ExecutorService.  IndexSearcher will not
-   *  shutdown/awaitTermination this ExecutorService on
+   *  close/awaitTermination this ExecutorService on
    *  close; you must do so, eventually, on your own.  NOTE:
    *  if you are using {@link NIOFSDirectory}, do not use
    *  the shutdownNow method of ExecutorService as this uses
@@ -130,7 +130,7 @@ public class IndexSearcher {
    * <p>
    * Given a non-<code>null</code> {@link ExecutorService} this method runs
    * searches for each segment separately, using the provided ExecutorService.
-   * IndexSearcher will not shutdown/awaitTermination this ExecutorService on
+   * IndexSearcher will not close/awaitTermination this ExecutorService on
    * close; you must do so, eventually, on your own. NOTE: if you are using
    * {@link NIOFSDirectory}, do not use the shutdownNow method of
    * ExecutorService as this uses Thread.interrupt under-the-hood which can
@@ -164,9 +164,9 @@ public class IndexSearcher {
   /**
    * Expert: Creates an array of leaf slices each holding a subset of the given leaves.
    * Each {@link LeafSlice} is executed in a single thread. By default there
-   * will be one {@link LeafSlice} per leaf ({@link AtomicReaderContext}).
+   * will be one {@link LeafSlice} per leaf ({@link org.apache.lucene.index.LeafReaderContext}).
    */
-  protected LeafSlice[] slices(List<AtomicReaderContext> leaves) {
+  protected LeafSlice[] slices(List<LeafReaderContext> leaves) {
     LeafSlice[] slices = new LeafSlice[leaves.size()];
     for (int i = 0; i < slices.length; i++) {
       slices[i] = new LeafSlice(leaves.get(i));
@@ -275,7 +275,7 @@ public class IndexSearcher {
 
   /** Lower-level search API.
    *
-   * <p>{@link Collector#collect(int)} is called for every matching
+   * <p>{@link LeafCollector#collect(int)} is called for every matching
    * document.
    *
    * @param query to match documents
@@ -291,7 +291,7 @@ public class IndexSearcher {
 
   /** Lower-level search API.
    *
-   * <p>{@link Collector#collect(int)} is called for every matching document.
+   * <p>{@link LeafCollector#collect(int)} is called for every matching document.
    *
    * @throws BooleanQuery.TooManyClauses If a query would exceed 
    *         {@link BooleanQuery#getMaxClauseCount()} clauses.
@@ -441,7 +441,7 @@ public class IndexSearcher {
     } else {
       final HitQueue hq = new HitQueue(nDocs, false);
       final Lock lock = new ReentrantLock();
-      final ExecutionHelper<TopDocs> runner = new ExecutionHelper<TopDocs>(executor);
+      final ExecutionHelper<TopDocs> runner = new ExecutionHelper<>(executor);
     
       for (int i = 0; i < leafSlices.length; i++) { // search each sub
         runner.submit(new SearcherCallableNoSort(lock, this, leafSlices[i], weight, after, nDocs, hq));
@@ -472,7 +472,7 @@ public class IndexSearcher {
    * @throws BooleanQuery.TooManyClauses If a query would exceed 
    *         {@link BooleanQuery#getMaxClauseCount()} clauses.
    */
-  protected TopDocs search(List<AtomicReaderContext> leaves, Weight weight, ScoreDoc after, int nDocs) throws IOException {
+  protected TopDocs search(List<LeafReaderContext> leaves, Weight weight, ScoreDoc after, int nDocs) throws IOException {
     // single thread
     int limit = reader.maxDoc();
     if (limit == 0) {
@@ -532,7 +532,7 @@ public class IndexSearcher {
                                                                       false);
 
       final Lock lock = new ReentrantLock();
-      final ExecutionHelper<TopFieldDocs> runner = new ExecutionHelper<TopFieldDocs>(executor);
+      final ExecutionHelper<TopFieldDocs> runner = new ExecutionHelper<>(executor);
       for (int i = 0; i < leafSlices.length; i++) { // search each leaf slice
         runner.submit(
                       new SearcherCallableWithSort(lock, this, leafSlices[i], weight, after, nDocs, topCollector, sort, doDocScores, doMaxScore));
@@ -558,7 +558,7 @@ public class IndexSearcher {
    * whether or not the fields in the returned {@link FieldDoc} instances should
    * be set by specifying fillFields.
    */
-  protected TopFieldDocs search(List<AtomicReaderContext> leaves, Weight weight, FieldDoc after, int nDocs,
+  protected TopFieldDocs search(List<LeafReaderContext> leaves, Weight weight, FieldDoc after, int nDocs,
                                 Sort sort, boolean fillFields, boolean doDocScores, boolean doMaxScore) throws IOException {
     // single thread
     int limit = reader.maxDoc();
@@ -578,7 +578,7 @@ public class IndexSearcher {
    * Lower-level search API.
    * 
    * <p>
-   * {@link Collector#collect(int)} is called for every document. <br>
+   * {@link LeafCollector#collect(int)} is called for every document. <br>
    * 
    * <p>
    * NOTE: this method executes the searches on all given leaves exclusively.
@@ -593,24 +593,25 @@ public class IndexSearcher {
    * @throws BooleanQuery.TooManyClauses If a query would exceed 
    *         {@link BooleanQuery#getMaxClauseCount()} clauses.
    */
-  protected void search(List<AtomicReaderContext> leaves, Weight weight, Collector collector)
+  protected void search(List<LeafReaderContext> leaves, Weight weight, Collector collector)
       throws IOException {
 
     // TODO: should we make this
     // threaded...?  the Collector could be sync'd?
     // always use single thread:
-    for (AtomicReaderContext ctx : leaves) { // search each subreader
+    for (LeafReaderContext ctx : leaves) { // search each subreader
+      final LeafCollector leafCollector;
       try {
-        collector.setNextReader(ctx);
+        leafCollector = collector.getLeafCollector(ctx);
       } catch (CollectionTerminatedException e) {
         // there is no doc of interest in this reader context
         // continue with the following leaf
         continue;
       }
-      Scorer scorer = weight.scorer(ctx, !collector.acceptsDocsOutOfOrder(), true, ctx.reader().getLiveDocs());
+      BulkScorer scorer = weight.bulkScorer(ctx, !leafCollector.acceptsDocsOutOfOrder(), ctx.reader().getLiveDocs());
       if (scorer != null) {
         try {
-          scorer.score(collector);
+          scorer.score(leafCollector);
         } catch (CollectionTerminatedException e) {
           // collection was terminated prematurely
           // continue with the following leaf
@@ -658,7 +659,7 @@ public class IndexSearcher {
    */
   protected Explanation explain(Weight weight, int doc) throws IOException {
     int n = ReaderUtil.subIndex(doc, leafContexts);
-    final AtomicReaderContext ctx = leafContexts.get(n);
+    final LeafReaderContext ctx = leafContexts.get(n);
     int deBasedDoc = doc - ctx.docBase;
     
     return weight.explain(ctx, deBasedDoc);
@@ -768,45 +769,6 @@ public class IndexSearcher {
       this.doMaxScore = doMaxScore;
     }
 
-    private final class FakeScorer extends Scorer {
-      float score;
-      int doc;
-
-      public FakeScorer() {
-        super(null);
-      }
-    
-      @Override
-      public int advance(int target) {
-        throw new UnsupportedOperationException("FakeScorer doesn't support advance(int)");
-      }
-
-      @Override
-      public int docID() {
-        return doc;
-      }
-
-      @Override
-      public int freq() {
-        throw new UnsupportedOperationException("FakeScorer doesn't support freq()");
-      }
-
-      @Override
-      public int nextDoc() {
-        throw new UnsupportedOperationException("FakeScorer doesn't support nextDoc()");
-      }
-    
-      @Override
-      public float score() {
-        return score;
-      }
-
-      @Override
-      public long cost() {
-        return 1;
-      }
-    }
-
     private final FakeScorer fakeScorer = new FakeScorer();
 
     @Override
@@ -816,14 +778,14 @@ public class IndexSearcher {
           weight, after, nDocs, sort, true, doDocScores || sort.needsScores(), doMaxScore);
       lock.lock();
       try {
-        final AtomicReaderContext ctx = slice.leaves[0];
+        final LeafReaderContext ctx = slice.leaves[0];
         final int base = ctx.docBase;
-        hq.setNextReader(ctx);
-        hq.setScorer(fakeScorer);
+        final LeafCollector collector = hq.getLeafCollector(ctx);
+        collector.setScorer(fakeScorer);
         for(ScoreDoc scoreDoc : docs.scoreDocs) {
           fakeScorer.doc = scoreDoc.doc - base;
           fakeScorer.score = scoreDoc.score;
-          hq.collect(scoreDoc.doc-base);
+          collector.collect(scoreDoc.doc-base);
         }
 
         // Carry over maxScore from sub:
@@ -849,7 +811,7 @@ public class IndexSearcher {
     private int numTasks;
 
     ExecutionHelper(final Executor executor) {
-      this.service = new ExecutorCompletionService<T>(executor);
+      this.service = new ExecutorCompletionService<>(executor);
     }
 
     @Override
@@ -896,9 +858,9 @@ public class IndexSearcher {
    * @lucene.experimental
    */
   public static class LeafSlice {
-    final AtomicReaderContext[] leaves;
+    final LeafReaderContext[] leaves;
     
-    public LeafSlice(AtomicReaderContext... leaves) {
+    public LeafSlice(LeafReaderContext... leaves) {
       this.leaves = leaves;
     }
   }

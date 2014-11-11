@@ -19,13 +19,14 @@ package org.apache.lucene.search;
 
 import java.io.IOException;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.util.Bits;
-import org.apache.lucene.util.OpenBitSet;
+import org.apache.lucene.util.LongBitSet;
 
 /**
  * Rewrites MultiTermQueries into a filter, using DocTermOrds for term enumeration.
@@ -82,10 +83,10 @@ public final class DocTermOrdsRewriteMethod extends MultiTermQuery.RewriteMethod
      * results.
      */
     @Override
-    public DocIdSet getDocIdSet(AtomicReaderContext context, final Bits acceptDocs) throws IOException {
-      final SortedSetDocValues docTermOrds = FieldCache.DEFAULT.getDocTermOrds(context.reader(), query.field);
+    public DocIdSet getDocIdSet(LeafReaderContext context, final Bits acceptDocs) throws IOException {
+      final SortedSetDocValues docTermOrds = DocValues.getSortedSet(context.reader(), query.field);
       // Cannot use FixedBitSet because we require long index (ord):
-      final OpenBitSet termSet = new OpenBitSet(docTermOrds.getValueCount());
+      final LongBitSet termSet = new LongBitSet(docTermOrds.getValueCount());
       TermsEnum termsEnum = query.getTermsEnum(new Terms() {
         
         @Override
@@ -136,7 +137,7 @@ public final class DocTermOrdsRewriteMethod extends MultiTermQuery.RewriteMethod
       
       assert termsEnum != null;
       if (termsEnum.next() != null) {
-        // fill into a OpenBitSet
+        // fill into a bitset
         do {
           termSet.set(termsEnum.ord());
         } while (termsEnum.next() != null);
@@ -144,7 +145,7 @@ public final class DocTermOrdsRewriteMethod extends MultiTermQuery.RewriteMethod
         return null;
       }
       
-      return new FieldCacheDocIdSet(context.reader().maxDoc(), acceptDocs) {
+      return new DocValuesDocIdSet(context.reader().maxDoc(), acceptDocs) {
         @Override
         protected final boolean matchDoc(int doc) throws ArrayIndexOutOfBoundsException {
           docTermOrds.setDocument(doc);

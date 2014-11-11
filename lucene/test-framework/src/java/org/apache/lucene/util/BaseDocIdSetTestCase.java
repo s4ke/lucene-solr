@@ -17,6 +17,8 @@ package org.apache.lucene.util;
  * limitations under the License.
  */
 
+import static org.apache.lucene.util.BaseBitSetTestCase.randomSet;
+
 import java.io.IOException;
 import java.util.BitSet;
 
@@ -29,36 +31,11 @@ public abstract class BaseDocIdSetTestCase<T extends DocIdSet> extends LuceneTes
   /** Create a copy of the given {@link BitSet} which has <code>length</code> bits. */
   public abstract T copyOf(BitSet bs, int length) throws IOException;
 
-  /** Create a random set which has <code>numBitsSet</code> of its <code>numBits</code> bits set. */
-  protected static BitSet randomSet(int numBits, int numBitsSet) {
-    assert numBitsSet <= numBits;
-    final BitSet set = new BitSet(numBits);
-    if (numBitsSet == numBits) {
-      set.set(0, numBits);
-    } else {
-      for (int i = 0; i < numBitsSet; ++i) {
-        while (true) {
-          final int o = random().nextInt(numBits);
-          if (!set.get(o)) {
-            set.set(o);
-            break;
-          }
-        }
-      }
-    }
-    return set;
-  }
-
-  /** Same as {@link #randomSet(int, int)} but given a load factor. */
-  protected static BitSet randomSet(int numBits, float percentSet) {
-    return randomSet(numBits, (int) (percentSet * numBits));
-  }
-
   /** Test length=0. */
   public void testNoBit() throws IOException {
     final BitSet bs = new BitSet(1);
-    final T copy = copyOf(bs, 0);
-    assertEquals(0, bs, copy);
+    final T copy = copyOf(bs, 1);
+    assertEquals(1, bs, copy);
   }
 
   /** Test length=1. */
@@ -86,9 +63,9 @@ public abstract class BaseDocIdSetTestCase<T extends DocIdSet> extends LuceneTes
 
   /** Compare the content of the set against a {@link BitSet}. */
   public void testAgainstBitSet() throws IOException {
-    final int numBits = _TestUtil.nextInt(random(), 100, 1 << 20);
+    final int numBits = TestUtil.nextInt(random(), 100, 1 << 20);
     // test various random sets with various load factors
-    for (float percentSet : new float[] {0f, 0.0001f, random().nextFloat() / 2, 0.9f, 1f}) {
+    for (float percentSet : new float[] {0f, 0.0001f, random().nextFloat(), 0.9f, 1f}) {
       final BitSet set = randomSet(numBits, percentSet);
       final T copy = copyOf(set, numBits);
       assertEquals(numBits, set, copy);
@@ -103,13 +80,28 @@ public abstract class BaseDocIdSetTestCase<T extends DocIdSet> extends LuceneTes
     copy = copyOf(set, numBits); // then random index
     assertEquals(numBits, set, copy);
     // test regular increments
-    for (int inc = 2; inc < 1000; inc += _TestUtil.nextInt(random(), 1, 100)) {
+    for (int inc = 2; inc < 1000; inc += TestUtil.nextInt(random(), 1, 100)) {
       set = new BitSet(numBits);
       for (int d = random().nextInt(10); d < numBits; d += inc) {
         set.set(d);
       }
       copy = copyOf(set, numBits);
       assertEquals(numBits, set, copy);
+    }
+  }
+
+  /** Test ram usage estimation. */
+  public void testRamBytesUsed() throws IOException {
+    final int iters = 100;
+    for (int i = 0; i < iters; ++i) {
+      final int pow = random().nextInt(20);
+      final int maxDoc = TestUtil.nextInt(random(), 1, 1 << pow);
+      final int numDocs = TestUtil.nextInt(random(), 0, Math.min(maxDoc, 1 << TestUtil.nextInt(random(), 0, pow)));
+      final BitSet set = randomSet(maxDoc, numDocs);
+      final DocIdSet copy = copyOf(set, maxDoc);
+      final long actualBytes = ramBytesUsed(copy, maxDoc);
+      final long expectedBytes = copy.ramBytesUsed();
+      assertEquals(expectedBytes, actualBytes);
     }
   }
 
@@ -170,6 +162,23 @@ public abstract class BaseDocIdSetTestCase<T extends DocIdSet> extends LuceneTes
         assertEquals(true, bits.get(doc));
       }
     }
+  }
+
+  private static class Dummy {
+    @SuppressWarnings("unused")
+    Object o1, o2;
+  }
+
+  // same as RamUsageTester.sizeOf but tries to not take into account resources
+  // that might be shared across instances
+  private long ramBytesUsed(DocIdSet set, int length) throws IOException {
+    Dummy dummy = new Dummy();
+    dummy.o1 = copyOf(new BitSet(length), length);
+    dummy.o2 = set;
+    long bytes1 = RamUsageTester.sizeOf(dummy);
+    dummy.o2 = null;
+    long bytes2 = RamUsageTester.sizeOf(dummy);
+    return bytes1 - bytes2;
   }
 
 }

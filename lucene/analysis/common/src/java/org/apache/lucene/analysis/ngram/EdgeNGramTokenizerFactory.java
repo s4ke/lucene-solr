@@ -17,10 +17,10 @@ package org.apache.lucene.analysis.ngram;
  * limitations under the License.
  */
 
+import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.analysis.util.TokenizerFactory;
-import org.apache.lucene.util.AttributeSource.AttributeFactory;
+import org.apache.lucene.util.AttributeFactory;
 
-import java.io.Reader;
 import java.util.Map;
 
 /**
@@ -47,7 +47,7 @@ public class EdgeNGramTokenizerFactory extends TokenizerFactory {
   }
   
   @Override
-  public EdgeNGramTokenizer create(AttributeFactory factory) {
-    return new EdgeNGramTokenizer(luceneMatchVersion, factory, minGramSize, maxGramSize);
+  public Tokenizer create(AttributeFactory factory) {
+    return new EdgeNGramTokenizer(factory, minGramSize, maxGramSize);
   }
 }

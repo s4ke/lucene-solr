@@ -23,6 +23,7 @@ import java.util.List;
 
 import org.apache.lucene.analysis.core.WhitespaceAnalyzer;
 import org.apache.lucene.document.Document;
+import org.apache.lucene.facet.DrillDownQuery;
 import org.apache.lucene.facet.FacetResult;
 import org.apache.lucene.facet.Facets;
 import org.apache.lucene.facet.FacetsCollector;
@@ -37,6 +38,7 @@ import org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyWriter;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.store.Directory;
@@ -60,8 +62,7 @@ public class AssociationsFacetsExample {
   
   /** Build the example index. */
   private void index() throws IOException {
-    IndexWriterConfig iwc = new IndexWriterConfig(FacetExamples.EXAMPLES_VER, 
-                                                  new WhitespaceAnalyzer(FacetExamples.EXAMPLES_VER));
+    IndexWriterConfig iwc = new IndexWriterConfig(new WhitespaceAnalyzer()).setOpenMode(OpenMode.CREATE);
     IndexWriter indexWriter = new IndexWriter(indexDir, iwc);
 
     // Writes facet ords to a separate directory from the main index
@@ -106,7 +107,7 @@ public class AssociationsFacetsExample {
     Facets genre = new TaxonomyFacetSumFloatAssociations("$genre", taxoReader, config, fc);
 
     // Retrieve results
-    List<FacetResult> results = new ArrayList<FacetResult>();
+    List<FacetResult> results = new ArrayList<>();
     results.add(tags.getTopChildren(10, "tags"));
     results.add(genre.getTopChildren(10, "genre"));
 
@@ -116,12 +117,43 @@ public class AssociationsFacetsExample {
     return results;
   }
   
+  /** User drills down on 'tags/solr'. */
+  private FacetResult drillDown() throws IOException {
+    DirectoryReader indexReader = DirectoryReader.open(indexDir);
+    IndexSearcher searcher = new IndexSearcher(indexReader);
+    TaxonomyReader taxoReader = new DirectoryTaxonomyReader(taxoDir);
+
+    // Passing no baseQuery means we drill down on all
+    // documents ("browse only"):
+    DrillDownQuery q = new DrillDownQuery(config);
+
+    // Now user drills down on Publish Date/2010:
+    q.add("tags", "solr");
+    FacetsCollector fc = new FacetsCollector();
+    FacetsCollector.search(searcher, q, 10, fc);
+
+    // Retrieve results
+    Facets facets = new TaxonomyFacetSumFloatAssociations("$genre", taxoReader, config, fc);
+    FacetResult result = facets.getTopChildren(10, "genre");
+
+    indexReader.close();
+    taxoReader.close();
+    
+    return result;
+  }
+  
   /** Runs summing association example. */
   public List<FacetResult> runSumAssociations() throws IOException {
     index();
     return sumAssociations();
   }
   
+  /** Runs the drill-down example. */
+  public FacetResult runDrillDown() throws IOException {
+    index();
+    return drillDown();
+  }
+
   /** Runs the sum int/float associations examples and prints the results. */
   public static void main(String[] args) throws Exception {
     System.out.println("Sum associations example:");

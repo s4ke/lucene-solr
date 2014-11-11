@@ -18,13 +18,17 @@ package org.apache.solr;
  */
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
+import java.io.OutputStreamWriter;
+import java.util.Properties;
 import java.util.SortedMap;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.lucene.util.LuceneTestCase;
 import org.apache.solr.client.solrj.SolrServer;
 import org.apache.solr.client.solrj.embedded.EmbeddedSolrServer;
 import org.apache.solr.client.solrj.embedded.JettySolrRunner;
-import org.apache.solr.client.solrj.embedded.JettySolrRunner.SSLConfig;
 import org.apache.solr.client.solrj.impl.HttpSolrServer;
 import org.apache.solr.util.ExternalPaths;
 import org.eclipse.jetty.servlet.ServletHolder;
@@ -38,46 +42,9 @@ abstract public class SolrJettyTestBase extends SolrTestCaseJ4
 {
   private static Logger log = LoggerFactory.getLogger(SolrJettyTestBase.class);
 
-  private static File TEST_KEYSTORE;
-  static {
-    TEST_KEYSTORE = (null == ExternalPaths.SOURCE_HOME)
-      ? null : new File(ExternalPaths.SOURCE_HOME, "example/etc/solrtest.keystore");
-  }
-
-  private static void initSSLConfig(SSLConfig sslConfig, String keystorePath) {
-    sslConfig.useSsl = false;
-    sslConfig.clientAuth = false;
-    sslConfig.keyStore = keystorePath;
-    sslConfig.keyStorePassword = "secret";
-    sslConfig.trustStore = keystorePath;
-    sslConfig.trustStorePassword = "secret";
-  }
-
-  /**
-   * Returns the File object for the example keystore used when this baseclass randomly 
-   * uses SSL.  May be null ifthis test does not appear to be running as part of the 
-   * standard solr distribution and does not have access to the example configs.
-   *
-   * @lucene.internal 
-   */
-  protected static File getExampleKeystoreFile() {
-    return TEST_KEYSTORE;
-  }
 
   @BeforeClass
   public static void beforeSolrJettyTestBase() throws Exception {
-
-
-    
-    // only randomize SSL if we are a solr test with access to the example keystore
-    if (null == getExampleKeystoreFile()) {
-      log.info("Solr's example keystore not defined (not a solr test?) skipping SSL randomization");
-      return;
-    }
-
-    assertTrue("test keystore does not exist, randomized ssl testing broken: " +
-               getExampleKeystoreFile().getAbsolutePath(), 
-               getExampleKeystoreFile().exists() );
 
   }
 
@@ -85,25 +52,6 @@ abstract public class SolrJettyTestBase extends SolrTestCaseJ4
   public static int port;
   public static SolrServer server = null;
   public static String context;
-  
-  public static SSLConfig getSSLConfig() {
-    SSLConfig sslConfig = new SSLConfig();
-    
-    final boolean trySsl = random().nextBoolean();
-    final boolean trySslClientAuth = random().nextBoolean();
-    
-    log.info("Randomized ssl ({}) and clientAuth ({})", trySsl,
-        trySslClientAuth);
-    String keystorePath = null == TEST_KEYSTORE ? null : TEST_KEYSTORE
-        .getAbsolutePath();
-    initSSLConfig(sslConfig, keystorePath);
-    
-    sslConfig.useSsl = trySsl;
-    sslConfig.clientAuth = trySslClientAuth;
-    
-    initSSLConfig(sslConfig, keystorePath);
-    return sslConfig;
-  }
 
   public static JettySolrRunner createJetty(String solrHome, String configFile, String schemaFile, String context,
                                             boolean stopAtShutdown, SortedMap<ServletHolder,String> extraServlets) 
@@ -113,13 +61,15 @@ abstract public class SolrJettyTestBase extends SolrTestCaseJ4
 
     ignoreException("maxWarmingSearchers");
 
-    // this sets the property for jetty starting SolrDispatchFilter
-    System.setProperty( "solr.data.dir", dataDir.getCanonicalPath() );
-
     context = context==null ? "/solr" : context;
     SolrJettyTestBase.context = context;
-    jetty = new JettySolrRunner(solrHome, context, 0, configFile, schemaFile, stopAtShutdown, extraServlets, getSSLConfig());
+    jetty = new JettySolrRunner(solrHome, context, 0, configFile, schemaFile, stopAtShutdown, extraServlets, sslConfig);
 
+    // this sets the property for jetty starting SolrDispatchFilter
+    if (System.getProperty("solr.data.dir") == null && System.getProperty("solr.hdfs.home") == null) {
+      jetty.setDataDir(createTempDir().toFile().getCanonicalPath());
+    }
+    
     jetty.start();
     port = jetty.getLocalPort();
     log.info("Jetty Assigned Port#" + port);
@@ -137,6 +87,7 @@ abstract public class SolrJettyTestBase extends SolrTestCaseJ4
       jetty.stop();
       jetty = null;
     }
+    if (server != null) server.shutdown();
     server = null;
   }
 
@@ -178,9 +129,6 @@ abstract public class SolrJettyTestBase extends SolrTestCaseJ4
   // Sets up the necessary config files for Jetty. At least some tests require that the solrconfig from the test
   // file directory are used, but some also require that the solr.xml file be explicitly there as of SOLR-4817
   public static void setupJettyTestHome(File solrHome, String collection) throws Exception {
-    if (solrHome.exists()) {
-      FileUtils.deleteDirectory(solrHome);
-    }
     copySolrHomeToTemp(solrHome, collection);
   }
 
@@ -188,6 +136,52 @@ abstract public class SolrJettyTestBase extends SolrTestCaseJ4
     if (solrHome.exists()) {
       FileUtils.deleteDirectory(solrHome);
     }
+  }
+
+  public static void initCore() throws Exception {
+    String exampleHome = legacyExampleCollection1SolrHome();
+    String exampleConfig = exampleHome+"/collection1/conf/solrconfig.xml";
+    String exampleSchema = exampleHome+"/collection1/conf/schema.xml";
+    initCore(exampleConfig, exampleSchema, exampleHome);
+  }
+
+  public static String legacyExampleCollection1SolrHome() {
+    String sourceHome = ExternalPaths.SOURCE_HOME;
+    if (sourceHome == null)
+      throw new IllegalStateException("No source home! Cannot create the legacy example solr home directory.");
+
+    String legacyExampleSolrHome = null;
+    try {
+      File tempSolrHome = LuceneTestCase.createTempDir().toFile();
+      org.apache.commons.io.FileUtils.copyFileToDirectory(new File(sourceHome, "server/solr/solr.xml"), tempSolrHome);
+      File collection1Dir = new File(tempSolrHome, "collection1");
+      org.apache.commons.io.FileUtils.forceMkdir(collection1Dir);
+
+      File configSetDir = new File(sourceHome, "server/solr/configsets/sample_techproducts_configs/conf");
+      org.apache.commons.io.FileUtils.copyDirectoryToDirectory(configSetDir, collection1Dir);
+      Properties props = new Properties();
+      props.setProperty("name", "collection1");
+      OutputStreamWriter writer = null;
+      try {
+        writer = new OutputStreamWriter(FileUtils.openOutputStream(new File(collection1Dir, "core.properties")), "UTF-8");
+        props.store(writer, null);
+      } finally {
+        if (writer != null) {
+          try {
+            writer.close();
+          } catch (Exception ignore){}
+        }
+      }
+      legacyExampleSolrHome = tempSolrHome.getAbsolutePath();
+    } catch (Exception exc) {
+      if (exc instanceof RuntimeException) {
+        throw (RuntimeException)exc;
+      } else {
+        throw new RuntimeException(exc);
+      }
+    }
+
+    return legacyExampleSolrHome;
   }
 
 

@@ -21,15 +21,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
-import org.apache.lucene.index.SerialMergeScheduler;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 public class TestBooleanOr extends LuceneTestCase {
 
@@ -162,7 +160,7 @@ public class TestBooleanOr extends LuceneTestCase {
 
   public void testBooleanScorerMax() throws IOException {
     Directory dir = newDirectory();
-    RandomIndexWriter riw = new RandomIndexWriter(random(), dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    RandomIndexWriter riw = new RandomIndexWriter(random(), dir, newIndexWriterConfig(new MockAnalyzer(random())));
 
     int docCount = atLeast(10000);
 
@@ -184,23 +182,16 @@ public class TestBooleanOr extends LuceneTestCase {
     Weight w = s.createNormalizedWeight(bq);
 
     assertEquals(1, s.getIndexReader().leaves().size());
-    Scorer scorer = w.scorer(s.getIndexReader().leaves().get(0), false, true, null);
+    BulkScorer scorer = w.bulkScorer(s.getIndexReader().leaves().get(0), false, null);
 
     final FixedBitSet hits = new FixedBitSet(docCount);
     final AtomicInteger end = new AtomicInteger();
-    Collector c = new Collector() {
-        @Override
-        public void setNextReader(AtomicReaderContext sub) {
-        }
+    LeafCollector c = new SimpleCollector() {
 
         @Override
         public void collect(int doc) {
           assertTrue("collected doc=" + doc + " beyond max=" + end, doc < end.intValue());
           hits.set(doc);
-        }
-
-        @Override
-        public void setScorer(Scorer scorer) {
         }
 
         @Override
@@ -210,9 +201,9 @@ public class TestBooleanOr extends LuceneTestCase {
       };
 
     while (end.intValue() < docCount) {
-      final int inc = _TestUtil.nextInt(random(), 1, 1000);
+      final int inc = TestUtil.nextInt(random(), 1, 1000);
       end.getAndAdd(inc);
-      scorer.score(c, end.intValue(), -1);
+      scorer.score(c, end.intValue());
     }
 
     assertEquals(docCount, hits.cardinality());

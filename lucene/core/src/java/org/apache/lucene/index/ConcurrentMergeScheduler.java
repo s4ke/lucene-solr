@@ -47,7 +47,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
   private int mergeThreadPriority = -1;
 
   /** List of currently active {@link MergeThread}s. */
-  protected List<MergeThread> mergeThreads = new ArrayList<MergeThread>();
+  protected final List<MergeThread> mergeThreads = new ArrayList<>();
   
   /** 
    * Default {@code maxThreadCount}.
@@ -171,7 +171,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
 
     // Only look at threads that are alive & not in the
     // process of stopping (ie have an active merge):
-    final List<MergeThread> activeMerges = new ArrayList<MergeThread>();
+    final List<MergeThread> activeMerges = new ArrayList<>();
 
     int threadIdx = 0;
     while (threadIdx < mergeThreads.size()) {
@@ -308,7 +308,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
   }
 
   @Override
-  public synchronized void merge(IndexWriter writer) throws IOException {
+  public synchronized void merge(IndexWriter writer, MergeTrigger trigger, boolean newMergesFound) throws IOException {
 
     assert !Thread.holdsLock(writer);
 
@@ -564,14 +564,5 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
     sb.append("maxMergeCount=").append(maxMergeCount).append(", ");    
     sb.append("mergeThreadPriority=").append(mergeThreadPriority);
     return sb.toString();
-  }
-
-  @Override
-  public MergeScheduler clone() {
-    ConcurrentMergeScheduler clone = (ConcurrentMergeScheduler) super.clone();
-    clone.writer = null;
-    clone.dir = null;
-    clone.mergeThreads = new ArrayList<MergeThread>();
-    return clone;
   }
 }

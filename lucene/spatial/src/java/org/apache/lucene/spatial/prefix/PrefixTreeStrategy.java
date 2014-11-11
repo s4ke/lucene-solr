@@ -17,24 +17,23 @@ package org.apache.lucene.spatial.prefix;
  * limitations under the License.
  */
 
-import com.spatial4j.core.shape.Point;
-import com.spatial4j.core.shape.Shape;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 import org.apache.lucene.analysis.TokenStream;
-import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.spatial.SpatialStrategy;
 import org.apache.lucene.spatial.prefix.tree.Cell;
 import org.apache.lucene.spatial.prefix.tree.SpatialPrefixTree;
 import org.apache.lucene.spatial.query.SpatialArgs;
 import org.apache.lucene.spatial.util.ShapeFieldCacheDistanceValueSource;
-
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import com.spatial4j.core.shape.Point;
+import com.spatial4j.core.shape.Shape;
 
 /**
  * An abstract SpatialStrategy based on {@link SpatialPrefixTree}. The two
@@ -77,15 +76,13 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public abstract class PrefixTreeStrategy extends SpatialStrategy {
   protected final SpatialPrefixTree grid;
-  private final Map<String, PointPrefixTreeFieldCacheProvider> provider = new ConcurrentHashMap<String, PointPrefixTreeFieldCacheProvider>();
-  protected final boolean simplifyIndexedCells;
+  private final Map<String, PointPrefixTreeFieldCacheProvider> provider = new ConcurrentHashMap<>();
   protected int defaultFieldValuesArrayLen = 2;
   protected double distErrPct = SpatialArgs.DEFAULT_DISTERRPCT;// [ 0 TO 0.5 ]
 
-  public PrefixTreeStrategy(SpatialPrefixTree grid, String fieldName, boolean simplifyIndexedCells) {
+  public PrefixTreeStrategy(SpatialPrefixTree grid, String fieldName) {
     super(grid.getSpatialContext(), fieldName);
     this.grid = grid;
-    this.simplifyIndexedCells = simplifyIndexedCells;
   }
 
   /**
@@ -123,62 +120,33 @@ public abstract class PrefixTreeStrategy extends SpatialStrategy {
     return createIndexableFields(shape, distErr);
   }
 
+  /**
+   * Turns {@link SpatialPrefixTree#getTreeCellIterator(Shape, int)} into a
+   * {@link org.apache.lucene.analysis.TokenStream}.
+   * {@code simplifyIndexedCells} is an optional hint affecting non-point shapes: it will
+   * simply/aggregate sets of complete leaves in a cell to its parent, resulting in ~20-25%
+   * fewer cells. It will likely be removed in the future.
+   */
   public Field[] createIndexableFields(Shape shape, double distErr) {
     int detailLevel = grid.getLevelForDistance(distErr);
-    List<Cell> cells = grid.getCells(shape, detailLevel, true, simplifyIndexedCells);//intermediates cells
-
-    //TODO is CellTokenStream supposed to be re-used somehow? see Uwe's comments:
-    //  http://code.google.com/p/lucene-spatial-playground/issues/detail?id=4
-
-    Field field = new Field(getFieldName(),
-        new CellTokenStream(cells.iterator()), FIELD_TYPE);
+    TokenStream tokenStream = createTokenStream(shape, detailLevel);
+    Field field = new Field(getFieldName(), tokenStream, FIELD_TYPE);
     return new Field[]{field};
+  }
+
+  protected TokenStream createTokenStream(Shape shape, int detailLevel) {
+    Iterator<Cell> cells = grid.getTreeCellIterator(shape, detailLevel);
+    return new CellTokenStream().setCells(cells);
   }
 
   /* Indexed, tokenized, not stored. */
   public static final FieldType FIELD_TYPE = new FieldType();
 
   static {
-    FIELD_TYPE.setIndexed(true);
     FIELD_TYPE.setTokenized(true);
     FIELD_TYPE.setOmitNorms(true);
-    FIELD_TYPE.setIndexOptions(FieldInfo.IndexOptions.DOCS_ONLY);
+    FIELD_TYPE.setIndexOptions(IndexOptions.DOCS);
     FIELD_TYPE.freeze();
-  }
-
-  /** Outputs the tokenString of a cell, and if its a leaf, outputs it again with the leaf byte. */
-  final static class CellTokenStream extends TokenStream {
-
-    private final CharTermAttribute termAtt = addAttribute(CharTermAttribute.class);
-
-    private Iterator<Cell> iter = null;
-
-    public CellTokenStream(Iterator<Cell> tokens) {
-      this.iter = tokens;
-    }
-
-    CharSequence nextTokenStringNeedingLeaf = null;
-
-    @Override
-    public boolean incrementToken() {
-      clearAttributes();
-      if (nextTokenStringNeedingLeaf != null) {
-        termAtt.append(nextTokenStringNeedingLeaf);
-        termAtt.append((char) Cell.LEAF_BYTE);
-        nextTokenStringNeedingLeaf = null;
-        return true;
-      }
-      if (iter.hasNext()) {
-        Cell cell = iter.next();
-        CharSequence token = cell.getTokenString();
-        termAtt.append(token);
-        if (cell.isLeaf())
-          nextTokenStringNeedingLeaf = token;
-        return true;
-      }
-      return false;
-    }
-
   }
 
   @Override

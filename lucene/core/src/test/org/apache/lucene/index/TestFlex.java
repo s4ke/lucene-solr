@@ -19,7 +19,6 @@ package org.apache.lucene.index;
 
 import org.apache.lucene.store.*;
 import org.apache.lucene.analysis.*;
-import org.apache.lucene.codecs.lucene41.Lucene41PostingsFormat;
 import org.apache.lucene.document.*;
 import org.apache.lucene.util.*;
 
@@ -33,7 +32,7 @@ public class TestFlex extends LuceneTestCase {
 
     IndexWriter w = new IndexWriter(
         d,
-        new IndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).
+        new IndexWriterConfig(new MockAnalyzer(random())).
             setMaxBufferedDocs(7).setMergePolicy(newLogMergePolicy())
     );
 
@@ -64,8 +63,8 @@ public class TestFlex extends LuceneTestCase {
 
   public void testTermOrd() throws Exception {
     Directory d = newDirectory();
-    IndexWriter w = new IndexWriter(d, newIndexWriterConfig(TEST_VERSION_CURRENT,
-                                                             new MockAnalyzer(random())).setCodec(_TestUtil.alwaysPostingsFormat(new Lucene41PostingsFormat())));
+    IndexWriter w = new IndexWriter(d, newIndexWriterConfig(new MockAnalyzer(random()))
+                                         .setCodec(TestUtil.alwaysPostingsFormat(TestUtil.getDefaultPostingsFormat())));
     Document doc = new Document();
     doc.add(newTextField("f", "a b c", Field.Store.NO));
     w.addDocument(doc);

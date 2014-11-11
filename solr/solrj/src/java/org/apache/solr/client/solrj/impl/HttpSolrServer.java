@@ -21,6 +21,7 @@ import java.io.InputStream;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
@@ -28,6 +29,10 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.http.Header;
@@ -37,9 +42,12 @@ import org.apache.http.NameValuePair;
 import org.apache.http.NoHttpResponseException;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.HttpEntityEnclosingRequestBase;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpRequestBase;
+import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.client.params.ClientPNames;
 import org.apache.http.conn.ClientConnectionManager;
 import org.apache.http.entity.ContentType;
@@ -68,11 +76,12 @@ import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.common.util.NamedList;
+import org.apache.solr.common.util.SolrjNamedThreadFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class HttpSolrServer extends SolrServer {
-  private static final String UTF_8 = "UTF-8";
+  private static final String UTF_8 = StandardCharsets.UTF_8.name();
   private static final String DEFAULT_PATH = "/select";
   private static final long serialVersionUID = -946812319974801896L;
   
@@ -86,7 +95,7 @@ public class HttpSolrServer extends SolrServer {
   /**
    * The URL of the Solr server.
    */
-  protected String baseUrl;
+  protected volatile String baseUrl;
   
   /**
    * Default value: null / empty.
@@ -115,14 +124,14 @@ public class HttpSolrServer extends SolrServer {
   
   private final HttpClient httpClient;
   
-  private boolean followRedirects = false;
+  private volatile boolean followRedirects = false;
   
-  private int maxRetries = 0;
+  private volatile int maxRetries = 0;
   
-  private boolean useMultiPartPost;
+  private volatile boolean useMultiPartPost;
   private final boolean internalClient;
 
-  private Set<String> queryParams = Collections.emptySet();
+  private volatile Set<String> queryParams = Collections.emptySet();
 
   /**
    * @param baseURL
@@ -169,8 +178,11 @@ public class HttpSolrServer extends SolrServer {
   }
 
   /**
-   * Expert Method.
+   * Expert Method
    * @param queryParams set of param keys to only send via the query string
+   * Note that the param will be sent as a query string if the key is part
+   * of this Set or the SolrRequest's query params.
+   * @see org.apache.solr.client.solrj.SolrRequest#getQueryParams
    */
   public void setQueryParams(Set<String> queryParams) {
     this.queryParams = queryParams;
@@ -199,8 +211,71 @@ public class HttpSolrServer extends SolrServer {
     return request(request, responseParser);
   }
   
-  public NamedList<Object> request(final SolrRequest request,
-      final ResponseParser processor) throws SolrServerException, IOException {
+  public NamedList<Object> request(final SolrRequest request, final ResponseParser processor) throws SolrServerException, IOException {
+    return executeMethod(createMethod(request),processor);
+  }
+  
+  /**
+   * @lucene.experimental
+   */
+  public static class HttpUriRequestResponse {
+    public HttpUriRequest httpUriRequest;
+    public Future<NamedList<Object>> future;
+  }
+  
+  /**
+   * @lucene.experimental
+   */
+  public HttpUriRequestResponse httpUriRequest(final SolrRequest request)
+      throws SolrServerException, IOException {
+    ResponseParser responseParser = request.getResponseParser();
+    if (responseParser == null) {
+      responseParser = parser;
+    }
+    return httpUriRequest(request, responseParser);
+  }
+  
+  /**
+   * @lucene.experimental
+   */
+  public HttpUriRequestResponse httpUriRequest(final SolrRequest request, final ResponseParser processor) throws SolrServerException, IOException {
+    HttpUriRequestResponse mrr = new HttpUriRequestResponse();
+    final HttpRequestBase method = createMethod(request);
+    ExecutorService pool = Executors.newFixedThreadPool(1, new SolrjNamedThreadFactory("httpUriRequest"));
+    try {
+      mrr.future = pool.submit(new Callable<NamedList<Object>>(){
+
+        @Override
+        public NamedList<Object> call() throws Exception {
+          return executeMethod(method, processor);
+        }});
+ 
+    } finally {
+      pool.shutdown();
+    }
+    assert method != null;
+    mrr.httpUriRequest = method;
+    return mrr;
+  }
+
+  protected ModifiableSolrParams calculateQueryParams(Set<String> queryParamNames,
+      ModifiableSolrParams wparams) {
+    ModifiableSolrParams queryModParams = new ModifiableSolrParams();
+    if (queryParamNames != null) {
+      for (String param : queryParamNames) {
+        String[] value = wparams.getParams(param) ;
+        if (value != null) {
+          for (String v : value) {
+            queryModParams.add(param, v);
+          }
+          wparams.remove(param);
+        }
+      }
+    }
+    return queryModParams;
+  }
+
+  protected HttpRequestBase createMethod(final SolrRequest request) throws IOException, SolrServerException {
     HttpRequestBase method = null;
     InputStream is = null;
     SolrParams params = request.getParams();
@@ -240,7 +315,7 @@ public class HttpSolrServer extends SolrServer {
             }
             method = new HttpGet( baseUrl + path + ClientUtils.toQueryString( wparams, false ) );
           }
-          else if( SolrRequest.METHOD.POST == request.getMethod() ) {
+          else if( SolrRequest.METHOD.POST == request.getMethod() || SolrRequest.METHOD.PUT == request.getMethod() ) {
 
             String url = baseUrl + path;
             boolean hasNullStreamName = false;
@@ -252,30 +327,23 @@ public class HttpSolrServer extends SolrServer {
                 }
               }
             }
-            boolean isMultipart = (this.useMultiPartPost || ( streams != null && streams.size() > 1 )) && !hasNullStreamName;
-            
-            // only send this list of params as query string params
-            ModifiableSolrParams queryParams = new ModifiableSolrParams();
-            for (String param : this.queryParams) {
-              String[] value = wparams.getParams(param) ;
-              if (value != null) {
-                for (String v : value) {
-                  queryParams.add(param, v);
-                }
-                wparams.remove(param);
-              }
-            }
-            
-            LinkedList<NameValuePair> postParams = new LinkedList<NameValuePair>();
+            boolean isMultipart = ((this.useMultiPartPost && SolrRequest.METHOD.POST == request.getMethod())
+              || ( streams != null && streams.size() > 1 )) && !hasNullStreamName;
+
+            LinkedList<NameValuePair> postOrPutParams = new LinkedList<>();
             if (streams == null || isMultipart) {
-              HttpPost post = new HttpPost(url + ClientUtils.toQueryString( queryParams, false ));
-              post.setHeader("Content-Charset", "UTF-8");
+              // send server list and request list as query string params
+              ModifiableSolrParams queryParams = calculateQueryParams(this.queryParams, wparams);
+              queryParams.add(calculateQueryParams(request.getQueryParams(), wparams));
+              String fullQueryUrl = url + ClientUtils.toQueryString( queryParams, false );
+              HttpEntityEnclosingRequestBase postOrPut = SolrRequest.METHOD.POST == request.getMethod() ?
+                new HttpPost(fullQueryUrl) : new HttpPut(fullQueryUrl);
               if (!isMultipart) {
-                post.addHeader("Content-Type",
+                postOrPut.addHeader("Content-Type",
                     "application/x-www-form-urlencoded; charset=UTF-8");
               }
 
-              List<FormBodyPart> parts = new LinkedList<FormBodyPart>();
+              List<FormBodyPart> parts = new LinkedList<>();
               Iterator<String> iter = wparams.getParameterNamesIterator();
               while (iter.hasNext()) {
                 String p = iter.next();
@@ -283,9 +351,9 @@ public class HttpSolrServer extends SolrServer {
                 if (vals != null) {
                   for (String v : vals) {
                     if (isMultipart) {
-                      parts.add(new FormBodyPart(p, new StringBody(v, Charset.forName("UTF-8"))));
+                      parts.add(new FormBodyPart(p, new StringBody(v, StandardCharsets.UTF_8)));
                     } else {
-                      postParams.add(new BasicNameValuePair(p, v));
+                      postOrPutParams.add(new BasicNameValuePair(p, v));
                     }
                   }
                 }
@@ -314,18 +382,19 @@ public class HttpSolrServer extends SolrServer {
                 for(FormBodyPart p: parts) {
                   entity.addPart(p);
                 }
-                post.setEntity(entity);
+                postOrPut.setEntity(entity);
               } else {
                 //not using multipart
-                post.setEntity(new UrlEncodedFormEntity(postParams, "UTF-8"));
+                postOrPut.setEntity(new UrlEncodedFormEntity(postOrPutParams, StandardCharsets.UTF_8));
               }
 
-              method = post;
+              method = postOrPut;
             }
             // It is has one stream, it is the post body, put the params in the URL
             else {
               String pstr = ClientUtils.toQueryString(wparams, false);
-              HttpPost post = new HttpPost(url + pstr);
+              HttpEntityEnclosingRequestBase postOrPut = SolrRequest.METHOD.POST == request.getMethod() ?
+                new HttpPost(url + pstr) : new HttpPut(url + pstr);
 
               // Single stream as body
               // Using a loop just to get the first one
@@ -335,7 +404,7 @@ public class HttpSolrServer extends SolrServer {
                 break;
               }
               if (contentStream[0] instanceof RequestWriter.LazyContentStream) {
-                post.setEntity(new InputStreamEntity(contentStream[0].getStream(), -1) {
+                postOrPut.setEntity(new InputStreamEntity(contentStream[0].getStream(), -1) {
                   @Override
                   public Header getContentType() {
                     return new BasicHeader("Content-Type", contentStream[0].getContentType());
@@ -348,7 +417,7 @@ public class HttpSolrServer extends SolrServer {
                   
                 });
               } else {
-                post.setEntity(new InputStreamEntity(contentStream[0].getStream(), -1) {
+                postOrPut.setEntity(new InputStreamEntity(contentStream[0].getStream(), -1) {
                   @Override
                   public Header getContentType() {
                     return new BasicHeader("Content-Type", contentStream[0].getContentType());
@@ -360,7 +429,7 @@ public class HttpSolrServer extends SolrServer {
                   }
                 });
               }
-              method = post;
+              method = postOrPut;
             }
           }
           else {
@@ -382,9 +451,10 @@ public class HttpSolrServer extends SolrServer {
       throw new SolrServerException("error reading streams", ex);
     }
     
-    // XXX client already has this set, is this needed?
-    method.getParams().setParameter(ClientPNames.HANDLE_REDIRECTS,
-        followRedirects);
+    return method;
+  }
+  
+  protected NamedList<Object> executeMethod(HttpRequestBase method, final ResponseParser processor) throws SolrServerException {
     method.addHeader("User-Agent", AGENT);
     
     InputStream respBody = null;
@@ -429,7 +499,7 @@ public class HttpSolrServer extends SolrServer {
       if (processor == null) {
         
         // no processor specified, return raw stream
-        NamedList<Object> rsp = new NamedList<Object>();
+        NamedList<Object> rsp = new NamedList<>();
         rsp.add("stream", respBody);
         // Only case where stream should not be closed
         shouldClose = false;
@@ -477,12 +547,16 @@ public class HttpSolrServer extends SolrServer {
         throw new RemoteSolrException(httpStatus, e.getMessage(), e);
       }
       if (httpStatus != HttpStatus.SC_OK) {
+        NamedList<String> metadata = null;
         String reason = null;
         try {
           NamedList err = (NamedList) rsp.get("error");
           if (err != null) {
             reason = (String) err.get("msg");
-            // TODO? get the trace?
+            if(reason == null) {
+              reason = (String) err.get("trace");
+            }
+            metadata = (NamedList<String>)err.get("metadata");
           }
         } catch (Exception ex) {}
         if (reason == null) {
@@ -492,7 +566,9 @@ public class HttpSolrServer extends SolrServer {
           msg.append("request: " + method.getURI());
           reason = java.net.URLDecoder.decode(msg.toString(), UTF_8);
         }
-        throw new RemoteSolrException(httpStatus, reason, null);
+        RemoteSolrException rss = new RemoteSolrException(httpStatus, reason, null);
+        if (metadata != null) rss.setMetadata(metadata);
+        throw rss;
       }
       success = true;
       return rsp;
@@ -595,7 +671,7 @@ public class HttpSolrServer extends SolrServer {
    * </p>
    */
   public void setFollowRedirects(boolean followRedirects) {
-    this.followRedirects = true;
+    this.followRedirects = followRedirects;
     HttpClientUtil.setFollowRedirects(httpClient,  followRedirects);
   }
   

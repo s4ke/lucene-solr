@@ -17,7 +17,7 @@ package org.apache.lucene.search.spans;
  * limitations under the License.
  */
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReaderContext;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.TermContext;
@@ -45,8 +45,8 @@ public class SpanWeight extends Weight {
     this.similarity = searcher.getSimilarity();
     this.query = query;
     
-    termContexts = new HashMap<Term,TermContext>();
-    TreeSet<Term> terms = new TreeSet<Term>();
+    termContexts = new HashMap<>();
+    TreeSet<Term> terms = new TreeSet<>();
     query.extractTerms(terms);
     final IndexReaderContext context = searcher.getTopReaderContext();
     final TermStatistics termStats[] = new TermStatistics[terms.size()];
@@ -81,8 +81,7 @@ public class SpanWeight extends Weight {
   }
 
   @Override
-  public Scorer scorer(AtomicReaderContext context, boolean scoreDocsInOrder,
-      boolean topScorer, Bits acceptDocs) throws IOException {
+  public Scorer scorer(LeafReaderContext context, Bits acceptDocs) throws IOException {
     if (stats == null) {
       return null;
     } else {
@@ -91,8 +90,8 @@ public class SpanWeight extends Weight {
   }
 
   @Override
-  public Explanation explain(AtomicReaderContext context, int doc) throws IOException {
-    SpanScorer scorer = (SpanScorer) scorer(context, true, false, context.reader().getLiveDocs());
+  public Explanation explain(LeafReaderContext context, int doc) throws IOException {
+    SpanScorer scorer = (SpanScorer) scorer(context, context.reader().getLiveDocs());
     if (scorer != null) {
       int newDoc = scorer.advance(doc);
       if (newDoc == doc) {

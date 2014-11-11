@@ -24,6 +24,7 @@ import java.util.List;
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.util.IntsRef; // javadocs
+import org.apache.lucene.util.RamUsageEstimator;
 
 /**
  * Wraps another Outputs implementation and encodes one or
@@ -90,7 +91,7 @@ public final class ListOfOutputs<T> extends Outputs<Object> {
       return outputs.add((T) prefix, (T) output);
     } else {
       List<T> outputList = (List<T>) output;
-      List<T> addedList = new ArrayList<T>(outputList.size());
+      List<T> addedList = new ArrayList<>(outputList.size());
       for(T _output : outputList) {
         addedList.add(outputs.add((T) prefix, _output));
       }
@@ -122,6 +123,11 @@ public final class ListOfOutputs<T> extends Outputs<Object> {
   public Object read(DataInput in) throws IOException {
     return outputs.read(in);
   }
+  
+  @Override
+  public void skipOutput(DataInput in) throws IOException {
+    outputs.skipOutput(in);
+  }
 
   @Override
   public Object readFinalOutput(DataInput in) throws IOException {
@@ -129,11 +135,19 @@ public final class ListOfOutputs<T> extends Outputs<Object> {
     if (count == 1) {
       return outputs.read(in);
     } else {
-      List<T> outputList = new ArrayList<T>(count);
+      List<T> outputList = new ArrayList<>(count);
       for(int i=0;i<count;i++) {
         outputList.add(outputs.read(in));
       }
       return outputList;
+    }
+  }
+  
+  @Override
+  public void skipFinalOutput(DataInput in) throws IOException {
+    int count = in.readVInt();
+    for(int i=0;i<count;i++) {
+      outputs.skipOutput(in);
     }
   }
 
@@ -165,7 +179,7 @@ public final class ListOfOutputs<T> extends Outputs<Object> {
 
   @Override
   public Object merge(Object first, Object second) {
-    List<T> outputList = new ArrayList<T>();
+    List<T> outputList = new ArrayList<>();
     if (!(first instanceof List)) {
       outputList.add((T) first);
     } else {
@@ -188,11 +202,31 @@ public final class ListOfOutputs<T> extends Outputs<Object> {
 
   public List<T> asList(Object output) { 
     if (!(output instanceof List)) {
-      List<T> result = new ArrayList<T>(1);
+      List<T> result = new ArrayList<>(1);
       result.add((T) output);
       return result;
     } else {
       return (List<T>) output;
     }
+  }
+
+  private static final long BASE_LIST_NUM_BYTES = RamUsageEstimator.shallowSizeOf(new ArrayList<Object>());
+
+  @Override
+  public long ramBytesUsed(Object output) {
+    long bytes = 0;
+    if (output instanceof List) {
+      bytes += BASE_LIST_NUM_BYTES;
+      List<T> outputList = (List<T>) output;
+      for(T _output : outputList) {
+        bytes += outputs.ramBytesUsed(_output);
+      }
+      // 2 * to allow for ArrayList's oversizing:
+      bytes += 2 * outputList.size() * RamUsageEstimator.NUM_BYTES_OBJECT_REF;
+    } else {
+      bytes += outputs.ramBytesUsed((T) output);
+    }
+
+    return bytes;
   }
 }

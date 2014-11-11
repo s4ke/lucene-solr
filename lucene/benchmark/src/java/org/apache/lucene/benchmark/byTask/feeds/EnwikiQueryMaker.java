@@ -33,7 +33,6 @@ import org.apache.lucene.search.spans.SpanNearQuery;
 import org.apache.lucene.search.spans.SpanQuery;
 import org.apache.lucene.search.spans.SpanTermQuery;
 import org.apache.lucene.benchmark.byTask.tasks.NewAnalyzerTask;
-import org.apache.lucene.util.Version;
 
 /**
  * A QueryMaker that uses common and uncommon actual Wikipedia queries for
@@ -93,8 +92,8 @@ public class EnwikiQueryMaker extends AbstractQueryMaker implements
    * @return array of Lucene queries
    */
   private static Query[] createQueries(List<Object> qs, Analyzer a) {
-    QueryParser qp = new QueryParser(Version.LUCENE_CURRENT, DocMaker.BODY_FIELD, a);
-    List<Object> queries = new ArrayList<Object>();
+    QueryParser qp = new QueryParser(DocMaker.BODY_FIELD, a);
+    List<Object> queries = new ArrayList<>();
     for (int i = 0; i < qs.size(); i++) {
       try {
 
@@ -127,7 +126,7 @@ public class EnwikiQueryMaker extends AbstractQueryMaker implements
     // analyzer (default is standard analyzer)
     Analyzer anlzr = NewAnalyzerTask.createAnalyzer(config.get("analyzer", StandardAnalyzer.class.getName()));
 
-    List<Object> queryList = new ArrayList<Object>(20);
+    List<Object> queryList = new ArrayList<>(20);
     queryList.addAll(Arrays.asList(STANDARD_QUERIES));
     if(!config.get("enwikiQueryMaker.disableSpanQueries", false))
       queryList.addAll(Arrays.asList(getPrebuiltQueries(DocMaker.BODY_FIELD)));

@@ -90,13 +90,12 @@ public class SyncSliceTest extends AbstractFullDistribZkTestBase {
   public void doTest() throws Exception {
     
     handle.clear();
-    handle.put("QTime", SKIPVAL);
     handle.put("timestamp", SKIPVAL);
     
     waitForThingsToLevelOut(30);
 
     del("*:*");
-    List<CloudJettyRunner> skipServers = new ArrayList<CloudJettyRunner>();
+    List<CloudJettyRunner> skipServers = new ArrayList<>();
     int docId = 0;
     indexDoc(skipServers, id, docId++, i1, 50, tlong, 50, t1,
         "to come to the aid of their country.");
@@ -137,6 +136,8 @@ public class SyncSliceTest extends AbstractFullDistribZkTestBase {
     // we only set the connect timeout, not so timeout
     baseServer.setConnectionTimeout(30000);
     baseServer.request(request);
+    baseServer.shutdown();
+    baseServer = null;
     
     waitForThingsToLevelOut(15);
     
@@ -156,16 +157,16 @@ public class SyncSliceTest extends AbstractFullDistribZkTestBase {
         "to come to the aid of their country.");
     
     
-    Set<CloudJettyRunner> jetties = new HashSet<CloudJettyRunner>();
+    Set<CloudJettyRunner> jetties = new HashSet<>();
     jetties.addAll(shardToJetty.get("shard1"));
     jetties.remove(leaderJetty);
     assertEquals(shardCount - 1, jetties.size());
     
     chaosMonkey.killJetty(leaderJetty);
-
-    Thread.sleep(2000);
     
-    waitForThingsToLevelOut(120);
+    Thread.sleep(3000);
+    
+    waitForNoShardInconsistency();
     
     Thread.sleep(1000);
     
@@ -185,7 +186,7 @@ public class SyncSliceTest extends AbstractFullDistribZkTestBase {
     // bring back dead node
     ChaosMonkey.start(deadJetty.jetty); // he is not the leader anymore
     
-    waitTillRecovered();
+    waitTillAllNodesActive();
     
     skipServers = getRandomOtherJetty(leaderJetty, deadJetty);
     skipServers.addAll( getRandomOtherJetty(leaderJetty, deadJetty));
@@ -212,12 +213,15 @@ public class SyncSliceTest extends AbstractFullDistribZkTestBase {
     
     // shard should be inconsistent
     shardFailMessage = waitTillInconsistent();
-    
     assertNotNull(
         "Test Setup Failure: shard1 should have just been set up to be inconsistent - but it's still consistent. Leader:"
             + leaderJetty.url + " Dead Guy:" + deadJetty.url + "skip list:" + skipServers, shardFailMessage);
     
-    jetties = new HashSet<CloudJettyRunner>();
+    // good place to test compareResults
+    boolean shouldFail = CloudInspectUtil.compareResults(controlClient, cloudClient);
+    assertTrue("A test that compareResults is working correctly failed", shouldFail);
+    
+    jetties = new HashSet<>();
     jetties.addAll(shardToJetty.get("shard1"));
     jetties.remove(leaderJetty);
     assertEquals(shardCount - 1, jetties.size());
@@ -226,21 +230,15 @@ public class SyncSliceTest extends AbstractFullDistribZkTestBase {
     // kill the current leader
     chaosMonkey.killJetty(leaderJetty);
     
-    Thread.sleep(3000);
-    
-    waitForThingsToLevelOut(120);
-    
-    Thread.sleep(2000);
-    
-    waitForRecoveriesToFinish(false);
+    waitForNoShardInconsistency();
 
     checkShardConsistency(true, true);
     
     success = true;
   }
 
-  private void waitTillRecovered() throws Exception {
-    for (int i = 0; i < 30; i++) { 
+  private void waitTillAllNodesActive() throws Exception {
+    for (int i = 0; i < 60; i++) { 
       Thread.sleep(3000);
       ZkStateReader zkStateReader = cloudClient.getZkStateReader();
       zkStateReader.updateClusterState(true);
@@ -262,7 +260,7 @@ public class SyncSliceTest extends AbstractFullDistribZkTestBase {
       }
     }
     printLayout();
-    fail("timeout waiting to see recovered node");
+    fail("timeout waiting to see all nodes active");
   }
 
   private String waitTillInconsistent() throws Exception, InterruptedException {
@@ -292,8 +290,8 @@ public class SyncSliceTest extends AbstractFullDistribZkTestBase {
   }
   
   private List<CloudJettyRunner> getRandomOtherJetty(CloudJettyRunner leader, CloudJettyRunner down) {
-    List<CloudJettyRunner> skipServers = new ArrayList<CloudJettyRunner>();
-    List<CloudJettyRunner> candidates = new ArrayList<CloudJettyRunner>();
+    List<CloudJettyRunner> skipServers = new ArrayList<>();
+    List<CloudJettyRunner> candidates = new ArrayList<>();
     candidates.addAll(shardToJetty.get("shard1"));
 
     if (leader != null) {

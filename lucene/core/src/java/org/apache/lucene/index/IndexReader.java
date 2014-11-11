@@ -17,6 +17,11 @@ package org.apache.lucene.index;
  * limitations under the License.
  */
 
+import org.apache.lucene.document.DocumentStoredFieldVisitor;
+import org.apache.lucene.store.AlreadyClosedException;
+import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.IOUtils;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Collections;
@@ -25,27 +30,33 @@ import java.util.List;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import org.apache.lucene.document.DocumentStoredFieldVisitor;
-import org.apache.lucene.store.AlreadyClosedException;
-import org.apache.lucene.util.Bits;
 // javadocs
 
-/** IndexReader is an abstract class, providing an interface for accessing an
- index.  Search of an index is done entirely through this abstract interface,
- so that any subclass which implements it is searchable.
+/**
+ IndexReader is an abstract class, providing an interface for accessing a
+ point-in-time view of an index.  Any changes made to the index
+ via {@link IndexWriter} will not be visible until a new
+ {@code IndexReader} is opened.  It's best to use {@link
+ DirectoryReader#open(IndexWriter,boolean)} to obtain an
+ {@code IndexReader}, if your {@link IndexWriter} is
+ in-process.  When you need to re-open to see changes to the
+ index, it's best to use {@link DirectoryReader#openIfChanged(DirectoryReader)}
+ since the new reader will share resources with the previous
+ one when possible.  Search of an index is done entirely
+ through this abstract interface, so that any subclass which
+ implements it is searchable.
 
  <p>There are two different types of IndexReaders:
  <ul>
-  <li>{@link AtomicReader}: These indexes do not consist of several sub-readers,
+  <li>{@link LeafReader}: These indexes do not consist of several sub-readers,
   they are atomic. They support retrieval of stored fields, doc values, terms,
   and postings.
   <li>{@link CompositeReader}: Instances (like {@link DirectoryReader})
   of this reader can only
-  be used to get stored fields from the underlying AtomicReaders,
+  be used to get stored fields from the underlying LeafReaders,
   but it is not possible to directly retrieve postings. To do that, get
   the sub-readers via {@link CompositeReader#getSequentialSubReaders}.
-  Alternatively, you can mimic an {@link AtomicReader} (with a serious slowdown),
+  Alternatively, you can mimic an {@link LeafReader} (with a serious slowdown),
   by wrapping composite readers with {@link SlowCompositeReaderWrapper}.
  </ul>
  
@@ -76,8 +87,8 @@ public abstract class IndexReader implements Closeable {
   private final AtomicInteger refCount = new AtomicInteger(1);
 
   IndexReader() {
-    if (!(this instanceof CompositeReader || this instanceof AtomicReader))
-      throw new Error("IndexReader should never be directly extended, subclass AtomicReader or CompositeReader instead.");
+    if (!(this instanceof CompositeReader || this instanceof LeafReader))
+      throw new Error("IndexReader should never be directly extended, subclass LeafReader or CompositeReader instead.");
   }
   
   /**
@@ -99,6 +110,8 @@ public abstract class IndexReader implements Closeable {
 
   /** Expert: adds a {@link ReaderClosedListener}.  The
    * provided listener will be invoked when this reader is closed.
+   * At this point, it is safe for apps to evict this reader from
+   * any caches keyed on {@link #getCombinedCoreAndDeletesKey()}.
    *
    * @lucene.experimental */
   public final void addReaderClosedListener(ReaderClosedListener listener) {
@@ -115,7 +128,7 @@ public abstract class IndexReader implements Closeable {
   }
   
   /** Expert: This method is called by {@code IndexReader}s which wrap other readers
-   * (e.g. {@link CompositeReader} or {@link FilterAtomicReader}) to register the parent
+   * (e.g. {@link CompositeReader} or {@link FilterLeafReader}) to register the parent
    * at the child (this reader) on construction of the parent. When this reader is closed,
    * it will mark all registered parents as closed, too. The references to parent readers
    * are weak only, so they can be GCed once they are no longer in use.
@@ -125,11 +138,20 @@ public abstract class IndexReader implements Closeable {
     parentReaders.add(reader);
   }
 
-  private void notifyReaderClosedListeners() {
+  private void notifyReaderClosedListeners(Throwable th) {
     synchronized(readerClosedListeners) {
       for(ReaderClosedListener listener : readerClosedListeners) {
-        listener.onClose(this);
+        try {
+          listener.onClose(this);
+        } catch (Throwable t) {
+          if (th == null) {
+            th = t;
+          } else {
+            th.addSuppressed(t);
+          }
+        }
       }
+      IOUtils.reThrowUnchecked(th);
     }
   }
 
@@ -225,18 +247,19 @@ public abstract class IndexReader implements Closeable {
     
     final int rc = refCount.decrementAndGet();
     if (rc == 0) {
-      boolean success = false;
+      closed = true;
+      Throwable throwable = null;
       try {
         doClose();
-        success = true;
+      } catch (Throwable th) {
+        throwable = th;
       } finally {
-        if (!success) {
-          // Put reference back on failure
-          refCount.incrementAndGet();
+        try {
+          reportCloseToParentReaders();
+        } finally {
+          notifyReaderClosedListeners(throwable);
         }
       }
-      reportCloseToParentReaders();
-      notifyReaderClosedListeners();
     } else if (rc < 0) {
       throw new IllegalStateException("too many decRef calls: refCount is " + rc + " after decrement");
     }
@@ -397,7 +420,7 @@ public abstract class IndexReader implements Closeable {
    * context are private to this reader and are not shared with another context
    * tree. For example, IndexSearcher uses this API to drive searching by one
    * atomic leaf reader at a time. If this reader is not composed of child
-   * readers, this method returns an {@link AtomicReaderContext}.
+   * readers, this method returns an {@link LeafReaderContext}.
    * <p>
    * Note: Any of the sub-{@link CompositeReaderContext} instances referenced
    * from this top-level context do not support {@link CompositeReaderContext#leaves()}.
@@ -411,11 +434,11 @@ public abstract class IndexReader implements Closeable {
    * This is a convenience method calling {@code this.getContext().leaves()}.
    * @see IndexReaderContext#leaves()
    */
-  public final List<AtomicReaderContext> leaves() {
+  public final List<LeafReaderContext> leaves() {
     return getContext().leaves();
   }
 
-  /** Expert: Returns a key for this IndexReader, so FieldCache/CachingWrapperFilter can find
+  /** Expert: Returns a key for this IndexReader, so CachingWrapperFilter can find
    * it again.
    * This key must not have equals()/hashCode() methods, so &quot;equals&quot; means &quot;identical&quot;. */
   public Object getCoreCacheKey() {
@@ -425,7 +448,7 @@ public abstract class IndexReader implements Closeable {
   }
 
   /** Expert: Returns a key for this IndexReader that also includes deletions,
-   * so FieldCache/CachingWrapperFilter can find it again.
+   * so CachingWrapperFilter can find it again.
    * This key must not have equals()/hashCode() methods, so &quot;equals&quot; means &quot;identical&quot;. */
   public Object getCombinedCoreAndDeletesKey() {
     // Don't call ensureOpen since FC calls this (to evict)

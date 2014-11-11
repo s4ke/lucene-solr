@@ -114,7 +114,6 @@ public class ShardRoutingTest extends AbstractFullDistribZkTestBase {
     boolean testFinished = false;
     try {
       handle.clear();
-      handle.put("QTime", SKIPVAL);
       handle.put("timestamp", SKIPVAL);
 
       // todo: do I have to do this here?
@@ -215,6 +214,36 @@ public class ShardRoutingTest extends AbstractFullDistribZkTestBase {
     doAddDoc("f1!f2!doc5");
 
     commit();
+
+    doDBQ("*:*");
+    commit();
+
+    doAddDoc("b!");
+    doAddDoc("c!doc1");
+    commit();
+    doQuery("b!,c!doc1", "q","*:*");
+    UpdateRequest req = new UpdateRequest();
+    req.deleteById("b!");
+    req.process(cloudClient);
+    commit();
+    doQuery("c!doc1", "q","*:*");
+
+    doDBQ("id:b!");
+    commit();
+    doQuery("c!doc1", "q","*:*");
+
+    doDBQ("*:*");
+    commit();
+
+    doAddDoc("a!b!");
+    doAddDoc("b!doc1");
+    doAddDoc("c!doc2");
+    doAddDoc("d!doc3");
+    doAddDoc("e!doc4");
+    doAddDoc("f1!f2!doc5");
+    doAddDoc("f1!f2!doc5/5");
+    commit();
+    doQuery("a!b!,b!doc1,c!doc2,d!doc3,e!doc4,f1!f2!doc5,f1!f2!doc5/5", "q","*:*");
   }
 
 
@@ -309,31 +338,8 @@ public class ShardRoutingTest extends AbstractFullDistribZkTestBase {
     // todo - target diff servers and use cloud clients as well as non-cloud clients
   }
 
-  // TODO: refactor some of this stuff up into a base class for use by other tests
-  void doQuery(String expectedDocs, String... queryParams) throws Exception {
-    Set<String> expectedIds = new HashSet<String>( StrUtils.splitSmart(expectedDocs, ",", true) );
-
-    QueryResponse rsp = cloudClient.query(params(queryParams));
-    Set<String> obtainedIds = new HashSet<String>();
-    for (SolrDocument doc : rsp.getResults()) {
-      obtainedIds.add((String) doc.get("id"));
-    }
-
-    assertEquals(expectedIds, obtainedIds);
-  }
-
   void doRTG(String ids) throws Exception {
-    cloudClient.query(params("qt","/get", "ids",ids));
-
-    Set<String> expectedIds = new HashSet<String>( StrUtils.splitSmart(ids, ",", true) );
-
-    QueryResponse rsp = cloudClient.query(params("qt","/get", "ids",ids));
-    Set<String> obtainedIds = new HashSet<String>();
-    for (SolrDocument doc : rsp.getResults()) {
-      obtainedIds.add((String) doc.get("id"));
-    }
-
-    assertEquals(expectedIds, obtainedIds);
+    doQuery(ids, "qt", "/get", "ids", ids);
   }
 
   // TODO: refactor some of this stuff into the SolrJ client... it should be easier to use

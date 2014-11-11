@@ -17,10 +17,16 @@ package org.apache.lucene.search.suggest.fst;
  * limitations under the License.
  */
 
-import java.io.*;
 
-import org.apache.lucene.search.suggest.Sort;
-import org.apache.lucene.util.BytesRef;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+import org.apache.lucene.util.BytesRefBuilder;
+import org.apache.lucene.util.OfflineSorter;
 
 /**
  * Try to build a suggester from a large data set. The input is a simple text
@@ -28,24 +34,22 @@ import org.apache.lucene.util.BytesRef;
  */
 public class LargeInputFST {
   public static void main(String[] args) throws IOException {
-    File input = new File("/home/dweiss/tmp/shuffled.dict");
+    Path input = Paths.get("/home/dweiss/tmp/shuffled.dict");
 
     int buckets = 20;
     int shareMaxTail = 10;
 
-    ExternalRefSorter sorter = new ExternalRefSorter(new Sort());
+    ExternalRefSorter sorter = new ExternalRefSorter(new OfflineSorter());
     FSTCompletionBuilder builder = new FSTCompletionBuilder(buckets, sorter, shareMaxTail);
 
-    BufferedReader reader = new BufferedReader(
-        new InputStreamReader(
-            new FileInputStream(input), "UTF-8"));
+    BufferedReader reader = Files.newBufferedReader(input, StandardCharsets.UTF_8);
     
-    BytesRef scratch = new BytesRef();
+    BytesRefBuilder scratch = new BytesRefBuilder();
     String line;
     int count = 0;
     while ((line = reader.readLine()) != null) {
       scratch.copyChars(line);
-      builder.add(scratch, count % buckets);
+      builder.add(scratch.get(), count % buckets);
       if ((count++ % 100000) == 0) {
         System.err.println("Line: " + count);
       }
@@ -54,8 +58,8 @@ public class LargeInputFST {
     System.out.println("Building FSTCompletion.");
     FSTCompletion completion = builder.build();
 
-    File fstFile = new File("completion.fst");
-    System.out.println("Done. Writing automaton: " + fstFile.getAbsolutePath());
+    Path fstFile = Paths.get("completion.fst");
+    System.out.println("Done. Writing automaton: " + fstFile.toAbsolutePath());
     completion.getFST().save(fstFile);
     sorter.close();
   }

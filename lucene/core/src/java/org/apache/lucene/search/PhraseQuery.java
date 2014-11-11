@@ -22,11 +22,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Set;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.DocsEnum;
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.IndexReaderContext;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.TermContext;
@@ -46,8 +46,8 @@ import org.apache.lucene.util.ToStringUtils;
  */
 public class PhraseQuery extends Query {
   private String field;
-  private ArrayList<Term> terms = new ArrayList<Term>(4);
-  private ArrayList<Integer> positions = new ArrayList<Integer>(4);
+  private ArrayList<Term> terms = new ArrayList<>(4);
+  private ArrayList<Integer> positions = new ArrayList<>(4);
   private int maxPosition = 0;
   private int slop = 0;
 
@@ -68,7 +68,12 @@ public class PhraseQuery extends Query {
     results are sorted by exactness.
 
     <p>The slop is zero by default, requiring exact matches.*/
-  public void setSlop(int s) { slop = s; }
+  public void setSlop(int s) {
+    if (s < 0) {
+      throw new IllegalArgumentException("slop value cannot be negative");
+    }
+    slop = s; 
+  }
   /** Returns the slop.  See setSlop(). */
   public int getSlop() { return slop; }
 
@@ -240,10 +245,9 @@ public class PhraseQuery extends Query {
     }
 
     @Override
-    public Scorer scorer(AtomicReaderContext context, boolean scoreDocsInOrder,
-        boolean topScorer, Bits acceptDocs) throws IOException {
+    public Scorer scorer(LeafReaderContext context, Bits acceptDocs) throws IOException {
       assert !terms.isEmpty();
-      final AtomicReader reader = context.reader();
+      final LeafReader reader = context.reader();
       final Bits liveDocs = acceptDocs;
       PostingsAndFreq[] postingsFreqs = new PostingsAndFreq[terms.size()];
 
@@ -281,26 +285,20 @@ public class PhraseQuery extends Query {
       }
 
       if (slop == 0) {  // optimize exact case
-        ExactPhraseScorer s = new ExactPhraseScorer(this, postingsFreqs, similarity.simScorer(stats, context));
-        if (s.noDocs) {
-          return null;
-        } else {
-          return s;
-        }
+        return new ExactPhraseScorer(this, postingsFreqs, similarity.simScorer(stats, context));
       } else {
-        return
-          new SloppyPhraseScorer(this, postingsFreqs, slop, similarity.simScorer(stats, context));
+        return new SloppyPhraseScorer(this, postingsFreqs, slop, similarity.simScorer(stats, context));
       }
     }
     
     // only called from assert
-    private boolean termNotInReader(AtomicReader reader, Term term) throws IOException {
+    private boolean termNotInReader(LeafReader reader, Term term) throws IOException {
       return reader.docFreq(term) == 0;
     }
 
     @Override
-    public Explanation explain(AtomicReaderContext context, int doc) throws IOException {
-      Scorer scorer = scorer(context, true, false, context.reader().getLiveDocs());
+    public Explanation explain(LeafReaderContext context, int doc) throws IOException {
+      Scorer scorer = scorer(context, context.reader().getLiveDocs());
       if (scorer != null) {
         int newDoc = scorer.advance(doc);
         if (newDoc == doc) {

@@ -30,7 +30,7 @@ import org.apache.lucene.search.similarities.TFIDFSimilarity;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * Tests the maxTermFrequency statistic in FieldInvertState
@@ -39,14 +39,14 @@ public class TestMaxTermFrequency extends LuceneTestCase {
   Directory dir;
   IndexReader reader;
   /* expected maxTermFrequency values for our documents */
-  ArrayList<Integer> expected = new ArrayList<Integer>();
+  ArrayList<Integer> expected = new ArrayList<>();
   
   @Override
   public void setUp() throws Exception {
     super.setUp();
     dir = newDirectory();
-    IndexWriterConfig config = newIndexWriterConfig(TEST_VERSION_CURRENT, 
-                                                    new MockAnalyzer(random(), MockTokenizer.SIMPLE, true)).setMergePolicy(newLogMergePolicy());
+    IndexWriterConfig config = newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.SIMPLE, true))
+                                 .setMergePolicy(newLogMergePolicy());
     config.setSimilarity(new TestSimilarity());
     RandomIndexWriter writer = new RandomIndexWriter(random(), dir, config);
     Document doc = new Document();
@@ -81,11 +81,11 @@ public class TestMaxTermFrequency extends LuceneTestCase {
    * puts the max-frequency term into expected, to be checked against the norm.
    */
   private String addValue() {
-    List<String> terms = new ArrayList<String>();
-    int maxCeiling = _TestUtil.nextInt(random(), 0, 255);
+    List<String> terms = new ArrayList<>();
+    int maxCeiling = TestUtil.nextInt(random(), 0, 255);
     int max = 0;
     for (char ch = 'a'; ch <= 'z'; ch++) {
-      int num = _TestUtil.nextInt(random(), 0, maxCeiling);
+      int num = TestUtil.nextInt(random(), 0, maxCeiling);
       for (int i = 0; i < num; i++)
         terms.add(Character.toString(ch));
       max = Math.max(max, num);

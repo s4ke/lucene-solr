@@ -25,24 +25,25 @@ import java.util.List;
 import java.util.Set;
 
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 public class TestCompiledAutomaton extends LuceneTestCase {
 
-  private CompiledAutomaton build(String... strings) {
-    final List<BytesRef> terms = new ArrayList<BytesRef>();
+  private CompiledAutomaton build(int maxDeterminizedStates, String... strings) {
+    final List<BytesRef> terms = new ArrayList<>();
     for(String s : strings) {
       terms.add(new BytesRef(s));
     }
     Collections.sort(terms);
     final Automaton a = DaciukMihovAutomatonBuilder.build(terms);
-    return new CompiledAutomaton(a, true, false);
+    return new CompiledAutomaton(a, true, false, maxDeterminizedStates);
   }
 
   private void testFloor(CompiledAutomaton c, String input, String expected) {
     final BytesRef b = new BytesRef(input);
-    final BytesRef result = c.floor(b, b);
+    final BytesRef result = c.floor(b, new BytesRefBuilder());
     if (expected == null) {
       assertNull(result);
     } else {
@@ -52,8 +53,8 @@ public class TestCompiledAutomaton extends LuceneTestCase {
     }
   }
 
-  private void testTerms(String[] terms) throws Exception {
-    final CompiledAutomaton c = build(terms);
+  private void testTerms(int maxDeterminizedStates, String[] terms) throws Exception {
+    final CompiledAutomaton c = build(maxDeterminizedStates, terms);
     final BytesRef[] termBytes = new BytesRef[terms.length];
     for(int idx=0;idx<terms.length;idx++) {
       termBytes[idx] = new BytesRef(terms[idx]);
@@ -95,20 +96,21 @@ public class TestCompiledAutomaton extends LuceneTestCase {
 
   public void testRandom() throws Exception {
     final int numTerms = atLeast(400);
-    final Set<String> terms = new HashSet<String>();
+    final Set<String> terms = new HashSet<>();
     while(terms.size() != numTerms) {
       terms.add(randomString());
     }
-    testTerms(terms.toArray(new String[terms.size()]));
+    testTerms(numTerms * 100, terms.toArray(new String[terms.size()]));
   }
 
   private String randomString() {
     // return _TestUtil.randomSimpleString(random);
-    return _TestUtil.randomRealisticUnicodeString(random());
+    return TestUtil.randomRealisticUnicodeString(random());
   }
 
   public void testBasic() throws Exception {
-    CompiledAutomaton c = build("fob", "foo", "goo");
+    CompiledAutomaton c = build(Operations.DEFAULT_MAX_DETERMINIZED_STATES,
+      "fob", "foo", "goo");
     testFloor(c, "goo", "goo");
     testFloor(c, "ga", "foo");
     testFloor(c, "g", "foo");

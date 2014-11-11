@@ -21,7 +21,7 @@ import java.io.IOException;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.*;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
@@ -36,7 +36,7 @@ public class TestDocBoost extends LuceneTestCase {
 
   public void testDocBoost() throws Exception {
     Directory store = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter(random(), store, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
+    RandomIndexWriter writer = new RandomIndexWriter(random(), store, newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
 
     Field f1 = newTextField("field", "word", Field.Store.YES);
     Field f2 = newTextField("field", "word", Field.Store.YES);
@@ -59,7 +59,7 @@ public class TestDocBoost extends LuceneTestCase {
     IndexSearcher searcher = newSearcher(reader);
     searcher.search
       (new TermQuery(new Term("field", "word")),
-       new Collector() {
+       new SimpleCollector() {
          private int base = 0;
          private Scorer scorer;
          @Override
@@ -71,7 +71,7 @@ public class TestDocBoost extends LuceneTestCase {
            scores[doc + base] = scorer.score();
          }
          @Override
-         public void setNextReader(AtomicReaderContext context) {
+         protected void doSetNextReader(LeafReaderContext context) throws IOException {
            base = context.docBase;
          }
          @Override

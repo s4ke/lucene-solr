@@ -17,20 +17,21 @@ package org.apache.lucene.util.automaton;
  * limitations under the License.
  */
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * Not thorough, but tries to test determinism correctness
  * somewhat randomly, by determinizing a huge random lexicon.
  */
 public class TestDeterminizeLexicon extends LuceneTestCase {
-  private List<Automaton> automata = new ArrayList<Automaton>();
-  private List<String> terms = new ArrayList<String>();
+  private List<Automaton> automata = new ArrayList<>();
+  private List<String> terms = new ArrayList<>();
   
   public void testLexicon() throws Exception {
     int num = atLeast(1);
@@ -38,9 +39,9 @@ public class TestDeterminizeLexicon extends LuceneTestCase {
       automata.clear();
       terms.clear();
       for (int j = 0; j < 5000; j++) {
-        String randomString = _TestUtil.randomUnicodeString(random());
+        String randomString = TestUtil.randomUnicodeString(random());
         terms.add(randomString);
-        automata.add(BasicAutomata.makeString(randomString));
+        automata.add(Automata.makeString(randomString));
       }
       assertLexicon();
     }
@@ -48,15 +49,15 @@ public class TestDeterminizeLexicon extends LuceneTestCase {
   
   public void assertLexicon() throws Exception {
     Collections.shuffle(automata, random());
-    final Automaton lex = BasicOperations.union(automata);
-    lex.determinize();
-    assertTrue(SpecialOperations.isFinite(lex));
+    Automaton lex = Operations.union(automata);
+    lex = Operations.determinize(lex, 1000000);
+    assertTrue(Operations.isFinite(lex));
     for (String s : terms) {
-      assertTrue(BasicOperations.run(lex, s));
+      assertTrue(Operations.run(lex, s));
     }
-    final ByteRunAutomaton lexByte = new ByteRunAutomaton(lex);
+    final ByteRunAutomaton lexByte = new ByteRunAutomaton(lex, false, 1000000);
     for (String s : terms) {
-      byte bytes[] = s.getBytes("UTF-8");
+      byte bytes[] = s.getBytes(StandardCharsets.UTF_8);
       assertTrue(lexByte.run(bytes, 0, bytes.length));
     }
   }

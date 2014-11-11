@@ -17,7 +17,7 @@ package org.apache.lucene.search.grouping.function;
  * limitations under the License.
  */
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.queries.function.FunctionValues;
 import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.search.grouping.AbstractDistinctValuesCollector;
@@ -70,7 +70,7 @@ public class FunctionDistinctValuesCollector extends AbstractDistinctValuesColle
   }
 
   @Override
-  public void setNextReader(AtomicReaderContext context) throws IOException {
+  protected void doSetNextReader(LeafReaderContext context) throws IOException {
     FunctionValues values = groupSource.getValues(vsContext, context);
     groupFiller = values.getValueFiller();
     groupMval = groupFiller.getValue();

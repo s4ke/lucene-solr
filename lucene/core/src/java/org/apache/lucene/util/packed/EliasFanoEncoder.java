@@ -18,9 +18,12 @@
 package org.apache.lucene.util.packed;
 
 import java.util.Arrays;
+import java.util.Collections;
 
-import org.apache.lucene.util.ToStringUtils;
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.FixedBitSet; // for javadocs
+import org.apache.lucene.util.RamUsageEstimator;
+import org.apache.lucene.util.ToStringUtils;
 
 
 /** Encode a non decreasing sequence of non negative whole numbers in the Elias-Fano encoding
@@ -82,7 +85,10 @@ import org.apache.lucene.util.FixedBitSet; // for javadocs
  * @lucene.internal
  */
 
-public class EliasFanoEncoder {
+public class EliasFanoEncoder implements Accountable {
+
+  private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(EliasFanoEncoder.class);
+
   final long numValues;
   private final long upperBound;
   final int numLowBits;
@@ -177,7 +183,7 @@ public class EliasFanoEncoder {
     this.numIndexEntries = (nIndexEntries >= 0) ? nIndexEntries : 0;
     long maxIndexEntry = maxHighValue + numValues - 1; // clear upper bits, set upper bits, start at zero
     this.nIndexEntryBits = (maxIndexEntry <= 0) ? 0
-                          : (64 - Long.numberOfLeadingZeros(maxIndexEntry - 1));
+                          : (64 - Long.numberOfLeadingZeros(maxIndexEntry));
     long numLongsForIndexBits = numLongsForBits(numIndexEntries * nIndexEntryBits);
     if (numLongsForIndexBits > Integer.MAX_VALUE) {
       throw new IllegalArgumentException("numLongsForIndexBits too large to index a long array: " + numLongsForIndexBits);
@@ -350,5 +356,17 @@ public class EliasFanoEncoder {
     return h;
   }
 
+  @Override
+  public long ramBytesUsed() {
+    return BASE_RAM_BYTES_USED
+        + RamUsageEstimator.sizeOf(lowerLongs)
+        + RamUsageEstimator.sizeOf(upperLongs)
+        + RamUsageEstimator.sizeOf(upperZeroBitPositionIndex);
+  }
+  
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Collections.emptyList();
+  }
 }
 

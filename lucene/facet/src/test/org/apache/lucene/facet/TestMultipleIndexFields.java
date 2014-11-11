@@ -30,8 +30,8 @@ import org.apache.lucene.facet.taxonomy.TaxonomyReader;
 import org.apache.lucene.facet.taxonomy.TaxonomyWriter;
 import org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyReader;
 import org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyWriter;
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.index.RandomIndexWriter;
@@ -68,7 +68,7 @@ public class TestMultipleIndexFields extends FacetTestCase {
     
     // create and open an index writer
     RandomIndexWriter iw = new RandomIndexWriter(random(), indexDir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
+        new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
     // create and open a taxonomy writer
     TaxonomyWriter tw = new DirectoryTaxonomyWriter(taxoDir, OpenMode.CREATE);
     FacetsConfig config = getConfig();
@@ -91,7 +91,8 @@ public class TestMultipleIndexFields extends FacetTestCase {
 
     assertOrdinalsExist("$facets", ir);
 
-    IOUtils.close(tr, ir, iw, tw, indexDir, taxoDir);
+    iw.close();
+    IOUtils.close(tr, ir, tw, indexDir, taxoDir);
   }
 
   @Test
@@ -101,7 +102,7 @@ public class TestMultipleIndexFields extends FacetTestCase {
     
     // create and open an index writer
     RandomIndexWriter iw = new RandomIndexWriter(random(), indexDir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
+        new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
     // create and open a taxonomy writer
     TaxonomyWriter tw = new DirectoryTaxonomyWriter(taxoDir, OpenMode.CREATE);
 
@@ -120,7 +121,7 @@ public class TestMultipleIndexFields extends FacetTestCase {
 
     FacetsCollector sfc = performSearch(tr, ir, searcher);
 
-    Map<String,Facets> facetsMap = new HashMap<String,Facets>();
+    Map<String,Facets> facetsMap = new HashMap<>();
     facetsMap.put("Author", getTaxonomyFacetCounts(tr, config, sfc, "$author"));
     Facets facets = new MultiFacets(facetsMap, getTaxonomyFacetCounts(tr, config, sfc));
 
@@ -130,7 +131,8 @@ public class TestMultipleIndexFields extends FacetTestCase {
     assertOrdinalsExist("$facets", ir);
     assertOrdinalsExist("$author", ir);
 
-    IOUtils.close(tr, ir, iw, tw, indexDir, taxoDir);
+    iw.close();
+    IOUtils.close(tr, ir, tw, indexDir, taxoDir);
   }
 
   @Test
@@ -140,7 +142,7 @@ public class TestMultipleIndexFields extends FacetTestCase {
     
     // create and open an index writer
     RandomIndexWriter iw = new RandomIndexWriter(random(), indexDir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
+        new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
     // create and open a taxonomy writer
     TaxonomyWriter tw = new DirectoryTaxonomyWriter(taxoDir, OpenMode.CREATE);
 
@@ -160,7 +162,7 @@ public class TestMultipleIndexFields extends FacetTestCase {
 
     FacetsCollector sfc = performSearch(tr, ir, searcher);
 
-    Map<String,Facets> facetsMap = new HashMap<String,Facets>();
+    Map<String,Facets> facetsMap = new HashMap<>();
     Facets facets2 = getTaxonomyFacetCounts(tr, config, sfc, "$music");
     facetsMap.put("Band", facets2);
     facetsMap.put("Composer", facets2);
@@ -173,12 +175,13 @@ public class TestMultipleIndexFields extends FacetTestCase {
     assertOrdinalsExist("$music", ir);
     assertOrdinalsExist("$music", ir);
 
-    IOUtils.close(tr, ir, iw, tw, indexDir, taxoDir);
+    iw.close();
+    IOUtils.close(tr, ir, tw, indexDir, taxoDir);
   }
 
   private void assertOrdinalsExist(String field, IndexReader ir) throws IOException {
-    for (AtomicReaderContext context : ir.leaves()) {
-      AtomicReader r = context.reader();
+    for (LeafReaderContext context : ir.leaves()) {
+      LeafReader r = context.reader();
       if (r.getBinaryDocValues(field) != null) {
         return; // not all segments must have this DocValues
       }
@@ -193,7 +196,7 @@ public class TestMultipleIndexFields extends FacetTestCase {
 
     // create and open an index writer
     RandomIndexWriter iw = new RandomIndexWriter(random(), indexDir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
+        new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
     // create and open a taxonomy writer
     TaxonomyWriter tw = new DirectoryTaxonomyWriter(taxoDir, OpenMode.CREATE);
 
@@ -213,7 +216,7 @@ public class TestMultipleIndexFields extends FacetTestCase {
 
     FacetsCollector sfc = performSearch(tr, ir, searcher);
 
-    Map<String,Facets> facetsMap = new HashMap<String,Facets>();
+    Map<String,Facets> facetsMap = new HashMap<>();
     facetsMap.put("Band", getTaxonomyFacetCounts(tr, config, sfc, "$bands"));
     facetsMap.put("Composer", getTaxonomyFacetCounts(tr, config, sfc, "$composers"));
     Facets facets = new MultiFacets(facetsMap, getTaxonomyFacetCounts(tr, config, sfc));
@@ -224,7 +227,8 @@ public class TestMultipleIndexFields extends FacetTestCase {
     assertOrdinalsExist("$bands", ir);
     assertOrdinalsExist("$composers", ir);
 
-    IOUtils.close(tr, ir, iw, tw, indexDir, taxoDir);
+    iw.close();
+    IOUtils.close(tr, ir, tw, indexDir, taxoDir);
   }
 
   @Test
@@ -234,7 +238,7 @@ public class TestMultipleIndexFields extends FacetTestCase {
     
     // create and open an index writer
     RandomIndexWriter iw = new RandomIndexWriter(random(), indexDir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
+        new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
     // create and open a taxonomy writer
     TaxonomyWriter tw = new DirectoryTaxonomyWriter(taxoDir, OpenMode.CREATE);
 
@@ -255,7 +259,7 @@ public class TestMultipleIndexFields extends FacetTestCase {
 
     FacetsCollector sfc = performSearch(tr, ir, searcher);
 
-    Map<String,Facets> facetsMap = new HashMap<String,Facets>();
+    Map<String,Facets> facetsMap = new HashMap<>();
     Facets facets2 = getTaxonomyFacetCounts(tr, config, sfc, "$music");
     facetsMap.put("Band", facets2);
     facetsMap.put("Composer", facets2);
@@ -267,8 +271,8 @@ public class TestMultipleIndexFields extends FacetTestCase {
     assertOrdinalsExist("$music", ir);
     assertOrdinalsExist("$literature", ir);
 
-    IOUtils.close(tr, ir, iw, tw);
-    IOUtils.close(indexDir, taxoDir);
+    iw.close();
+    IOUtils.close(tr, ir, iw, tw, indexDir, taxoDir);
   }
 
   private void assertCorrectResults(Facets facets) throws IOException {

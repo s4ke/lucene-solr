@@ -30,22 +30,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.concurrent.ConcurrentHashMap;
 
 
 class SolrCores {
 
   private static Object modifyLock = new Object(); // for locking around manipulating any of the core maps.
-  private final Map<String, SolrCore> cores = new LinkedHashMap<String, SolrCore>(); // For "permanent" cores
+  private final Map<String, SolrCore> cores = new LinkedHashMap<>(); // For "permanent" cores
 
   //WARNING! The _only_ place you put anything into the list of transient cores is with the putTransientCore method!
-  private Map<String, SolrCore> transientCores = new LinkedHashMap<String, SolrCore>(); // For "lazily loaded" cores
+  private Map<String, SolrCore> transientCores = new LinkedHashMap<>(); // For "lazily loaded" cores
 
-  private final Map<String, CoreDescriptor> dynamicDescriptors = new LinkedHashMap<String, CoreDescriptor>();
+  private final Map<String, CoreDescriptor> dynamicDescriptors = new LinkedHashMap<>();
 
-  private final Map<String, SolrCore> createdCores = new LinkedHashMap<String, SolrCore>();
-
-  private Map<SolrCore, String> coreToOrigName = new ConcurrentHashMap<SolrCore, String>();
+  private final Map<String, SolrCore> createdCores = new LinkedHashMap<>();
 
   private final CoreContainer container;
 
@@ -53,11 +50,11 @@ class SolrCores {
 
   // This map will hold objects that are being currently operated on. The core (value) may be null in the case of
   // initial load. The rule is, never to any operation on a core that is currently being operated upon.
-  private static final Set<String> pendingCoreOps = new HashSet<String>();
+  private static final Set<String> pendingCoreOps = new HashSet<>();
 
   // Due to the fact that closes happen potentially whenever anything is _added_ to the transient core list, we need
   // to essentially queue them up to be handled via pendingCoreOps.
-  private static final List<SolrCore> pendingCloses = new ArrayList<SolrCore>();
+  private static final List<SolrCore> pendingCloses = new ArrayList<>();
 
   SolrCores(CoreContainer container) {
     this.container = container;
@@ -95,7 +92,7 @@ class SolrCores {
   // We are shutting down. You can't hold the lock on the various lists of cores while they shut down, so we need to
   // make a temporary copy of the names and shut them down outside the lock.
   protected void close() {
-    Collection<SolrCore> coreList = new ArrayList<SolrCore>();
+    Collection<SolrCore> coreList = new ArrayList<>();
 
     // It might be possible for one of the cores to move from one list to another while we're closing them. So
     // loop through the lists until they're all empty. In particular, the core could have moved from the transient
@@ -145,7 +142,7 @@ class SolrCores {
   }
 
   List<SolrCore> getCores() {
-    List<SolrCore> lst = new ArrayList<SolrCore>();
+    List<SolrCore> lst = new ArrayList<>();
 
     synchronized (modifyLock) {
       lst.addAll(cores.values());
@@ -154,7 +151,7 @@ class SolrCores {
   }
 
   Set<String> getCoreNames() {
-    Set<String> set = new TreeSet<String>();
+    Set<String> set = new TreeSet<>();
 
     synchronized (modifyLock) {
       set.addAll(cores.keySet());
@@ -164,7 +161,7 @@ class SolrCores {
   }
 
   List<String> getCoreNames(SolrCore core) {
-    List<String> lst = new ArrayList<String>();
+    List<String> lst = new ArrayList<>();
 
     synchronized (modifyLock) {
       for (Map.Entry<String, SolrCore> entry : cores.entrySet()) {
@@ -187,7 +184,7 @@ class SolrCores {
    * @return all cores names, whether loaded or unloaded.
    */
   public Collection<String> getAllCoreNames() {
-    Set<String> set = new TreeSet<String>();
+    Set<String> set = new TreeSet<>();
     synchronized (modifyLock) {
       set.addAll(cores.keySet());
       set.addAll(transientCores.keySet());
@@ -230,14 +227,11 @@ class SolrCores {
 
   }
 
-  protected SolrCore remove(String name, boolean removeOrig) {
+  protected SolrCore remove(String name) {
 
     synchronized (modifyLock) {
       SolrCore tmp = cores.remove(name);
       SolrCore ret = null;
-      if (removeOrig && tmp != null) {
-        coreToOrigName.remove(tmp);
-      }
       ret = (ret == null) ? tmp : ret;
       // It could have been a newly-created core. It could have been a transient core. The newly-created cores
       // in particular should be checked. It could have been a dynamic core.
@@ -247,24 +241,6 @@ class SolrCores {
       ret = (ret == null) ? tmp : ret;
       dynamicDescriptors.remove(name);
       return ret;
-    }
-  }
-
-  protected void putCoreToOrigName(SolrCore c, String name) {
-
-    synchronized (modifyLock) {
-      coreToOrigName.put(c, name);
-    }
-
-  }
-
-  protected void removeCoreToOrigName(SolrCore newCore, SolrCore core) {
-
-    synchronized (modifyLock) {
-      String origName = coreToOrigName.remove(core);
-      if (origName != null) {
-        coreToOrigName.put(newCore, origName);
-      }
     }
   }
 
@@ -336,12 +312,6 @@ class SolrCores {
       return new CoreDescriptor(cname, desc);
     }
 
-  }
-
-  protected String getCoreToOrigName(SolrCore solrCore) {
-    synchronized (modifyLock) {
-      return coreToOrigName.get(solrCore);
-    }
   }
 
   // Wait here until any pending operations (load, unload or reload) are completed on this core.

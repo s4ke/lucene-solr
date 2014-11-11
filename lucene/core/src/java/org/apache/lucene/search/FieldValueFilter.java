@@ -18,15 +18,18 @@ package org.apache.lucene.search;
  */
 import java.io.IOException;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.DocValues;
+import org.apache.lucene.util.BitDocIdSet;
+import org.apache.lucene.util.BitSet;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.Bits.MatchAllBits;
 import org.apache.lucene.util.Bits.MatchNoBits;
 
 /**
  * A {@link Filter} that accepts all documents that have one or more values in a
- * given field. This {@link Filter} request {@link Bits} from the
- * {@link FieldCache} and build the bits if not present.
+ * given field. This {@link Filter} request {@link Bits} from
+ * {@link org.apache.lucene.index.LeafReader#getDocsWithField}
  */
 public class FieldValueFilter extends Filter {
   private final String field;
@@ -74,15 +77,15 @@ public class FieldValueFilter extends Filter {
   }
 
   @Override
-  public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs)
+  public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs)
       throws IOException {
-    final Bits docsWithField = FieldCache.DEFAULT.getDocsWithField(
+    final Bits docsWithField = DocValues.getDocsWithField(
         context.reader(), field);
     if (negate) {
       if (docsWithField instanceof MatchAllBits) {
         return null;
       }
-      return new FieldCacheDocIdSet(context.reader().maxDoc(), acceptDocs) {
+      return new DocValuesDocIdSet(context.reader().maxDoc(), acceptDocs) {
         @Override
         protected final boolean matchDoc(int doc) {
           return !docsWithField.get(doc);
@@ -92,12 +95,12 @@ public class FieldValueFilter extends Filter {
       if (docsWithField instanceof MatchNoBits) {
         return null;
       }
-      if (docsWithField instanceof DocIdSet) {
+      if (docsWithField instanceof BitSet) {
         // UweSays: this is always the case for our current impl - but who knows
         // :-)
-        return BitsFilteredDocIdSet.wrap((DocIdSet) docsWithField, acceptDocs);
+        return BitsFilteredDocIdSet.wrap(new BitDocIdSet((BitSet) docsWithField), acceptDocs);
       }
-      return new FieldCacheDocIdSet(context.reader().maxDoc(), acceptDocs) {
+      return new DocValuesDocIdSet(context.reader().maxDoc(), acceptDocs) {
         @Override
         protected final boolean matchDoc(int doc) {
           return docsWithField.get(doc);

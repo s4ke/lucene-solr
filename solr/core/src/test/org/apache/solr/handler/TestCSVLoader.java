@@ -17,7 +17,7 @@
 
 package org.apache.solr.handler;
 
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.request.LocalSolrQueryRequest;
 import org.apache.solr.common.params.CommonParams;
@@ -29,6 +29,8 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.List;
 import java.util.ArrayList;
 
@@ -41,7 +43,6 @@ public class TestCSVLoader extends SolrTestCaseJ4 {
   }
 
   String filename;
-  String def_charset = "UTF-8";
   File file;
 
   @Override
@@ -50,7 +51,7 @@ public class TestCSVLoader extends SolrTestCaseJ4 {
     // if you override setUp or tearDown, you better call
     // the super classes version
     super.setUp();
-    File tempDir = _TestUtil.getTempDir("TestCSVLoader");
+    File tempDir = createTempDir("TestCSVLoader").toFile();
     file = new File(tempDir, "solr_tmp.csv");
     filename = file.getPath();
     cleanup();
@@ -62,25 +63,17 @@ public class TestCSVLoader extends SolrTestCaseJ4 {
     // if you override setUp or tearDown, you better call
     // the super classes version
     super.tearDown();
-    deleteFile();
+    Files.delete(file.toPath());
   }
 
   void makeFile(String contents) {
-    makeFile(contents,def_charset);
-  }
-
-  void makeFile(String contents, String charset) {
     try {
-      Writer out = new OutputStreamWriter(new FileOutputStream(filename), charset);
+      Writer out = new OutputStreamWriter(new FileOutputStream(filename), StandardCharsets.UTF_8);
       out.write(contents);
       out.close();
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
-  }
-
-  void deleteFile() {
-    file.delete();
   }
 
   void cleanup() {
@@ -93,7 +86,7 @@ public class TestCSVLoader extends SolrTestCaseJ4 {
 
     // TODO: stop using locally defined streams once stream.file and
     // stream.body work everywhere
-    List<ContentStream> cs = new ArrayList<ContentStream>(1);
+    List<ContentStream> cs = new ArrayList<>(1);
     ContentStreamBase f = new ContentStreamBase.FileStream(new File(filename));
     f.setContentType("text/csv");
     cs.add(f);

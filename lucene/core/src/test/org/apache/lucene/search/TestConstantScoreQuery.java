@@ -19,7 +19,6 @@ package org.apache.lucene.search;
 
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
@@ -50,7 +49,7 @@ public class TestConstantScoreQuery extends LuceneTestCase {
   
   private void checkHits(IndexSearcher searcher, Query q, final float expectedScore, final String scorerClassName, final String innerScorerClassName) throws IOException {
     final int[] count = new int[1];
-    searcher.search(q, new Collector() {
+    searcher.search(q, new SimpleCollector() {
       private Scorer scorer;
     
       @Override
@@ -67,10 +66,6 @@ public class TestConstantScoreQuery extends LuceneTestCase {
       public void collect(int doc) throws IOException {
         assertEquals("Score differs from expected", expectedScore, this.scorer.score(), 0);
         count[0]++;
-      }
-      
-      @Override
-      public void setNextReader(AtomicReaderContext context) {
       }
       
       @Override
@@ -95,7 +90,8 @@ public class TestConstantScoreQuery extends LuceneTestCase {
 
       reader = writer.getReader();
       writer.close();
-      searcher = newSearcher(reader);
+      // we don't wrap with AssertingIndexSearcher in order to have the original scorer in setScorer.
+      searcher = newSearcher(reader, true, false);
       
       // set a similarity that does not normalize our boost away
       searcher.setSimilarity(new DefaultSimilarity() {
@@ -121,7 +117,7 @@ public class TestConstantScoreQuery extends LuceneTestCase {
       checkHits(searcher, csq2, csq2.getBoost(), ConstantScoreQuery.ConstantScorer.class.getName(), ConstantScoreQuery.ConstantScorer.class.getName());
       
       // for the combined BQ, the scorer should always be BooleanScorer's BucketScorer, because our scorer supports out-of order collection!
-      final String bucketScorerClass = BooleanScorer.class.getName() + "$BucketScorer";
+      final String bucketScorerClass = FakeScorer.class.getName();
       checkHits(searcher, bq, csq1.getBoost() + csq2.getBoost(), bucketScorerClass, null);
       checkHits(searcher, csqbq, csqbq.getBoost(), ConstantScoreQuery.ConstantScorer.class.getName(), bucketScorerClass);
     } finally {
@@ -158,7 +154,7 @@ public class TestConstantScoreQuery extends LuceneTestCase {
   }
 
   // LUCENE-5307
-  // don't reuse the scorer of filters since they have been created with topScorer=false
+  // don't reuse the scorer of filters since they have been created with bulkScorer=false
   public void testQueryWrapperFilter() throws IOException {
     Directory d = newDirectory();
     RandomIndexWriter w = new RandomIndexWriter(random(), d);

@@ -34,7 +34,7 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -57,7 +57,7 @@ public class TestBoolean2 extends LuceneTestCase {
   @BeforeClass
   public static void beforeClass() throws Exception {
     directory = newDirectory();
-    RandomIndexWriter writer= new RandomIndexWriter(random(), directory, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
+    RandomIndexWriter writer= new RandomIndexWriter(random(), directory, newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
     for (int i = 0; i < docFields.length; i++) {
       Document doc = new Document();
       doc.add(newTextField(field, docFields[i], Field.Store.NO));
@@ -91,8 +91,8 @@ public class TestBoolean2 extends LuceneTestCase {
     } while(docCount < 3000);
 
     RandomIndexWriter w = new RandomIndexWriter(random(), dir2, 
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()))
-        .setMaxBufferedDocs(_TestUtil.nextInt(random(), 50, 1000)));
+        newIndexWriterConfig(new MockAnalyzer(random()))
+        .setMaxBufferedDocs(TestUtil.nextInt(random(), 50, 1000)));
     Document doc = new Document();
     doc.add(newTextField("field2", "xxx", Field.Store.NO));
     for(int i=0;i<NUM_EXTRA_DOCS/2;i++) {

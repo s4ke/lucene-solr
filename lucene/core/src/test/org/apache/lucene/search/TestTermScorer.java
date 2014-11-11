@@ -24,7 +24,7 @@ import java.util.List;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.SlowCompositeReaderWrapper;
@@ -48,7 +48,7 @@ public class TestTermScorer extends LuceneTestCase {
     directory = newDirectory();
     
     RandomIndexWriter writer = new RandomIndexWriter(random(), directory, 
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()))
+        newIndexWriterConfig(new MockAnalyzer(random()))
         .setMergePolicy(newLogMergePolicy())
         .setSimilarity(new DefaultSimilarity()));
     for (int i = 0; i < values.length; i++) {
@@ -76,15 +76,15 @@ public class TestTermScorer extends LuceneTestCase {
     TermQuery termQuery = new TermQuery(allTerm);
     
     Weight weight = indexSearcher.createNormalizedWeight(termQuery);
-    assertTrue(indexSearcher.getTopReaderContext() instanceof AtomicReaderContext);
-    AtomicReaderContext context = (AtomicReaderContext)indexSearcher.getTopReaderContext();
-    Scorer ts = weight.scorer(context, true, true, context.reader().getLiveDocs());
+    assertTrue(indexSearcher.getTopReaderContext() instanceof LeafReaderContext);
+    LeafReaderContext context = (LeafReaderContext)indexSearcher.getTopReaderContext();
+    BulkScorer ts = weight.bulkScorer(context, true, context.reader().getLiveDocs());
     // we have 2 documents with the term all in them, one document for all the
     // other values
-    final List<TestHit> docs = new ArrayList<TestHit>();
+    final List<TestHit> docs = new ArrayList<>();
     // must call next first
     
-    ts.score(new Collector() {
+    ts.score(new SimpleCollector() {
       private int base = 0;
       private Scorer scorer;
       
@@ -104,7 +104,7 @@ public class TestTermScorer extends LuceneTestCase {
       }
       
       @Override
-      public void setNextReader(AtomicReaderContext context) {
+      protected void doSetNextReader(LeafReaderContext context) throws IOException {
         base = context.docBase;
       }
       
@@ -138,9 +138,9 @@ public class TestTermScorer extends LuceneTestCase {
     TermQuery termQuery = new TermQuery(allTerm);
     
     Weight weight = indexSearcher.createNormalizedWeight(termQuery);
-    assertTrue(indexSearcher.getTopReaderContext() instanceof AtomicReaderContext);
-    AtomicReaderContext context = (AtomicReaderContext) indexSearcher.getTopReaderContext();
-    Scorer ts = weight.scorer(context, true, false, context.reader().getLiveDocs());
+    assertTrue(indexSearcher.getTopReaderContext() instanceof LeafReaderContext);
+    LeafReaderContext context = (LeafReaderContext) indexSearcher.getTopReaderContext();
+    Scorer ts = weight.scorer(context, context.reader().getLiveDocs());
     assertTrue("next did not return a doc",
         ts.nextDoc() != DocIdSetIterator.NO_MORE_DOCS);
     assertTrue("score is not correct", ts.score() == 1.6931472f);
@@ -157,9 +157,9 @@ public class TestTermScorer extends LuceneTestCase {
     TermQuery termQuery = new TermQuery(allTerm);
     
     Weight weight = indexSearcher.createNormalizedWeight(termQuery);
-    assertTrue(indexSearcher.getTopReaderContext() instanceof AtomicReaderContext);
-    AtomicReaderContext context = (AtomicReaderContext) indexSearcher.getTopReaderContext();
-    Scorer ts = weight.scorer(context, true, false, context.reader().getLiveDocs());
+    assertTrue(indexSearcher.getTopReaderContext() instanceof LeafReaderContext);
+    LeafReaderContext context = (LeafReaderContext) indexSearcher.getTopReaderContext();
+    Scorer ts = weight.scorer(context, context.reader().getLiveDocs());
     assertTrue("Didn't skip", ts.advance(3) != DocIdSetIterator.NO_MORE_DOCS);
     // The next doc should be doc 5
     assertTrue("doc should be number 5", ts.docID() == 5);

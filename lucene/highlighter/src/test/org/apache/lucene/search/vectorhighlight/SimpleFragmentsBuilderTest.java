@@ -35,7 +35,7 @@ import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.highlight.SimpleHTMLEncoder;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -148,8 +148,7 @@ public class SimpleFragmentsBuilderTest extends AbstractTestCase {
   }
   
   protected void makeUnstoredIndex() throws Exception {
-    IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(
-        TEST_VERSION_CURRENT, analyzerW).setOpenMode(OpenMode.CREATE));
+    IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(analyzerW).setOpenMode(OpenMode.CREATE));
     Document doc = new Document();
     FieldType customType = new FieldType(TextField.TYPE_NOT_STORED);
     customType.setStoreTermVectors(true);
@@ -228,7 +227,7 @@ public class SimpleFragmentsBuilderTest extends AbstractTestCase {
     for (int i = 0; i < randomValues.length; i++) {
       String randomValue;
       do {
-        randomValue = _TestUtil.randomSimpleString(random());
+        randomValue = TestUtil.randomSimpleString(random());
       } while ("".equals(randomValue));
       randomValues[i] = randomValue;
     }
@@ -237,8 +236,7 @@ public class SimpleFragmentsBuilderTest extends AbstractTestCase {
     RandomIndexWriter writer = new RandomIndexWriter(
         random(),
         dir,
-        newIndexWriterConfig(TEST_VERSION_CURRENT,
-            new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
+        newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
 
     FieldType customType = new FieldType(TextField.TYPE_STORED);
     customType.setStoreTermVectors(true);
@@ -248,9 +246,9 @@ public class SimpleFragmentsBuilderTest extends AbstractTestCase {
     int numDocs = randomValues.length * 5;
     int numFields = 2 + random().nextInt(5);
     int numTerms = 2 + random().nextInt(3);
-    List<Doc> docs = new ArrayList<Doc>(numDocs);
-    List<Document> documents = new ArrayList<Document>(numDocs);
-    Map<String, Set<Integer>> valueToDocId = new HashMap<String, Set<Integer>>();
+    List<Doc> docs = new ArrayList<>(numDocs);
+    List<Document> documents = new ArrayList<>(numDocs);
+    Map<String, Set<Integer>> valueToDocId = new HashMap<>();
     for (int i = 0; i < numDocs; i++) {
       Document document = new Document();
       String[][] fields = new String[numFields][numTerms];
@@ -277,7 +275,7 @@ public class SimpleFragmentsBuilderTest extends AbstractTestCase {
       for (int highlightIter = 0; highlightIter < highlightIters; highlightIter++) {
         String queryTerm = randomValues[random().nextInt(randomValues.length)];
         int randomHit = valueToDocId.get(queryTerm).iterator().next();
-        List<StringBuilder> builders = new ArrayList<StringBuilder>();
+        List<StringBuilder> builders = new ArrayList<>();
         for (String[] fieldValues : docs.get(randomHit).fieldValues) {
           StringBuilder builder = new StringBuilder();
           boolean hit = false;

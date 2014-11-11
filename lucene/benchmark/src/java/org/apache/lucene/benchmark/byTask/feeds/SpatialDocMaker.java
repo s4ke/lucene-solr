@@ -50,7 +50,7 @@ public class SpatialDocMaker extends DocMaker {
   public static final String SPATIAL_FIELD = "spatial";
 
   //cache spatialStrategy by round number
-  private static Map<Integer,SpatialStrategy> spatialStrategyCache = new HashMap<Integer,SpatialStrategy>();
+  private static Map<Integer,SpatialStrategy> spatialStrategyCache = new HashMap<>();
 
   private SpatialStrategy strategy;
   private ShapeConverter shapeConverter;
@@ -97,12 +97,9 @@ public class SpatialDocMaker extends DocMaker {
     //A factory for the prefix tree grid
     SpatialPrefixTree grid = SpatialPrefixTreeFactory.makeSPT(configMap, null, ctx);
 
-    RecursivePrefixTreeStrategy strategy = new RecursivePrefixTreeStrategy(grid, SPATIAL_FIELD) {
-      {
-        //protected field
-        this.pointsOnly = config.get("spatial.docPointsOnly", false);
-      }
-    };
+    RecursivePrefixTreeStrategy strategy = new RecursivePrefixTreeStrategy(grid, SPATIAL_FIELD);
+    strategy.setPointsOnly(config.get("spatial.docPointsOnly", false));
+    strategy.setPruneLeafyBranches(config.get("spatial.pruneLeafyBranches", true));
 
     int prefixGridScanLevel = config.get("query.spatial.prefixGridScanLevel", -4);
     if (prefixGridScanLevel < 0)
@@ -190,7 +187,7 @@ public class SpatialDocMaker extends DocMaker {
   public static Shape makeShapeFromString(SpatialStrategy strategy, String name, String shapeStr) {
     if (shapeStr != null && shapeStr.length() > 0) {
       try {
-        return strategy.getSpatialContext().readShape(shapeStr);
+        return strategy.getSpatialContext().readShapeFromWkt(shapeStr);
       } catch (Exception e) {//InvalidShapeException TODO
         System.err.println("Shape "+name+" wasn't parseable: "+e+"  (skipping it)");
         return null;

@@ -42,7 +42,7 @@ public final class RunListenerPrintReproduceInfo extends RunListener {
    * A list of all test suite classes executed so far in this JVM (ehm, 
    * under this class's classloader).
    */
-  private static List<String> testClassesRun = new ArrayList<String>();
+  private static List<String> testClassesRun = new ArrayList<>();
 
   /**
    * The currently executing scope.
@@ -175,6 +175,12 @@ public final class RunListenerPrintReproduceInfo extends RunListener {
       if (classEnvRule.timeZone != null) {
         addVmOpt(b, "tests.timezone", classEnvRule.timeZone.getID());
       }
+    }
+
+    if (LuceneTestCase.assertsAreEnabled) {
+      addVmOpt(b, "tests.asserts", "true");
+    } else {
+      addVmOpt(b, "tests.asserts", "false");
     }
 
     addVmOpt(b, "tests.file.encoding", System.getProperty("file.encoding"));

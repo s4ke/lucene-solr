@@ -37,6 +37,7 @@
   <property name="maven.dist.dir" location="${package.dir}/maven"/>
   <property name="lucene-libs" location="${dest}/lucene-libs" />
   <property name="tests.userdir" location="src/test-files"/>
+  <property name="server.dir" location="${common-solr.dir}/server" />
   <property name="example" location="${common-solr.dir}/example" />
   <property name="javadoc.dir" location="${dest}/docs"/>
   <property name="tests.cleanthreads.sysprop" value="perClass"/>
@@ -70,7 +71,7 @@
   <path id="additional.dependencies">
   	<fileset dir="${common-solr.dir}/core/lib" excludes="${common.classpath.excludes}"/>
   	<fileset dir="${common-solr.dir}/solrj/lib" excludes="${common.classpath.excludes}"/>
-  	<fileset dir="${common-solr.dir}/example/lib" excludes="${common.classpath.excludes}"/>
+  	<fileset dir="${common-solr.dir}/server/lib" excludes="${common.classpath.excludes}"/>
   	<fileset dir="${common-solr.dir}/example/example-DIH/solr/db/lib" excludes="${common.classpath.excludes}"/>  	
   	<fileset dir="lib" excludes="${common.classpath.excludes}" erroronmissingdir="false"/>
   </path>
@@ -88,6 +89,7 @@
     <pathelement location="${analyzers-kuromoji.jar}"/>
     <pathelement location="${analyzers-phonetic.jar}"/>
     <pathelement location="${codecs.jar}"/>
+    <pathelement location="${backward-codecs.jar}"/>
     <pathelement location="${highlighter.jar}"/>
     <pathelement location="${memory.jar}"/>
     <pathelement location="${misc.jar}"/>
@@ -118,7 +120,7 @@
       <exclude name="randomizedtesting-runner-*.jar" />
       <exclude name="ant*.jar" />
     </fileset>
-  	<pathelement path="${build.dir}/test-files"/>
+  	<pathelement path="src/test-files"/>
   	<path refid="test.base.classpath"/>
   </path>
  
@@ -156,7 +158,7 @@
   </target>
 
   <target name="prep-lucene-jars" 
-  	      depends="jar-lucene-core, jar-analyzers-phonetic, jar-analyzers-kuromoji, jar-codecs,jar-expressions, jar-suggest, jar-highlighter, jar-memory,
+  	      depends="jar-lucene-core, jar-backward-codecs, jar-analyzers-phonetic, jar-analyzers-kuromoji, jar-codecs,jar-expressions, jar-suggest, jar-highlighter, jar-memory,
   	               jar-misc, jar-spatial, jar-grouping, jar-queries, jar-queryparser, jar-join">
   	  <property name="solr.deps.compiled" value="true"/>
   </target>
@@ -200,17 +202,21 @@
     <attribute name="excludes" default="**/pom.xml,**/*.iml"/>
     <attribute name="metainf.source.dir" default="${common-solr.dir}"/>
     <attribute name="implementation.title" default="org.apache.solr"/>
-    <attribute name="spec.version" default="${spec.version}"/>
     <attribute name="manifest.file" default="${manifest.file}"/>
-    <element name="nested" optional="true" implicit="true"/>
+    <element name="solr-jarify-filesets" optional="true"/>
+    <element name="solr-jarify-additional-manifest-attributes" optional="true"/>
     <sequential>
       <jarify basedir="@{basedir}" destfile="@{destfile}"
               title="@{title}" excludes="@{excludes}"
               metainf.source.dir="@{metainf.source.dir}"
               implementation.title="@{implementation.title}"
-              spec.version="@{spec.version}"
               manifest.file="@{manifest.file}">
-        <nested/>
+        <filesets>
+          <solr-jarify-filesets />
+        </filesets>
+        <jarify-additional-manifest-attributes>
+          <solr-jarify-additional-manifest-attributes />
+        </jarify-additional-manifest-attributes>
       </jarify>
     </sequential>
   </macrodef>
@@ -219,8 +225,8 @@
     <solr-jarify/>
   </target>
 
-  <target name="compile-core" depends="prep-lucene-jars,resolve-example,common.compile-core"/>
-  <target name="compile-test" depends="sync-resources,compile-solr-test-framework,common.compile-test"/>
+  <target name="compile-core" depends="prep-lucene-jars,resolve-example,resolve-server,common.compile-core"/>
+  <target name="compile-test" depends="compile-solr-test-framework,common.compile-test"/>
 
   <target name="dist" depends="jar-core">
     <copy file="${build.dir}/${fullnamever}.jar" todir="${dist}"/>
@@ -229,10 +235,10 @@
   <property name="lucenedocs" location="${common.dir}/build/docs"/>
 
   <!-- dependency to ensure all lucene javadocs are present -->
-  <target name="lucene-javadocs" depends="javadocs-lucene-core,javadocs-analyzers-common,javadocs-analyzers-icu,javadocs-analyzers-kuromoji,javadocs-analyzers-phonetic,javadocs-analyzers-smartcn,javadocs-analyzers-morfologik,javadocs-analyzers-stempel,javadocs-analyzers-uima,javadocs-codecs,javadocs-expressions,javadocs-suggest,javadocs-grouping,javadocs-queries,javadocs-queryparser,javadocs-highlighter,javadocs-memory,javadocs-misc,javadocs-spatial,javadocs-test-framework"/>
+  <target name="lucene-javadocs" depends="javadocs-lucene-core,javadocs-analyzers-common,javadocs-analyzers-icu,javadocs-analyzers-kuromoji,javadocs-analyzers-phonetic,javadocs-analyzers-smartcn,javadocs-analyzers-morfologik,javadocs-analyzers-stempel,javadocs-analyzers-uima,javadocs-backward-codecs,javadocs-codecs,javadocs-expressions,javadocs-suggest,javadocs-grouping,javadocs-queries,javadocs-queryparser,javadocs-highlighter,javadocs-memory,javadocs-misc,javadocs-spatial,javadocs-test-framework"/>
 
   <!-- create javadocs for the current module -->
-  <target name="javadocs" depends="compile-core,define-lucene-javadoc-url,lucene-javadocs,javadocs-solr-core">
+  <target name="javadocs" depends="compile-core,define-lucene-javadoc-url,lucene-javadocs,javadocs-solr-core,check-javadocs-uptodate" unless="javadocs-uptodate-${name}">
    	<sequential>
       <mkdir dir="${javadoc.dir}/${name}"/>
       <solr-invoke-javadoc>
@@ -295,6 +301,7 @@
           <link offline="true" href="${lucene.javadoc.url}analyzers-smartcn" packagelistloc="${lucenedocs}/analyzers-smartcn"/>
           <link offline="true" href="${lucene.javadoc.url}analyzers-stempel" packagelistloc="${lucenedocs}/analyzers-stempel"/>
           <link offline="true" href="${lucene.javadoc.url}analyzers-uima" packagelistloc="${lucenedocs}/analyzers-uima"/>
+          <link offline="true" href="${lucene.javadoc.url}backward-codecs" packagelistloc="${lucenedocs}/backward-codecs"/>
           <link offline="true" href="${lucene.javadoc.url}codecs" packagelistloc="${lucenedocs}/codecs"/>
           <link offline="true" href="${lucene.javadoc.url}expressions" packagelistloc="${lucenedocs}/expressions"/>
           <link offline="true" href="${lucene.javadoc.url}suggest" packagelistloc="${lucenedocs}/suggest"/>
@@ -314,16 +321,16 @@
 
   <target name="define-lucene-javadoc-url" depends="resolve-groovy" unless="lucene.javadoc.url">
     <groovy><![CDATA[
-      String url, version = project.getProperty('version');
+      String url, version = properties['version'];
       if (version.contains('-SNAPSHOT')) {
-        url = new File(project.getProperty('common.dir'), 'build' + File.separator + 'docs').toURI().toASCIIString();
+        url = new File(properties['common.dir'], 'build' + File.separator + 'docs').toURI().toASCIIString();
         if (!(url =~ /\/$/)) url += '/';
       } else {
         version = version.replace('.', '_');
         url = 'http://lucene.apache.org/core/' + version + '/';
       }
       task.log('Using the following URL to refer to Lucene Javadocs: ' + url);
-      project.setProperty('lucene.javadoc.url', url);
+      properties['lucene.javadoc.url'] = url;
     ]]></groovy>
   </target>
 
@@ -331,7 +338,9 @@
     <sequential>
       <mkdir dir="${build.dir}"/>
       <solr-jarify basedir="${src.dir}" destfile="${build.dir}/${final.name}-src.jar">
-        <fileset dir="${resources.dir}" erroronmissingdir="no"/>
+        <solr-jarify-filesets>
+          <fileset dir="${resources.dir}" erroronmissingdir="no"/>
+        </solr-jarify-filesets>
       </solr-jarify>
     </sequential>
   </target>
@@ -399,15 +408,6 @@
     </ant>
   </target>
 
-  <!-- TODO: really a copy should work: but sync is currently safer
-       since some buggy tests don't create their own tempdir but
-       modify this target directory directly... -->
-  <target name="sync-resources">
-    <sync todir="${build.dir}/test-files">
-      <fileset dir="${tests.userdir}"/>
-    </sync>
-  </target>
-
   <!-- Solr test-framework targets -->
   <target name="compile-solr-test-framework" description="Compile the Solr test-framework" unless="solr.test.framework.compiled">
     <ant dir="${common-solr.dir}/test-framework" target="compile-core" inheritAll="false">
@@ -425,13 +425,18 @@
 
   <!-- resolve dependencies in the example (relied upon by compile/tests) -->
   <target name="resolve-example" unless="example.libs.uptodate">
-    <ant dir="${common-solr.dir}/example" target="resolve" inheritAll="false">
-      <propertyset refid="uptodate.and.compiled.properties"/>
-    </ant>
     <ant dir="${common-solr.dir}/example/example-DIH" target="resolve" inheritAll="false">
       <propertyset refid="uptodate.and.compiled.properties"/>
     </ant>
     <property name="example.libs.uptodate" value="true"/>
+  </target>
+
+  <!-- resolve dependencies in the server directory (relied upon by compile/tests) -->
+  <target name="resolve-server" unless="server.libs.uptodate">
+    <ant dir="${common-solr.dir}/server" target="resolve" inheritAll="false">
+      <propertyset refid="uptodate.and.compiled.properties"/>
+    </ant>
+    <property name="server.libs.uptodate" value="true"/>
   </target>
 
   <macrodef name="contrib-crawl">
@@ -446,6 +451,12 @@
   </macrodef>
 
   <!-- Solr contrib targets -->
+  <target name="-compile-analysis-extras">
+    <ant dir="${common-solr.dir}/contrib/analysis-extras" target="compile" inheritAll="false">
+      <propertyset refid="uptodate.and.compiled.properties"/>
+    </ant>
+  </target>
+
   <target name="compile-contrib" description="Compile contrib modules">
   	<contrib-crawl target="compile-core"/>
   </target>
@@ -469,7 +480,7 @@
   </target>
   
   <!-- Forbidden API Task, customizations for Solr -->
-  <target name="-check-forbidden-base" depends="-init-forbidden-apis,compile-core,compile-test">
+  <target name="-check-forbidden-all" depends="-init-forbidden-apis,compile-core,compile-test">
     <property file="${common.dir}/ivy-versions.properties"/> <!-- for commons-io version -->
     <forbidden-apis internalRuntimeForbidden="true" classpathref="forbidden-apis.allclasses.classpath">
       <bundledSignatures name="jdk-unsafe-${javac.target}"/>

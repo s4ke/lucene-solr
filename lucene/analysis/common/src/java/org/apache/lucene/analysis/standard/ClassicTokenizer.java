@@ -18,15 +18,13 @@
 package org.apache.lucene.analysis.standard;
 
 import java.io.IOException;
-import java.io.Reader;
 
 import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.TypeAttribute;
-import org.apache.lucene.util.AttributeSource;
-import org.apache.lucene.util.Version;
+import org.apache.lucene.util.AttributeFactory;
 
 /** A grammar-based tokenizer constructed with JFlex
  *
@@ -51,7 +49,7 @@ import org.apache.lucene.util.Version;
 
 public final class ClassicTokenizer extends Tokenizer {
   /** A private instance of the JFlex-constructed scanner */
-  private StandardTokenizerInterface scanner;
+  private ClassicTokenizerImpl scanner;
 
   public static final int ALPHANUM          = 0;
   public static final int APOSTROPHE        = 1;
@@ -84,6 +82,9 @@ public final class ClassicTokenizer extends Tokenizer {
   /** Set the max allowed token length.  Any token longer
    *  than this is skipped. */
   public void setMaxTokenLength(int length) {
+    if (length < 1) {
+      throw new IllegalArgumentException("maxTokenLength must be greater than zero");
+    }
     this.maxTokenLength = length;
   }
 
@@ -98,19 +99,19 @@ public final class ClassicTokenizer extends Tokenizer {
    *
    * See http://issues.apache.org/jira/browse/LUCENE-1068
    */
-  public ClassicTokenizer(Version matchVersion) {
-    init(matchVersion);
+  public ClassicTokenizer() {
+    init();
   }
 
   /**
-   * Creates a new ClassicTokenizer with a given {@link org.apache.lucene.util.AttributeSource.AttributeFactory} 
+   * Creates a new ClassicTokenizer with a given {@link org.apache.lucene.util.AttributeFactory} 
    */
-  public ClassicTokenizer(Version matchVersion, AttributeFactory factory) {
+  public ClassicTokenizer(AttributeFactory factory) {
     super(factory);
-    init(matchVersion);
+    init();
   }
 
-  private void init(Version matchVersion) {
+  private void init() {
     this.scanner = new ClassicTokenizerImpl(input);
   }
 
@@ -134,7 +135,7 @@ public final class ClassicTokenizer extends Tokenizer {
     while(true) {
       int tokenType = scanner.getNextToken();
 
-      if (tokenType == StandardTokenizerInterface.YYEOF) {
+      if (tokenType == ClassicTokenizerImpl.YYEOF) {
         return false;
       }
 

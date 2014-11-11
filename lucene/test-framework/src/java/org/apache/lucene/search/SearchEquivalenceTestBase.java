@@ -31,10 +31,9 @@ import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
-import org.apache.lucene.util.automaton.BasicAutomata;
+import org.apache.lucene.util.TestUtil;
+import org.apache.lucene.util.automaton.Automata;
 import org.apache.lucene.util.automaton.CharacterRunAutomaton;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -58,7 +57,7 @@ public abstract class SearchEquivalenceTestBase extends LuceneTestCase {
     Random random = random();
     directory = newDirectory();
     stopword = "" + randomChar();
-    CharacterRunAutomaton stopset = new CharacterRunAutomaton(BasicAutomata.makeString(stopword));
+    CharacterRunAutomaton stopset = new CharacterRunAutomaton(Automata.makeString(stopword));
     analyzer = new MockAnalyzer(random, MockTokenizer.WHITESPACE, false, stopset);
     RandomIndexWriter iw = new RandomIndexWriter(random, directory, analyzer);
     Document doc = new Document();
@@ -125,7 +124,7 @@ public abstract class SearchEquivalenceTestBase extends LuceneTestCase {
    * returns random character (a-z)
    */
   static char randomChar() {
-    return (char) _TestUtil.nextInt(random(), 'a', 'z');
+    return (char) TestUtil.nextInt(random(), 'a', 'z');
   }
 
   /**
@@ -173,8 +172,8 @@ public abstract class SearchEquivalenceTestBase extends LuceneTestCase {
   protected void assertSubsetOf(Query q1, Query q2, Filter filter) throws Exception {
     // TRUNK ONLY: test both filter code paths
     if (filter != null && random().nextBoolean()) {
-      q1 = new FilteredQuery(q1, filter, _TestUtil.randomFilterStrategy(random()));
-      q2 = new FilteredQuery(q2, filter,  _TestUtil.randomFilterStrategy(random()));
+      q1 = new FilteredQuery(q1, filter, TestUtil.randomFilterStrategy(random()));
+      q2 = new FilteredQuery(q2, filter,  TestUtil.randomFilterStrategy(random()));
       filter = null;
     }
     

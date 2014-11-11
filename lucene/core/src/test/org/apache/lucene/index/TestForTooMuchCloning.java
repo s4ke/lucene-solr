@@ -27,26 +27,25 @@ import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 public class TestForTooMuchCloning extends LuceneTestCase {
 
   // Make sure we don't clone IndexInputs too frequently
   // during merging:
   public void test() throws Exception {
-    // NOTE: if we see a fail on this test with "NestedPulsing" its because its 
-    // reuse isnt perfect (but reasonable). see TestPulsingReuse.testNestedPulsing 
-    // for more details
     final MockDirectoryWrapper dir = newMockDirectory();
     final TieredMergePolicy tmp = new TieredMergePolicy();
     tmp.setMaxMergeAtOnce(2);
     final RandomIndexWriter w = new RandomIndexWriter(random(), dir,
-                                                      newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMaxBufferedDocs(2).setMergePolicy(tmp));
+                                                      newIndexWriterConfig(new MockAnalyzer(random()))
+                                                        .setMaxBufferedDocs(2)
+                                                        .setMergePolicy(tmp));
     final int numDocs = 20;
     for(int docs=0;docs<numDocs;docs++) {
       StringBuilder sb = new StringBuilder();
       for(int terms=0;terms<100;terms++) {
-        sb.append(_TestUtil.randomRealisticUnicodeString(random()));
+        sb.append(TestUtil.randomRealisticUnicodeString(random()));
         sb.append(' ');
       }
       final Document doc = new Document();

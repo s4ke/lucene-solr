@@ -27,11 +27,13 @@ import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.automaton.Automata;
 import org.apache.lucene.util.automaton.Automaton;
 import org.apache.lucene.util.automaton.AutomatonProvider;
-import org.apache.lucene.util.automaton.BasicAutomata;
-import org.apache.lucene.util.automaton.BasicOperations;
+import org.apache.lucene.util.automaton.Operations;
 import org.apache.lucene.util.automaton.RegExp;
+
+import static org.apache.lucene.util.automaton.Operations.DEFAULT_MAX_DETERMINIZED_STATES;
 
 /**
  * Some simple regex tests, mostly converted from contrib's TestRegexQuery.
@@ -97,10 +99,10 @@ public class TestRegexpQuery extends LuceneTestCase {
   public void testCustomProvider() throws IOException {
     AutomatonProvider myProvider = new AutomatonProvider() {
       // automaton that matches quick or brown
-      private Automaton quickBrownAutomaton = BasicOperations.union(Arrays
-          .asList(BasicAutomata.makeString("quick"),
-          BasicAutomata.makeString("brown"),
-          BasicAutomata.makeString("bob")));
+      private Automaton quickBrownAutomaton = Operations.union(Arrays
+          .asList(Automata.makeString("quick"),
+          Automata.makeString("brown"),
+          Automata.makeString("bob")));
       
       @Override
       public Automaton getAutomaton(String name) {
@@ -109,7 +111,7 @@ public class TestRegexpQuery extends LuceneTestCase {
       }
     };
     RegexpQuery query = new RegexpQuery(newTerm("<quickBrown>"), RegExp.ALL,
-        myProvider);
+      myProvider, DEFAULT_MAX_DETERMINIZED_STATES);
     assertEquals(1, searcher.search(query, 5).totalHits);
   }
   

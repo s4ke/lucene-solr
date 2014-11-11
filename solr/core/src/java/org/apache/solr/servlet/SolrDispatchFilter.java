@@ -19,6 +19,22 @@ package org.apache.solr.servlet;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpDelete;
+import org.apache.http.client.methods.HttpEntityEnclosingRequestBase;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpHead;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
+import org.apache.http.client.methods.HttpRequestBase;
+import org.apache.http.entity.InputStreamEntity;
+import org.apache.http.util.EntityUtils;
+import org.apache.http.Header;
+import org.apache.http.HeaderIterator;
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpEntityEnclosingRequest;
+import org.apache.http.HttpResponse;
+import org.apache.solr.client.solrj.impl.CloudSolrServer;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrException.ErrorCode;
 import org.apache.solr.common.cloud.Aliases;
@@ -42,6 +58,7 @@ import org.apache.solr.core.CoreContainer;
 import org.apache.solr.core.SolrConfig;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.core.SolrResourceLoader;
+import org.apache.solr.client.solrj.impl.HttpClientUtil;
 import org.apache.solr.handler.ContentStreamHandlerBase;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.request.SolrQueryRequestBase;
@@ -49,15 +66,14 @@ import org.apache.solr.request.SolrRequestHandler;
 import org.apache.solr.request.SolrRequestInfo;
 import org.apache.solr.response.BinaryQueryResponseWriter;
 import org.apache.solr.response.QueryResponseWriter;
+import org.apache.solr.response.QueryResponseWriterUtil;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.servlet.cache.HttpCacheHeaderUtil;
 import org.apache.solr.servlet.cache.Method;
 import org.apache.solr.update.processor.DistributingUpdateProcessorFactory;
-import org.apache.solr.util.FastWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.servlet.Filter;
 import javax.servlet.FilterChain;
 import javax.servlet.FilterConfig;
 import javax.servlet.ServletException;
@@ -70,11 +86,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.io.Writer;
-import java.net.HttpURLConnection;
 import java.net.URL;
-import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -85,39 +97,26 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
-import java.util.WeakHashMap;
 
 /**
  * This filter looks at the incoming URL maps them to handlers defined in solrconfig.xml
  *
  * @since solr 1.2
  */
-public class SolrDispatchFilter implements Filter
-{
+public class SolrDispatchFilter extends BaseSolrFilter {
   private static final String CONNECTION_HEADER = "Connection";
   private static final String TRANSFER_ENCODING_HEADER = "Transfer-Encoding";
+  private static final String CONTENT_LENGTH_HEADER = "Content-Length";
 
-  final Logger log;
+  static final Logger log = LoggerFactory.getLogger(SolrDispatchFilter.class);
 
   protected volatile CoreContainer cores;
 
   protected String pathPrefix = null; // strip this from the beginning of a path
   protected String abortErrorMessage = null;
-  protected final Map<SolrConfig, SolrRequestParsers> parsers = new WeakHashMap<SolrConfig, SolrRequestParsers>();
+  protected final HttpClient httpClient = HttpClientUtil.createClient(new ModifiableSolrParams());
   
-  private static final Charset UTF8 = Charset.forName("UTF-8");
-
   public SolrDispatchFilter() {
-    try {
-      log = LoggerFactory.getLogger(SolrDispatchFilter.class);
-    } catch (NoClassDefFoundError e) {
-      throw new SolrException(
-          ErrorCode.SERVER_ERROR,
-          "Could not find necessary SLF4j logging jars. If using Jetty, the SLF4j logging jars need to go in "
-          +"the jetty lib/ext directory. For other containers, the corresponding directory should be used. "
-          +"For more information, see: http://wiki.apache.org/solr/SolrLogging",
-          e);
-    }
   }
   
   @Override
@@ -257,20 +256,12 @@ public class SolrDispatchFilter implements Filter
         boolean usingAliases = false;
         List<String> collectionsList = null;
         // Check for the core admin collections url
-        if( path.equals( "/admin/collections" ) ) {
-          handler = cores.getCollectionsHandler();
+        handler = cores.getRequestHandler(path);
+        if( handler!= null ) {
           solrReq =  SolrRequestParsers.DEFAULT.parse(null,path, req);
           handleAdminRequest(req, response, handler, solrReq);
           return;
-        }
-        // Check for the core admin info url
-        if( path.startsWith( "/admin/info" ) ) {
-          handler = cores.getInfoHandler();
-          solrReq =  SolrRequestParsers.DEFAULT.parse(null,path, req);
-          handleAdminRequest(req, response, handler, solrReq);
-          return;
-        }
-        else {
+        } else {
           //otherwise, we should find a core from the path
           idx = path.indexOf( "/", 1 );
           if( idx > 1 ) {
@@ -319,6 +310,7 @@ public class SolrDispatchFilter implements Filter
             String coreUrl = getRemotCoreUrl(cores, corename, origCorename);
             // don't proxy for internal update requests
             SolrParams queryParams = SolrRequestParsers.parseQueryString(req.getQueryString());
+            checkStateIsValid(cores, queryParams.get(CloudSolrServer.STATE_VERSION));
             if (coreUrl != null
                 && queryParams
                     .get(DistributingUpdateProcessorFactory.DISTRIB_UPDATE_PARAM) == null) {
@@ -348,15 +340,11 @@ public class SolrDispatchFilter implements Filter
         if( core != null ) {
           final SolrConfig config = core.getSolrConfig();
           // get or create/cache the parser for the core
-          SolrRequestParsers parser = null;
-          parser = parsers.get(config);
-          if( parser == null ) {
-            parser = new SolrRequestParsers(config);
-            parsers.put(config, parser );
-          }
+          SolrRequestParsers parser = config.getRequestParsers();
 
-          // Handle /schema/* paths via Restlet
-          if( path.startsWith("/schema") ) {
+          // Handle /schema/* and /config/* paths via Restlet
+          if( path.equals("/schema") || path.startsWith("/schema/")
+              /*|| path.equals("/config") || path.startsWith("/config/")*/) {
             solrReq = parser.parse(core, path, req);
             SolrRequestInfo.setRequestInfo(new SolrRequestInfo(solrReq, new SolrQueryResponse()));
             if( path.equals(req.getServletPath()) ) {
@@ -377,6 +365,8 @@ public class SolrDispatchFilter implements Filter
             if( handler == null && parser.isHandleSelect() ) {
               if( "/select".equals( path ) || "/select/".equals( path ) ) {
                 solrReq = parser.parse( core, path, req );
+
+                checkStateIsValid(cores,solrReq.getParams().get(CloudSolrServer.STATE_VERSION));
                 String qt = solrReq.getParams().get( CommonParams.QT );
                 handler = core.getRequestHandler( qt );
                 if( handler == null ) {
@@ -417,16 +407,11 @@ public class SolrDispatchFilter implements Filter
                 SolrRequestInfo.setRequestInfo(new SolrRequestInfo(solrReq, solrRsp));
                 this.execute( req, handler, solrReq, solrRsp );
                 HttpCacheHeaderUtil.checkHttpCachingVeto(solrRsp, resp, reqMethod);
-              // add info to http headers
-              //TODO: See SOLR-232 and SOLR-267.  
-                /*try {
-                  NamedList solrRspHeader = solrRsp.getResponseHeader();
-                 for (int i=0; i<solrRspHeader.size(); i++) {
-                   ((javax.servlet.http.HttpServletResponse) response).addHeader(("Solr-" + solrRspHeader.getName(i)), String.valueOf(solrRspHeader.getVal(i)));
-                 }
-                } catch (ClassCastException cce) {
-                  log.log(Level.WARNING, "exception adding response header log information", cce);
-                }*/
+                Iterator<Entry<String, String>> headers = solrRsp.httpHeaders();
+                while (headers.hasNext()) {
+                  Entry<String, String> entry = headers.next();
+                  resp.addHeader(entry.getKey(), entry.getValue());
+                }
                QueryResponseWriter responseWriter = core.getQueryResponseWriter(solrReq);
                writeResponse(solrRsp, response, responseWriter, solrReq, reqMethod);
             }
@@ -437,8 +422,16 @@ public class SolrDispatchFilter implements Filter
       } 
       catch (Throwable ex) {
         sendError( core, solrReq, request, (HttpServletResponse)response, ex );
-        if (ex instanceof Error) {
-          throw (Error) ex;
+        // walk the the entire cause chain to search for an Error
+        Throwable t = ex;
+        while (t != null) {
+          if (t instanceof Error)  {
+            if (t != ex)  {
+              log.error("An Error was wrapped in another exception - please report complete stacktrace on SOLR-6161", ex);
+            }
+            throw (Error) t;
+          }
+          t = t.getCause();
         }
         return;
       } finally {
@@ -462,7 +455,24 @@ public class SolrDispatchFilter implements Filter
     // Otherwise let the webapp handle the request
     chain.doFilter(request, response);
   }
-  
+
+  private void checkStateIsValid(CoreContainer cores, String stateVer) {
+    if (stateVer != null && !stateVer.isEmpty() && cores.isZooKeeperAware()) {
+      // many have multiple collections separated by |
+      String[] pairs = StringUtils.split(stateVer, '|');
+      for (String pair : pairs) {
+        String[] pcs = StringUtils.split(pair, ':');
+        if (pcs.length == 2 && !pcs[0].isEmpty() && !pcs[1].isEmpty()) {
+          Boolean status = cores.getZkController().getZkStateReader().checkValid(pcs[0], Integer.parseInt(pcs[1]));
+          
+          if (Boolean.TRUE != status) {
+            throw new SolrException(ErrorCode.INVALID_STATE, "STATE STALE: " + pair + "valid : " + status);
+          }
+        }
+      }
+    }
+  }
+
   private void processAliases(SolrQueryRequest solrReq, Aliases aliases,
       List<String> collectionsList) {
     String collection = solrReq.getParams().get("collection");
@@ -470,7 +480,7 @@ public class SolrDispatchFilter implements Filter
       collectionsList = StrUtils.splitSmart(collection, ",", true);
     }
     if (collectionsList != null) {
-      Set<String> newCollectionsList = new HashSet<String>(
+      Set<String> newCollectionsList = new HashSet<>(
           collectionsList.size());
       for (String col : collectionsList) {
         String al = aliases.getCollectionAlias(col);
@@ -498,9 +508,12 @@ public class SolrDispatchFilter implements Filter
       }
     }
   }
-  
+
   private void remoteQuery(String coreUrl, HttpServletRequest req,
       SolrQueryRequest solrReq, HttpServletResponse resp) throws IOException {
+    HttpRequestBase method = null;
+    HttpEntity httpEntity = null;
+    boolean success = false;
     try {
       String urlstr = coreUrl;
       
@@ -509,58 +522,61 @@ public class SolrDispatchFilter implements Filter
       urlstr += queryString == null ? "" : "?" + queryString;
       
       URL url = new URL(urlstr);
-      HttpURLConnection con = (HttpURLConnection) url.openConnection();
-      con.setRequestMethod(req.getMethod());
-      con.setUseCaches(false);
-      
       boolean isPostOrPutRequest = "POST".equals(req.getMethod()) || "PUT".equals(req.getMethod());
-      
-      if (isPostOrPutRequest) {
-        con.setDoOutput(true);
+
+      if ("GET".equals(req.getMethod())) {
+        method = new HttpGet(urlstr);
       }
-      con.setDoInput(true);
+      else if ("HEAD".equals(req.getMethod())) {
+        method = new HttpHead(urlstr);
+      }
+      else if (isPostOrPutRequest) {
+        HttpEntityEnclosingRequestBase entityRequest =
+          "POST".equals(req.getMethod()) ? new HttpPost(urlstr) : new HttpPut(urlstr);
+        HttpEntity entity = new InputStreamEntity(req.getInputStream(), req.getContentLength());
+        entityRequest.setEntity(entity);
+        method = entityRequest;
+      }
+      else if ("DELETE".equals(req.getMethod())) {
+        method = new HttpDelete(urlstr);
+      }
+      else {
+        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR,
+          "Unexpected method type: " + req.getMethod());
+      }
+
       for (Enumeration<String> e = req.getHeaderNames(); e.hasMoreElements();) {
         String headerName = e.nextElement();
-        con.setRequestProperty(headerName, req.getHeader(headerName));
+        method.addHeader(headerName, req.getHeader(headerName));
       }
-      try {
-        con.connect();
+      // These headers not supported for HttpEntityEnclosingRequests
+      if (method instanceof HttpEntityEnclosingRequest) {
+        method.removeHeaders(TRANSFER_ENCODING_HEADER);
+        method.removeHeaders(CONTENT_LENGTH_HEADER);
+      }
 
-        InputStream is;
-        OutputStream os;
-        if (isPostOrPutRequest) {
-          is = req.getInputStream();
-          os = con.getOutputStream(); // side effect: method is switched to POST
-          try {
-            IOUtils.copyLarge(is, os);
-            os.flush();
-          } finally {
-            IOUtils.closeQuietly(os);
-            IOUtils.closeQuietly(is);  // TODO: I thought we weren't supposed to explicitly close servlet streams
-          }
+      final HttpResponse response = httpClient.execute(method);
+      int httpStatus = response.getStatusLine().getStatusCode();
+      httpEntity = response.getEntity();
+
+      resp.setStatus(httpStatus);
+      for (HeaderIterator responseHeaders = response.headerIterator(); responseHeaders.hasNext();) {
+        Header header = responseHeaders.nextHeader();
+
+        // We pull out these two headers below because they can cause chunked
+        // encoding issues with Tomcat
+        if (header != null && !header.getName().equals(TRANSFER_ENCODING_HEADER)
+          && !header.getName().equals(CONNECTION_HEADER)) {
+            resp.addHeader(header.getName(), header.getValue());
         }
-        
-        resp.setStatus(con.getResponseCode());
-        
-        for (Iterator<Entry<String,List<String>>> i = con.getHeaderFields().entrySet().iterator(); i.hasNext();) {
-          Map.Entry<String,List<String>> mapEntry = i.next();
-          String header = mapEntry.getKey();
-          
-          // We pull out these two headers below because they can cause chunked
-          // encoding issues with Tomcat and certain clients
-          if (header != null && !header.equals(TRANSFER_ENCODING_HEADER)
-              && !header.equals(CONNECTION_HEADER)) {
-            for (String value : mapEntry.getValue()) {
-              resp.addHeader(mapEntry.getKey(), value);
-            }
-          }
-        }
-        
-        resp.setCharacterEncoding(con.getContentEncoding());
-        resp.setContentType(con.getContentType());
-        
-        is = con.getInputStream();
-        os = resp.getOutputStream();
+      }
+
+      if (httpEntity != null) {
+        if (httpEntity.getContentEncoding() != null) resp.setCharacterEncoding(httpEntity.getContentEncoding().getValue());
+        if (httpEntity.getContentType() != null) resp.setContentType(httpEntity.getContentType().getValue());
+
+        InputStream is = httpEntity.getContent();
+        OutputStream os = resp.getOutputStream();
         try {
           IOUtils.copyLarge(is, os);
           os.flush();
@@ -568,15 +584,19 @@ public class SolrDispatchFilter implements Filter
           IOUtils.closeQuietly(os);   // TODO: I thought we weren't supposed to explicitly close servlet streams
           IOUtils.closeQuietly(is);
         }
-      } finally {
-        con.disconnect();
       }
+      success = true;
     } catch (IOException e) {
       sendError(null, solrReq, req, resp, new SolrException(
           SolrException.ErrorCode.SERVER_ERROR,
           "Error trying to proxy request for url: " + coreUrl, e));
+    } finally {
+      EntityUtils.consumeQuietly(httpEntity);
+      if (method != null && !success) {
+        method.abort();
+      }
     }
-    
+
   }
   
   private String getRemotCoreUrl(CoreContainer cores, String collectionName, String origCorename) {
@@ -585,7 +605,7 @@ public class SolrDispatchFilter implements Filter
     boolean byCoreName = false;
     
     if (slices == null) {
-      slices = new ArrayList<Slice>();
+      slices = new ArrayList<>();
       // look by core name
       byCoreName = true;
       slices = getSlicesForCollections(clusterState, slices, true);
@@ -740,18 +760,7 @@ public class SolrDispatchFilter implements Filter
     }
     
     if (Method.HEAD != reqMethod) {
-      if (responseWriter instanceof BinaryQueryResponseWriter) {
-        BinaryQueryResponseWriter binWriter = (BinaryQueryResponseWriter) responseWriter;
-        binWriter.write(response.getOutputStream(), solrReq, solrRsp);
-      } else {
-        String charset = ContentStreamBase.getCharsetFromContentType(ct);
-        Writer out = (charset == null || charset.equalsIgnoreCase("UTF-8"))
-          ? new OutputStreamWriter(response.getOutputStream(), UTF8)
-          : new OutputStreamWriter(response.getOutputStream(), charset);
-        out = new FastWriter(out);
-        responseWriter.write(out, solrReq, solrRsp);
-        out.flush();
-      }
+      QueryResponseWriterUtil.writeQueryResponse(response.getOutputStream(), responseWriter, solrReq, solrRsp, ct);
     }
     //else http HEAD request, nothing to write out, waited this long just to get ContentType
   }

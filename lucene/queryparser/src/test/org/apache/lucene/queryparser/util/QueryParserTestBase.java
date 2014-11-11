@@ -18,7 +18,6 @@ package org.apache.lucene.queryparser.util;
  */
 
 import java.io.IOException;
-import java.io.Reader;
 import java.text.DateFormat;
 import java.util.Calendar;
 import java.util.Date;
@@ -48,7 +47,7 @@ import org.apache.lucene.search.*;
 import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.automaton.BasicAutomata;
+import org.apache.lucene.util.automaton.Automata;
 import org.apache.lucene.util.automaton.CharacterRunAutomaton;
 import org.apache.lucene.util.automaton.RegExp;
 import org.junit.AfterClass;
@@ -572,7 +571,7 @@ public abstract class QueryParserTestBase extends LuceneTestCase {
     assertQueryEquals("[ a TO z}", null, "[a TO z}");
     assertQueryEquals("{ a TO z]", null, "{a TO z]"); 
 
-     assertEquals(MultiTermQuery.CONSTANT_SCORE_AUTO_REWRITE_DEFAULT, ((TermRangeQuery)getQuery("[ a TO z]")).getRewriteMethod());
+     assertEquals(MultiTermQuery.CONSTANT_SCORE_FILTER_REWRITE, ((TermRangeQuery)getQuery("[ a TO z]")).getRewriteMethod());
 
     CommonQueryParserConfiguration qp = getParserConfig( new MockAnalyzer(random(), MockTokenizer.SIMPLE, true));
     
@@ -869,7 +868,7 @@ public abstract class QueryParserTestBase extends LuceneTestCase {
 
   public void testBoost()
     throws Exception {
-    CharacterRunAutomaton stopWords = new CharacterRunAutomaton(BasicAutomata.makeString("on"));
+    CharacterRunAutomaton stopWords = new CharacterRunAutomaton(Automata.makeString("on"));
     Analyzer oneStopAnalyzer = new MockAnalyzer(random(), MockTokenizer.SIMPLE, true, stopWords);
     CommonQueryParserConfiguration qp = getParserConfig(oneStopAnalyzer);
     Query q = getQuery("on^1.0",qp);
@@ -942,7 +941,7 @@ public abstract class QueryParserTestBase extends LuceneTestCase {
 // Todo: convert this from DateField to DateUtil
 //  public void testLocalDateFormat() throws IOException, ParseException {
 //    Directory ramDir = newDirectory();
-//    IndexWriter iw = new IndexWriter(ramDir, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random, MockTokenizer.WHITESPACE, false)));
+//    IndexWriter iw = new IndexWriter(ramDir, newIndexWriterConfig(new MockAnalyzer(random, MockTokenizer.WHITESPACE, false)));
 //    addDateDoc("a", 2005, 12, 2, 10, 15, 33, iw);
 //    addDateDoc("b", 2005, 12, 4, 22, 15, 00, iw);
 //    iw.close();
@@ -988,7 +987,7 @@ public abstract class QueryParserTestBase extends LuceneTestCase {
     assertTrue(getQuery("/[A-Z][123]/^0.5",qp) instanceof RegexpQuery);
     assertEquals(MultiTermQuery.SCORING_BOOLEAN_QUERY_REWRITE, ((RegexpQuery)getQuery("/[A-Z][123]/^0.5",qp)).getRewriteMethod());
     assertEquals(q, getQuery("/[A-Z][123]/^0.5",qp));
-    qp.setMultiTermRewriteMethod(MultiTermQuery.CONSTANT_SCORE_AUTO_REWRITE_DEFAULT);
+    qp.setMultiTermRewriteMethod(MultiTermQuery.CONSTANT_SCORE_FILTER_REWRITE);
     
     Query escaped = new RegexpQuery(new Term("field", "[a-z]\\/[123]"));
     assertEquals(escaped, getQuery("/[a-z]\\/[123]/",qp));
@@ -1066,6 +1065,7 @@ public abstract class QueryParserTestBase extends LuceneTestCase {
     assertTrue(bq.getClauses()[1].getQuery() instanceof MatchAllDocsQuery);
   }
   
+  @SuppressWarnings("unused")
   private void assertHits(int expected, String query, IndexSearcher is) throws Exception {
     String oldDefaultField = getDefaultField();
     setDefaultField("date");
@@ -1089,7 +1089,7 @@ public abstract class QueryParserTestBase extends LuceneTestCase {
   public void testPositionIncrements() throws Exception {
     Directory dir = newDirectory();
     Analyzer a = new MockAnalyzer(random(), MockTokenizer.SIMPLE, true, MockTokenFilter.ENGLISH_STOPSET);
-    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, a));
+    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(a));
     Document doc = new Document();
     doc.add(newTextField("field", "the wizard of ozzy", Field.Store.NO));
     w.addDocument(doc);

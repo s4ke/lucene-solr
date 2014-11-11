@@ -17,37 +17,29 @@ package org.apache.lucene.store;
  * limitations under the License.
  */
 
-import java.io.File;
-
 /**
  * Base class for file system based locking implementation.
+ * This class is explicitly checking that the passed {@link Directory}
+ * is an {@link FSDirectory}.
  */
-
 public abstract class FSLockFactory extends LockFactory {
-
-  /**
-   * Directory for the lock files.
+  
+  /** Returns the default locking implementation for this platform.
+   * This method currently returns always {@link NativeFSLockFactory}.
    */
-  protected File lockDir = null;
+  public static final FSLockFactory getDefault() {
+    return NativeFSLockFactory.INSTANCE;
+  }
 
-  /**
-   * Set the lock directory. This method can be only called
-   * once to initialize the lock directory. It is used by {@link FSDirectory}
-   * to set the lock directory to itself.
-   * Subclasses can also use this method to set the directory
-   * in the constructor.
-   */
-  protected final void setLockDir(File lockDir) {
-    if (this.lockDir != null)
-      throw new IllegalStateException("You can set the lock directory for this factory only once.");
-    this.lockDir = lockDir;
+  @Override
+  public final Lock makeLock(Directory dir, String lockName) {
+    if (!(dir instanceof FSDirectory)) {
+      throw new UnsupportedOperationException(getClass().getSimpleName() + " can only be used with FSDirectory subclasses, got: " + dir);
+    }
+    return makeFSLock((FSDirectory) dir, lockName);
   }
   
-  /**
-   * Retrieve the lock directory.
-   */
-  public File getLockDir() {
-    return lockDir;
-  }
+  /** Implement this method to create a lock for a FSDirectory instance. */
+  protected abstract Lock makeFSLock(FSDirectory dir, String lockName);
 
 }

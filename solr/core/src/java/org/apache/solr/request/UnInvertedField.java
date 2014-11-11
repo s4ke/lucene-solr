@@ -22,29 +22,34 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.DocTermOrds;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.TermsEnum;
-import org.apache.lucene.search.FieldCache;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TermRangeQuery;
+import org.apache.lucene.uninverting.DocTermOrds;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.CharsRef;
-import org.apache.lucene.util.OpenBitSet;
+import org.apache.lucene.util.BytesRefBuilder;
+import org.apache.lucene.util.CharsRefBuilder;
+import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.UnicodeUtil;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.FacetParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.handler.component.FieldFacetStats;
+import org.apache.solr.handler.component.StatsField;
 import org.apache.solr.handler.component.StatsValues;
 import org.apache.solr.handler.component.StatsValuesFactory;
 import org.apache.solr.schema.FieldType;
 import org.apache.solr.schema.SchemaField;
 import org.apache.solr.schema.TrieField;
-import org.apache.solr.search.*;
+import org.apache.solr.search.BitDocSet;
+import org.apache.solr.search.DocIterator;
+import org.apache.solr.search.DocSet;
+import org.apache.solr.search.SolrCache;
+import org.apache.solr.search.SolrIndexSearcher;
 import org.apache.solr.util.LongPriorityQueue;
 import org.apache.solr.util.PrimUtils;
 
@@ -97,17 +102,15 @@ public class UnInvertedField extends DocTermOrds {
 
   int[] maxTermCounts = new int[1024];
 
-  final Map<Integer,TopTerm> bigTerms = new LinkedHashMap<Integer,TopTerm>();
+  final Map<Integer,TopTerm> bigTerms = new LinkedHashMap<>();
 
   private SolrIndexSearcher.DocsEnumState deState;
   private final SolrIndexSearcher searcher;
-  private final boolean isPlaceholder;
 
   private static UnInvertedField uifPlaceholder = new UnInvertedField();
 
   private UnInvertedField() { // Dummy for synchronization.
     super("fake", 0, 0); // cheapest initialization I can find.
-    isPlaceholder = true;
     searcher = null;
    }
 
@@ -133,7 +136,7 @@ public class UnInvertedField extends DocTermOrds {
       if (deState == null) {
         deState = new SolrIndexSearcher.DocsEnumState();
         deState.fieldName = field;
-        deState.liveDocs = searcher.getAtomicReader().getLiveDocs();
+        deState.liveDocs = searcher.getLeafReader().getLiveDocs();
         deState.termsEnum = te;  // TODO: check for MultiTermsEnum in SolrIndexSearcher could now fail?
         deState.docsEnum = docsEnum;
         deState.minSetSizeCached = maxTermDocFreq;
@@ -153,7 +156,7 @@ public class UnInvertedField extends DocTermOrds {
   public long memSize() {
     // can cache the mem size since it shouldn't change
     if (memsz!=0) return memsz;
-    long sz = super.ramUsedInBytes();
+    long sz = super.ramBytesUsed();
     sz += 8*8 + 32; // local fields
     sz += bigTerms.size() * 64;
     for (TopTerm tt : bigTerms.values()) {
@@ -180,11 +183,10 @@ public class UnInvertedField extends DocTermOrds {
           DEFAULT_INDEX_INTERVAL_BITS);
     //System.out.println("maxTermDocFreq=" + maxTermDocFreq + " maxDoc=" + searcher.maxDoc());
 
-    isPlaceholder = false;
     final String prefix = TrieField.getMainValuePrefix(searcher.getSchema().getFieldType(field));
     this.searcher = searcher;
     try {
-      AtomicReader r = searcher.getAtomicReader();
+      LeafReader r = searcher.getLeafReader();
       uninvert(r, r.getLiveDocs(), prefix == null ? null : new BytesRef(prefix));
     } catch (IllegalStateException ise) {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, ise.getMessage());
@@ -217,7 +219,7 @@ public class UnInvertedField extends DocTermOrds {
 
     FieldType ft = searcher.getSchema().getFieldType(field);
 
-    NamedList<Integer> res = new NamedList<Integer>();  // order is important
+    NamedList<Integer> res = new NamedList<>();  // order is important
 
     DocSet docs = baseDocs;
     int baseSize = docs.size();
@@ -237,16 +239,17 @@ public class UnInvertedField extends DocTermOrds {
       int startTerm = 0;
       int endTerm = numTermsInField;  // one past the end
 
-      TermsEnum te = getOrdTermsEnum(searcher.getAtomicReader());
+      TermsEnum te = getOrdTermsEnum(searcher.getLeafReader());
       if (te != null && prefix != null && prefix.length() > 0) {
-        final BytesRef prefixBr = new BytesRef(prefix);
-        if (te.seekCeil(prefixBr) == TermsEnum.SeekStatus.END) {
+        final BytesRefBuilder prefixBr = new BytesRefBuilder();
+        prefixBr.copyChars(prefix);
+        if (te.seekCeil(prefixBr.get()) == TermsEnum.SeekStatus.END) {
           startTerm = numTermsInField;
         } else {
           startTerm = (int) te.ord();
         }
         prefixBr.append(UnicodeUtil.BIG_TERM);
-        if (te.seekCeil(prefixBr) == TermsEnum.SeekStatus.END) {
+        if (te.seekCeil(prefixBr.get()) == TermsEnum.SeekStatus.END) {
           endTerm = numTermsInField;
         } else {
           endTerm = (int) te.ord();
@@ -269,7 +272,7 @@ public class UnInvertedField extends DocTermOrds {
               && docs instanceof BitDocSet;
 
       if (doNegative) {
-        OpenBitSet bs = (OpenBitSet)((BitDocSet)docs).getBits().clone();
+        FixedBitSet bs = ((BitDocSet)docs).getBits().clone();
         bs.flip(0, maxDoc);
         // TODO: when iterator across negative elements is available, use that
         // instead of creating a new bitset and inverting.
@@ -343,7 +346,7 @@ public class UnInvertedField extends DocTermOrds {
           }
         }
       }
-      final CharsRef charsRef = new CharsRef();
+      final CharsRefBuilder charsRef = new CharsRefBuilder();
 
       int off=offset;
       int lim=limit>=0 ? limit : Integer.MAX_VALUE;
@@ -464,22 +467,24 @@ public class UnInvertedField extends DocTermOrds {
    *
    * @param searcher The Searcher to use to gather the statistics
    * @param baseDocs The {@link org.apache.solr.search.DocSet} to gather the stats on
-   * @param calcDistinct whether distinct values should be collected and counted
+   * @param statsField the {@link StatsField} param corrisponding to a real {@link SchemaField} to compute stats over
    * @param facet One or more fields to facet on.
    * @return The {@link org.apache.solr.handler.component.StatsValues} collected
    * @throws IOException If there is a low-level I/O error.
    */
-  public StatsValues getStats(SolrIndexSearcher searcher, DocSet baseDocs, boolean calcDistinct, String[] facet) throws IOException {
+  public StatsValues getStats(SolrIndexSearcher searcher, DocSet baseDocs, StatsField statsField, String[] facet) throws IOException {
     //this function is ripped off nearly wholesale from the getCounts function to use
     //for multiValued fields within the StatsComponent.  may be useful to find common
     //functionality between the two and refactor code somewhat
     use.incrementAndGet();
 
-    SchemaField sf = searcher.getSchema().getField(field);
-   // FieldType ft = sf.getType();
+    assert null != statsField.getSchemaField()
+      : "DocValuesStats requires a StatsField using a SchemaField";
 
-    StatsValues allstats = StatsValuesFactory.createStatsValues(sf, calcDistinct);
+    SchemaField sf = statsField.getSchemaField();
+    // FieldType ft = sf.getType();
 
+    StatsValues allstats = StatsValuesFactory.createStatsValues(statsField);
 
     DocSet docs = baseDocs;
     int baseSize = docs.size();
@@ -495,14 +500,14 @@ public class UnInvertedField extends DocTermOrds {
     SortedDocValues si;
     for (String f : facet) {
       SchemaField facet_sf = searcher.getSchema().getField(f);
-      finfo[i] = new FieldFacetStats(searcher, f, sf, facet_sf, calcDistinct);
+      finfo[i] = new FieldFacetStats(searcher, facet_sf, statsField);
       i++;
     }
 
     final int[] index = this.index;
     final int[] counts = new int[numTermsInField];//keep track of the number of times we see each word in the field for all the documents in the docset
 
-    TermsEnum te = getOrdTermsEnum(searcher.getAtomicReader());
+    TermsEnum te = getOrdTermsEnum(searcher.getLeafReader());
 
     boolean doNegative = false;
     if (finfo.length == 0) {
@@ -512,7 +517,7 @@ public class UnInvertedField extends DocTermOrds {
     }
 
     if (doNegative) {
-      OpenBitSet bs = (OpenBitSet) ((BitDocSet) docs).getBits().clone();
+      FixedBitSet bs = ((BitDocSet) docs).getBits().clone();
       bs.flip(0, maxDoc);
       // TODO: when iterator across negative elements is available, use that
       // instead of creating a new bitset and inverting.
@@ -623,7 +628,7 @@ public class UnInvertedField extends DocTermOrds {
 
   }
 
-  String getReadableValue(BytesRef termval, FieldType ft, CharsRef charsRef) {
+  String getReadableValue(BytesRef termval, FieldType ft, CharsRefBuilder charsRef) {
     return ft.indexedToReadable(termval, charsRef).toString();
   }
 
@@ -671,9 +676,14 @@ public class UnInvertedField extends DocTermOrds {
     synchronized (cache) {
       uif = cache.get(field);
       if (uif == null) {
-        cache.put(field, uifPlaceholder); // This thread will load this field, don't let other threads try.
+        /**
+         * We use this place holder object to pull the UninvertedField construction out of the sync
+         * so that if many fields are accessed in a short time, the UninvertedField can be
+         * built for these fields in parallel rather than sequentially.
+         */
+        cache.put(field, uifPlaceholder);
       } else {
-        if (uif.isPlaceholder == false) {
+        if (uif != uifPlaceholder) {
           return uif;
         }
         doWait = true; // Someone else has put the place holder in, wait for that to complete.
@@ -683,7 +693,7 @@ public class UnInvertedField extends DocTermOrds {
       try {
         synchronized (cache) {
           uif = cache.get(field); // Should at least return the placeholder, NPE if not is OK.
-          if (uif.isPlaceholder == false) { // OK, another thread put this in the cache we should be good.
+          if (uif != uifPlaceholder) { // OK, another thread put this in the cache we should be good.
             return uif;
           }
           cache.wait();

@@ -18,12 +18,15 @@ package org.apache.lucene.facet.taxonomy;
  */
 
 import java.io.IOException;
+import java.util.Collections;
 import java.util.Map;
 import java.util.WeakHashMap;
 
 import org.apache.lucene.codecs.DocValuesFormat;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.BinaryDocValues;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.IntsRef;
 import org.apache.lucene.util.RamUsageEstimator;
@@ -53,18 +56,18 @@ import org.apache.lucene.util.RamUsageEstimator;
  * for all facet implementations (the cache is per-instance,
  * not static).
  */
-public class CachedOrdinalsReader extends OrdinalsReader {
+public class CachedOrdinalsReader extends OrdinalsReader implements Accountable {
 
   private final OrdinalsReader source;
 
-  private final Map<Object,CachedOrds> ordsCache = new WeakHashMap<Object,CachedOrds>();
+  private final Map<Object,CachedOrds> ordsCache = new WeakHashMap<>();
 
   /** Sole constructor. */
   public CachedOrdinalsReader(OrdinalsReader source) {
     this.source = source;
   }
 
-  private synchronized CachedOrds getCachedOrds(AtomicReaderContext context) throws IOException {
+  private synchronized CachedOrds getCachedOrds(LeafReaderContext context) throws IOException {
     Object cacheKey = context.reader().getCoreCacheKey();
     CachedOrds ords = ordsCache.get(cacheKey);
     if (ords == null) {
@@ -81,7 +84,7 @@ public class CachedOrdinalsReader extends OrdinalsReader {
   }
 
   @Override
-  public OrdinalsSegmentReader getReader(AtomicReaderContext context) throws IOException {
+  public OrdinalsSegmentReader getReader(LeafReaderContext context) throws IOException {
     final CachedOrds cachedOrds = getCachedOrds(context);
     return new OrdinalsSegmentReader() {
       @Override
@@ -93,8 +96,8 @@ public class CachedOrdinalsReader extends OrdinalsReader {
     };
   }
 
-  /** Holds the cached ordinals in two paralel {@code int[]} arrays. */
-  public static final class CachedOrds {
+  /** Holds the cached ordinals in two parallel {@code int[]} arrays. */
+  public static final class CachedOrds implements Accountable {
 
     /** Index into {@link #ordinals} for each document. */
     public final int[] offsets;
@@ -136,15 +139,34 @@ public class CachedOrdinalsReader extends OrdinalsReader {
         this.ordinals = ords;
       }
     }
+
+    @Override
+    public long ramBytesUsed() {
+      long mem = RamUsageEstimator.shallowSizeOf(this) + RamUsageEstimator.sizeOf(offsets);
+      if (offsets != ordinals) {
+        mem += RamUsageEstimator.sizeOf(ordinals);
+      }
+      return mem;
+    }
+    
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Collections.emptyList();
+    }
   }
 
-  /** How many bytes is this cache using? */
+  @Override
   public synchronized long ramBytesUsed() {
     long bytes = 0;
     for(CachedOrds ords : ordsCache.values()) {
-      bytes += RamUsageEstimator.sizeOf(ords);
+      bytes += ords.ramBytesUsed();
     }
 
     return bytes;
+  }
+  
+  @Override
+  public synchronized Iterable<? extends Accountable> getChildResources() {
+    return Accountables.namedAccountables("segment", ordsCache);
   }
 }

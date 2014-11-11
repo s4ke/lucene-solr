@@ -17,6 +17,7 @@ package org.apache.lucene.search;
  * limitations under the License.
  */
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -29,6 +30,7 @@ import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.TextField;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
@@ -42,7 +44,7 @@ import org.apache.lucene.search.spans.SpanTermQuery;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.NamedThreadFactory;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 public class TestBooleanQuery extends LuceneTestCase {
   
@@ -216,8 +218,8 @@ public class TestBooleanQuery extends LuceneTestCase {
       if (VERBOSE) {
         System.out.println("iter=" + iter);
       }
-      final List<String> terms = new ArrayList<String>(Arrays.asList("a", "b", "c", "d", "e", "f"));
-      final int numTerms = _TestUtil.nextInt(random(), 1, terms.size());
+      final List<String> terms = new ArrayList<>(Arrays.asList("a", "b", "c", "d", "e", "f"));
+      final int numTerms = TestUtil.nextInt(random(), 1, terms.size());
       while(terms.size() > numTerms) {
         terms.remove(random().nextInt(terms.size()));
       }
@@ -233,11 +235,10 @@ public class TestBooleanQuery extends LuceneTestCase {
 
       Weight weight = s.createNormalizedWeight(q);
 
-      Scorer scorer = weight.scorer(s.leafContexts.get(0),
-                                          true, false, null);
+      Scorer scorer = weight.scorer(s.leafContexts.get(0), null);
 
       // First pass: just use .nextDoc() to gather all hits
-      final List<ScoreDoc> hits = new ArrayList<ScoreDoc>();
+      final List<ScoreDoc> hits = new ArrayList<>();
       while(scorer.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
         hits.add(new ScoreDoc(scorer.docID(), scorer.score()));
       }
@@ -251,8 +252,7 @@ public class TestBooleanQuery extends LuceneTestCase {
       for(int iter2=0;iter2<10;iter2++) {
 
         weight = s.createNormalizedWeight(q);
-        scorer = weight.scorer(s.leafContexts.get(0),
-                               true, false, null);
+        scorer = weight.scorer(s.leafContexts.get(0), null);
 
         if (VERBOSE) {
           System.out.println("  iter2=" + iter2);
@@ -269,7 +269,7 @@ public class TestBooleanQuery extends LuceneTestCase {
             nextDoc = scorer.nextDoc();
           } else {
             // advance
-            int inc = _TestUtil.nextInt(random(), 1, left-1);
+            int inc = TestUtil.nextInt(random(), 1, left - 1);
             nextUpto = inc + upto;
             nextDoc = scorer.advance(hits.get(nextUpto).doc);
           }
@@ -298,7 +298,7 @@ public class TestBooleanQuery extends LuceneTestCase {
     Directory directory = newDirectory();
     Analyzer indexerAnalyzer = new MockAnalyzer(random());
 
-    IndexWriterConfig config = new IndexWriterConfig(TEST_VERSION_CURRENT, indexerAnalyzer);
+    IndexWriterConfig config = new IndexWriterConfig(indexerAnalyzer);
     IndexWriter writer = new IndexWriter(directory, config);
     String FIELD = "content";
     Document d = new Document();
@@ -324,6 +324,70 @@ public class TestBooleanQuery extends LuceneTestCase {
     assertEquals("Bug in boolean query composed of span queries", failed, false);
     assertEquals("Bug in boolean query composed of span queries", hits, 1);
     directory.close();
+  }
+
+  // LUCENE-5487
+  public void testInOrderWithMinShouldMatch() throws Exception {
+    Directory dir = newDirectory();
+    RandomIndexWriter w = new RandomIndexWriter(random(), dir);
+    Document doc = new Document();
+    doc.add(newTextField("field", "some text here", Field.Store.NO));
+    w.addDocument(doc);
+    IndexReader r = w.getReader();
+    w.close();
+    IndexSearcher s = new IndexSearcher(r) {
+        @Override
+        protected void search(List<LeafReaderContext> leaves, Weight weight, Collector collector) throws IOException {
+          assertEquals(-1, collector.getClass().getSimpleName().indexOf("OutOfOrder"));
+          super.search(leaves, weight, collector);
+        }
+      };
+    BooleanQuery bq = new BooleanQuery();
+    bq.add(new TermQuery(new Term("field", "some")), BooleanClause.Occur.SHOULD);
+    bq.add(new TermQuery(new Term("field", "text")), BooleanClause.Occur.SHOULD);
+    bq.add(new TermQuery(new Term("field", "here")), BooleanClause.Occur.SHOULD);
+    bq.setMinimumNumberShouldMatch(2);
+    s.search(bq, 10);
+    r.close();
+    dir.close();
+  }
+
+  public void testOneClauseRewriteOptimization() throws Exception {
+    final float BOOST = 3.5F;
+    final String FIELD = "content";
+    final String VALUE = "foo";
+      
+    Directory dir = newDirectory();
+    (new RandomIndexWriter(random(), dir)).close();
+    IndexReader r = DirectoryReader.open(dir);
+
+    TermQuery expected = new TermQuery(new Term(FIELD, VALUE));
+    expected.setBoost(BOOST);
+
+    final int numLayers = atLeast(3);
+    boolean needBoost = true;
+    Query actual = new TermQuery(new Term(FIELD, VALUE));
+
+    for (int i = 0; i < numLayers; i++) {
+      if (needBoost && 0 == TestUtil.nextInt(random(),0,numLayers)) {
+        needBoost = false;
+        actual.setBoost(BOOST);
+      }
+
+      BooleanQuery bq = new BooleanQuery();
+      bq.add(actual, random().nextBoolean() 
+             ? BooleanClause.Occur.SHOULD : BooleanClause.Occur.MUST);
+      actual = bq;
+    }
+    if (needBoost) {
+      actual.setBoost(BOOST);
+    }
+
+    assertEquals(numLayers + ": " + actual.toString(),
+                 expected, actual.rewrite(r));
+
+    r.close();
+    dir.close();
   }
 
 }

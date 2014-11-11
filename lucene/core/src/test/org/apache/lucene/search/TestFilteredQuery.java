@@ -24,8 +24,8 @@ import java.util.Random;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.DocsEnum;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
@@ -34,10 +34,11 @@ import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.FilteredQuery.FilterStrategy;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.Bits;
-import org.apache.lucene.util.DocIdBitSet;
+import org.apache.lucene.util.BitDocIdSet;
+import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * FilteredQuery JUnit tests.
@@ -59,7 +60,7 @@ public class TestFilteredQuery extends LuceneTestCase {
   public void setUp() throws Exception {
     super.setUp();
     directory = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter (random(), directory, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
+    RandomIndexWriter writer = new RandomIndexWriter (random(), directory, newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
 
     Document doc = new Document();
     doc.add (newTextField("field", "one two three four five", Field.Store.YES));
@@ -87,7 +88,7 @@ public class TestFilteredQuery extends LuceneTestCase {
     writer.forceMerge(1);
 
     reader = writer.getReader();
-    writer.close ();
+    writer.close();
 
     searcher = newSearcher(reader);
 
@@ -99,12 +100,12 @@ public class TestFilteredQuery extends LuceneTestCase {
   private static Filter newStaticFilterB() {
     return new Filter() {
       @Override
-      public DocIdSet getDocIdSet (AtomicReaderContext context, Bits acceptDocs) {
+      public DocIdSet getDocIdSet (LeafReaderContext context, Bits acceptDocs) {
         if (acceptDocs == null) acceptDocs = new Bits.MatchAllBits(5);
-        BitSet bitset = new BitSet(5);
+        FixedBitSet bitset = new FixedBitSet(context.reader().maxDoc());
         if (acceptDocs.get(1)) bitset.set(1);
         if (acceptDocs.get(3)) bitset.set(3);
-        return new DocIdBitSet(bitset);
+        return new BitDocIdSet(bitset);
       }
     };
   }
@@ -181,11 +182,11 @@ public class TestFilteredQuery extends LuceneTestCase {
   private static Filter newStaticFilterA() {
     return new Filter() {
       @Override
-      public DocIdSet getDocIdSet (AtomicReaderContext context, Bits acceptDocs) {
+      public DocIdSet getDocIdSet (LeafReaderContext context, Bits acceptDocs) {
         assertNull("acceptDocs should be null, as we have an index without deletions", acceptDocs);
-        BitSet bitset = new BitSet(5);
-        bitset.set(0, 5);
-        return new DocIdBitSet(bitset);
+        FixedBitSet bitset = new FixedBitSet(context.reader().maxDoc());
+        bitset.set(0, Math.min(5, bitset.length()));
+        return new BitDocIdSet(bitset);
       }
     };
   }
@@ -375,7 +376,6 @@ public class TestFilteredQuery extends LuceneTestCase {
   public void testRewrite() throws Exception {
     assertRewrite(new FilteredQuery(new TermQuery(new Term("field", "one")), new PrefixFilter(new Term("field", "o")), randomFilterStrategy()), FilteredQuery.class);
     assertRewrite(new FilteredQuery(new PrefixQuery(new Term("field", "one")), new PrefixFilter(new Term("field", "o")), randomFilterStrategy()), FilteredQuery.class);
-    assertRewrite(new FilteredQuery(new MatchAllDocsQuery(), new PrefixFilter(new Term("field", "o")), randomFilterStrategy()), ConstantScoreQuery.class);
   }
   
   public void testGetFilterStrategy() {
@@ -386,14 +386,14 @@ public class TestFilteredQuery extends LuceneTestCase {
   
   private static FilteredQuery.FilterStrategy randomFilterStrategy(Random random, final boolean useRandomAccess) {
     if (useRandomAccess) {
-      return  new FilteredQuery.RandomAccessFilterStrategy() {
+      return new FilteredQuery.RandomAccessFilterStrategy() {
         @Override
-        protected boolean useRandomAccess(Bits bits, int firstFilterDoc) {
-          return useRandomAccess;
+        protected boolean useRandomAccess(Bits bits, long filterCost) {
+          return true;
         }
       };
     }
-    return _TestUtil.randomFilterStrategy(random);
+    return TestUtil.randomFilterStrategy(random);
   }
   
   /*
@@ -403,7 +403,7 @@ public class TestFilteredQuery extends LuceneTestCase {
   public void testQueryFirstFilterStrategy() throws IOException {
     Directory directory = newDirectory();
     RandomIndexWriter writer = new RandomIndexWriter(random(), directory,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+        newIndexWriterConfig(new MockAnalyzer(random())));
     int numDocs = atLeast(50);
     int totalDocsWithZero = 0;
     for (int i = 0; i < numDocs; i++) {
@@ -422,10 +422,10 @@ public class TestFilteredQuery extends LuceneTestCase {
     Query query = new FilteredQuery(new TermQuery(new Term("field", "0")),
         new Filter() {
           @Override
-          public DocIdSet getDocIdSet(AtomicReaderContext context,
+          public DocIdSet getDocIdSet(LeafReaderContext context,
               Bits acceptDocs) throws IOException {
             final boolean nullBitset = random().nextInt(10) == 5;
-            final AtomicReader reader = context.reader();
+            final LeafReader reader = context.reader();
             DocsEnum termDocsEnum = reader.termDocsEnum(new Term("field", "0"));
             if (termDocsEnum == null) {
               return null; // no docs -- return null
@@ -436,7 +436,12 @@ public class TestFilteredQuery extends LuceneTestCase {
               bitSet.set(d, true);
             }
             return new DocIdSet() {
-              
+
+              @Override
+              public long ramBytesUsed() {
+                return 0L;
+              }
+
               @Override
               public Bits bits() throws IOException {
                 if (nullBitset) {
@@ -472,9 +477,8 @@ public class TestFilteredQuery extends LuceneTestCase {
         }, FilteredQuery.QUERY_FIRST_FILTER_STRATEGY);
     
     TopDocs search = searcher.search(query, 10);
-    assertEquals(totalDocsWithZero, search.totalHits);
-    IOUtils.close(reader, writer, directory);
-    
+    assertEquals(totalDocsWithZero, search.totalHits);  
+    IOUtils.close(reader, directory);
   }
   
   /*
@@ -483,7 +487,7 @@ public class TestFilteredQuery extends LuceneTestCase {
    */
   public void testLeapFrogStrategy() throws IOException {
     Directory directory = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter (random(), directory, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    RandomIndexWriter writer = new RandomIndexWriter (random(), directory, newIndexWriterConfig(new MockAnalyzer(random())));
     int numDocs = atLeast(50);
     int totalDocsWithZero = 0;
     for (int i = 0; i < numDocs; i++) {
@@ -496,15 +500,20 @@ public class TestFilteredQuery extends LuceneTestCase {
       writer.addDocument (doc);  
     }
     IndexReader reader = writer.getReader();
-    writer.close ();
+    writer.close();
     final boolean queryFirst = random().nextBoolean();
     IndexSearcher searcher = newSearcher(reader);
     Query query = new FilteredQuery(new TermQuery(new Term("field", "0")), new Filter() {
       @Override
-      public DocIdSet getDocIdSet(final AtomicReaderContext context, Bits acceptDocs)
+      public DocIdSet getDocIdSet(final LeafReaderContext context, Bits acceptDocs)
           throws IOException {
         return new DocIdSet() {
-          
+
+          @Override
+          public long ramBytesUsed() {
+            return 0L;
+          }
+
           @Override
           public Bits bits() throws IOException {
              return null;
@@ -552,8 +561,7 @@ public class TestFilteredQuery extends LuceneTestCase {
     
     TopDocs search = searcher.search(query, 10);
     assertEquals(totalDocsWithZero, search.totalHits);
-    IOUtils.close(reader, writer, directory);
-     
+    IOUtils.close(reader, directory);
   }
 }
 

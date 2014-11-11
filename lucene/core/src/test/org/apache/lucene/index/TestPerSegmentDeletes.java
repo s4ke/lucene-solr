@@ -24,7 +24,6 @@ import java.util.Map;
 import java.util.Random;
 
 import org.apache.lucene.analysis.MockAnalyzer;
-import org.apache.lucene.index.MergePolicy.MergeTrigger;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.MockDirectoryWrapper;
@@ -33,14 +32,13 @@ import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 public class TestPerSegmentDeletes extends LuceneTestCase {
   public void testDeletes1() throws Exception {
     //IndexWriter.debug2 = System.out;
     Directory dir = new MockDirectoryWrapper(new Random(random().nextLong()), new RAMDirectory());
-    IndexWriterConfig iwc = new IndexWriterConfig(TEST_VERSION_CURRENT,
-        new MockAnalyzer(random()));
+    IndexWriterConfig iwc = new IndexWriterConfig(new MockAnalyzer(random()));
     iwc.setMergeScheduler(new SerialMergeScheduler());
     iwc.setMaxBufferedDocs(5000);
     iwc.setRAMBufferSizeMB(100);
@@ -228,14 +226,14 @@ public class TestPerSegmentDeletes extends LuceneTestCase {
     Terms cterms = fields.terms(term.field);
     TermsEnum ctermsEnum = cterms.iterator(null);
     if (ctermsEnum.seekExact(new BytesRef(term.text()))) {
-      DocsEnum docsEnum = _TestUtil.docs(random(), ctermsEnum, bits, null, DocsEnum.FLAG_NONE);
+      DocsEnum docsEnum = TestUtil.docs(random(), ctermsEnum, bits, null, DocsEnum.FLAG_NONE);
       return toArray(docsEnum);
     }
     return null;
   }
 
   public static int[] toArray(DocsEnum docsEnum) throws IOException {
-    List<Integer> docs = new ArrayList<Integer>();
+    List<Integer> docs = new ArrayList<>();
     while (docsEnum.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
       int docID = docsEnum.docID();
       docs.add(docID);
@@ -255,10 +253,7 @@ public class TestPerSegmentDeletes extends LuceneTestCase {
     }
 
     @Override
-    public void close() {}
-
-    @Override
-    public MergeSpecification findMerges(MergeTrigger mergeTrigger, SegmentInfos segmentInfos)
+    public MergeSpecification findMerges(MergeTrigger mergeTrigger, SegmentInfos segmentInfos, IndexWriter writer)
         throws IOException {
       MergeSpecification ms = new MergeSpecification();
       if (doMerge) {
@@ -272,19 +267,19 @@ public class TestPerSegmentDeletes extends LuceneTestCase {
 
     @Override
     public MergeSpecification findForcedMerges(SegmentInfos segmentInfos,
-        int maxSegmentCount, Map<SegmentCommitInfo,Boolean> segmentsToMerge)
+        int maxSegmentCount, Map<SegmentCommitInfo,Boolean> segmentsToMerge, IndexWriter writer)
         throws IOException {
       return null;
     }
 
     @Override
     public MergeSpecification findForcedDeletesMerges(
-        SegmentInfos segmentInfos) throws IOException {
+        SegmentInfos segmentInfos, IndexWriter writer) throws IOException {
       return null;
     }
 
     @Override
-    public boolean useCompoundFile(SegmentInfos segments, SegmentCommitInfo newSegment) {
+    public boolean useCompoundFile(SegmentInfos segments, SegmentCommitInfo newSegment, IndexWriter writer) {
       return useCompoundFile;
     }
   }

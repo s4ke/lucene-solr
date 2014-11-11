@@ -23,6 +23,7 @@ import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.CoreContainer;
 import org.apache.solr.handler.RequestHandlerBase;
 import org.apache.solr.request.SolrQueryRequest;
+import org.apache.solr.request.SolrRequestHandler;
 import org.apache.solr.response.SolrQueryResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -105,8 +106,40 @@ public class InfoHandler extends RequestHandlerBase {
     return "System Information";
   }
 
+  protected PropertiesRequestHandler getPropertiesHandler() {
+    return propertiesHandler;
+  }
+
+  protected ThreadDumpHandler getThreadDumpHandler() {
+    return threadDumpHandler;
+  }
+
+  protected LoggingHandler getLoggingHandler() {
+    return loggingHandler;
+  }
+
+  protected SystemInfoHandler getSystemInfoHandler() {
+    return systemInfoHandler;
+  }
+
+  protected void setPropertiesHandler(PropertiesRequestHandler propertiesHandler) {
+    this.propertiesHandler = propertiesHandler;
+  }
+
+  protected void setThreadDumpHandler(ThreadDumpHandler threadDumpHandler) {
+    this.threadDumpHandler = threadDumpHandler;
+  }
+
+  protected void setLoggingHandler(LoggingHandler loggingHandler) {
+    this.loggingHandler = loggingHandler;
+  }
+
+  protected void setSystemInfoHandler(SystemInfoHandler systemInfoHandler) {
+    this.systemInfoHandler = systemInfoHandler;
+  }
+
   @Override
-  public String getSource() {
-    return "$URL: https://svn.apache.org/repos/asf/lucene/dev/trunk/solr/core/src/java/org/apache/solr/handler/admin/InfoHandler.java $";
+  public SolrRequestHandler getSubHandler(String subPath) {
+    return this;
   }
 }

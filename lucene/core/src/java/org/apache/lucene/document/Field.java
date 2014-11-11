@@ -26,12 +26,13 @@ import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.document.FieldType.NumericType;
+import org.apache.lucene.index.FieldInvertState; // javadocs
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexWriter; // javadocs
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.IndexableFieldType;
 import org.apache.lucene.index.StorableField;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.index.FieldInvertState; // javadocs
 
 /**
  * Expert: directly create a field for a document.  Most
@@ -73,8 +74,6 @@ public class Field implements IndexableField, StorableField {
    * have both; eg maybe field has a String value but you
    * customize how it's tokenized */
   protected TokenStream tokenStream;
-
-  private transient TokenStream internalTokenStream;
 
   /**
    * Field's boost
@@ -124,7 +123,7 @@ public class Field implements IndexableField, StorableField {
     if (type.stored()) {
       throw new IllegalArgumentException("fields with a Reader value cannot be stored");
     }
-    if (type.indexed() && !type.tokenized()) {
+    if (type.indexOptions() != IndexOptions.NONE && !type.tokenized()) {
       throw new IllegalArgumentException("non-tokenized fields must use String values");
     }
     
@@ -150,7 +149,7 @@ public class Field implements IndexableField, StorableField {
     if (tokenStream == null) {
       throw new NullPointerException("tokenStream cannot be null");
     }
-    if (!type.indexed() || !type.tokenized()) {
+    if (type.indexOptions() == IndexOptions.NONE || !type.tokenized()) {
       throw new IllegalArgumentException("TokenStream fields must be indexed and tokenized");
     }
     if (type.stored()) {
@@ -213,7 +212,10 @@ public class Field implements IndexableField, StorableField {
     if (name == null) {
       throw new IllegalArgumentException("name cannot be null");
     }
-    if (type.indexed()) {
+    if (bytes == null) {
+      throw new IllegalArgumentException("bytes cannot be null");
+    }
+    if (type.indexOptions() != IndexOptions.NONE) {
       throw new IllegalArgumentException("Fields with BytesRef values cannot be indexed");
     }
     this.fieldsData = bytes;
@@ -240,15 +242,10 @@ public class Field implements IndexableField, StorableField {
     if (value == null) {
       throw new IllegalArgumentException("value cannot be null");
     }
-    if (!type.stored() && !type.indexed()) {
+    if (!type.stored() && type.indexOptions() == IndexOptions.NONE) {
       throw new IllegalArgumentException("it doesn't make sense to have a field that "
         + "is neither indexed nor stored");
     }
-    if (!type.indexed() && (type.storeTermVectors())) {
-      throw new IllegalArgumentException("cannot store term vector information "
-          + "for a field that is not indexed");
-    }
-    
     this.type = type;
     this.name = name;
     this.fieldsData = value;
@@ -306,6 +303,9 @@ public class Field implements IndexableField, StorableField {
     if (!(fieldsData instanceof String)) {
       throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to String");
     }
+    if (value == null) {
+      throw new IllegalArgumentException("value cannot be null");
+    }
     fieldsData = value;
   }
   
@@ -339,8 +339,11 @@ public class Field implements IndexableField, StorableField {
     if (!(fieldsData instanceof BytesRef)) {
       throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to BytesRef");
     }
-    if (type.indexed()) {
+    if (type.indexOptions() != IndexOptions.NONE) {
       throw new IllegalArgumentException("cannot set a BytesRef value on an indexed field");
+    }
+    if (value == null) {
+      throw new IllegalArgumentException("value cannot be null");
     }
     fieldsData = value;
   }
@@ -417,7 +420,7 @@ public class Field implements IndexableField, StorableField {
    * values from stringValue() or getBinaryValue()
    */
   public void setTokenStream(TokenStream tokenStream) {
-    if (!type.indexed() || !type.tokenized()) {
+    if (type.indexOptions() == IndexOptions.NONE || !type.tokenized()) {
       throw new IllegalArgumentException("TokenStream fields must be indexed and tokenized");
     }
     if (type.numericType() != null) {
@@ -450,7 +453,7 @@ public class Field implements IndexableField, StorableField {
    */
   public void setBoost(float boost) {
     if (boost != 1.0f) {
-      if (type.indexed() == false || type.omitNorms()) {
+      if (type.indexOptions() == IndexOptions.NONE || type.omitNorms()) {
         throw new IllegalArgumentException("You cannot set an index-time boost on an unindexed field, or one that omits norms");
       }
     }
@@ -499,19 +502,20 @@ public class Field implements IndexableField, StorableField {
   }
 
   @Override
-  public TokenStream tokenStream(Analyzer analyzer) throws IOException {
-    if (!fieldType().indexed()) {
+  public TokenStream tokenStream(Analyzer analyzer, TokenStream reuse) throws IOException {
+    if (fieldType().indexOptions() == IndexOptions.NONE) {
+      // Not indexed
       return null;
     }
 
     final NumericType numericType = fieldType().numericType();
     if (numericType != null) {
-      if (!(internalTokenStream instanceof NumericTokenStream)) {
+      if (!(reuse instanceof NumericTokenStream && ((NumericTokenStream)reuse).getPrecisionStep() == type.numericPrecisionStep())) {
         // lazy init the TokenStream as it is heavy to instantiate
         // (attributes,...) if not needed (stored field loading)
-        internalTokenStream = new NumericTokenStream(type.numericPrecisionStep());
+        reuse = new NumericTokenStream(type.numericPrecisionStep());
       }
-      final NumericTokenStream nts = (NumericTokenStream) internalTokenStream;
+      final NumericTokenStream nts = (NumericTokenStream) reuse;
       // initialize value in TokenStream
       final Number val = (Number) fieldsData;
       switch (numericType) {
@@ -530,20 +534,20 @@ public class Field implements IndexableField, StorableField {
       default:
         throw new AssertionError("Should never get here");
       }
-      return internalTokenStream;
+      return reuse;
     }
 
     if (!fieldType().tokenized()) {
       if (stringValue() == null) {
         throw new IllegalArgumentException("Non-Tokenized Fields must have a String value");
       }
-      if (!(internalTokenStream instanceof StringTokenStream)) {
+      if (!(reuse instanceof StringTokenStream)) {
         // lazy init the TokenStream as it is heavy to instantiate
         // (attributes,...) if not needed (stored field loading)
-        internalTokenStream = new StringTokenStream();
+        reuse = new StringTokenStream();
       }
-      ((StringTokenStream) internalTokenStream).setValue(stringValue());
-      return internalTokenStream;
+      ((StringTokenStream) reuse).setValue(stringValue());
+      return reuse;
     }
 
     if (tokenStream != null) {
@@ -588,7 +592,8 @@ public class Field implements IndexableField, StorableField {
     }
 
     @Override
-    public void end() {
+    public void end() throws IOException {
+      super.end();
       final int finalOffset = value.length();
       offsetAttribute.setOffset(finalOffset, finalOffset);
     }

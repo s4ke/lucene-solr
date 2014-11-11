@@ -47,7 +47,7 @@ public class SolrExampleStreamingTest extends SolrExampleTests {
 
   @BeforeClass
   public static void beforeTest() throws Exception {
-    createJetty(ExternalPaths.EXAMPLE_HOME, null, null);
+    createJetty(legacyExampleCollection1SolrHome(), null, null);
   }
 
   @Override
@@ -78,7 +78,7 @@ public class SolrExampleStreamingTest extends SolrExampleTests {
 
   public void testWaitOptions() throws Exception {
     // SOLR-3903
-    final List<Throwable> failures = new ArrayList<Throwable>();
+    final List<Throwable> failures = new ArrayList<>();
     ConcurrentUpdateSolrServer s = new ConcurrentUpdateSolrServer
       (jetty.getBaseUrl().toString() + "/collection1", 2, 2) {
         @Override

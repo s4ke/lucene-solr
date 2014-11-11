@@ -17,8 +17,8 @@ package org.apache.lucene.benchmark.byTask.feeds;
  * limitations under the License.
  */
 
-import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -35,7 +35,7 @@ public abstract class TrecDocParser {
   /** trec parser type used for unknown extensions */
   public static final ParsePathType DEFAULT_PATH_TYPE  = ParsePathType.GOV2;
 
-  static final Map<ParsePathType,TrecDocParser> pathType2parser = new HashMap<ParsePathType,TrecDocParser>();
+  static final Map<ParsePathType,TrecDocParser> pathType2parser = new HashMap<>();
   static {
     pathType2parser.put(ParsePathType.GOV2, new TrecGov2Parser());
     pathType2parser.put(ParsePathType.FBIS, new TrecFBISParser());
@@ -44,7 +44,7 @@ public abstract class TrecDocParser {
     pathType2parser.put(ParsePathType.LATIMES, new TrecLATimesParser());
   }
 
-  static final Map<String,ParsePathType> pathName2Type = new HashMap<String,ParsePathType>();
+  static final Map<String,ParsePathType> pathName2Type = new HashMap<>();
   static {
     for (ParsePathType ppt : ParsePathType.values()) {
       pathName2Type.put(ppt.name().toUpperCase(Locale.ROOT),ppt);
@@ -57,14 +57,14 @@ public abstract class TrecDocParser {
   /**
    * Compute the path type of a file by inspecting name of file and its parents
    */
-  public static ParsePathType pathType(File f) {
+  public static ParsePathType pathType(Path f) {
     int pathLength = 0;
-    while (f != null && ++pathLength < MAX_PATH_LENGTH) {
-      ParsePathType ppt = pathName2Type.get(f.getName().toUpperCase(Locale.ROOT));
+    while (f != null && f.getFileName() != null && ++pathLength < MAX_PATH_LENGTH) {
+      ParsePathType ppt = pathName2Type.get(f.getFileName().toString().toUpperCase(Locale.ROOT));
       if (ppt!=null) {
         return ppt;
       }
-      f = f.getParentFile();
+      f = f.getParent();
     }
     return DEFAULT_PATH_TYPE;
   }

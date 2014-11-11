@@ -93,11 +93,6 @@ public class RegexFragmenter extends HighlightingPluginBase implements SolrFragm
   public String getDescription() {
     return "RegexFragmenter (" + defaultPatternRaw + ")";
   }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
-  }
 }
 
 
@@ -203,7 +198,7 @@ class LuceneRegexFragmenter implements Fragmenter
 
   protected void addHotSpots(String text) {
     //System.out.println("hot spotting");
-    ArrayList<Integer> temphs = new ArrayList<Integer>(
+    ArrayList<Integer> temphs = new ArrayList<>(
                               text.length() / targetFragChars);
     Matcher match = textRE.matcher(text);
     int cur = 0;

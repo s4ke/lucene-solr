@@ -28,12 +28,14 @@ import org.apache.lucene.facet.FacetResult;
 import org.apache.lucene.facet.Facets;
 import org.apache.lucene.facet.FacetsCollector;
 import org.apache.lucene.facet.FacetsConfig;
+import org.apache.lucene.facet.sortedset.DefaultSortedSetDocValuesReaderState;
 import org.apache.lucene.facet.sortedset.SortedSetDocValuesFacetCounts;
 import org.apache.lucene.facet.sortedset.SortedSetDocValuesFacetField;
 import org.apache.lucene.facet.sortedset.SortedSetDocValuesReaderState;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.store.Directory;
@@ -54,8 +56,8 @@ public class SimpleSortedSetFacetsExample {
 
   /** Build the example index. */
   private void index() throws IOException {
-    IndexWriter indexWriter = new IndexWriter(indexDir, new IndexWriterConfig(FacetExamples.EXAMPLES_VER, 
-        new WhitespaceAnalyzer(FacetExamples.EXAMPLES_VER)));
+    IndexWriter indexWriter = new IndexWriter(indexDir, new IndexWriterConfig(
+        new WhitespaceAnalyzer()).setOpenMode(OpenMode.CREATE));
     Document doc = new Document();
     doc.add(new SortedSetDocValuesFacetField("Author", "Bob"));
     doc.add(new SortedSetDocValuesFacetField("Publish Year", "2010"));
@@ -88,7 +90,7 @@ public class SimpleSortedSetFacetsExample {
   private List<FacetResult> search() throws IOException {
     DirectoryReader indexReader = DirectoryReader.open(indexDir);
     IndexSearcher searcher = new IndexSearcher(indexReader);
-    SortedSetDocValuesReaderState state = new SortedSetDocValuesReaderState(indexReader);
+    SortedSetDocValuesReaderState state = new DefaultSortedSetDocValuesReaderState(indexReader);
 
     // Aggregatses the facet counts
     FacetsCollector fc = new FacetsCollector();
@@ -101,7 +103,7 @@ public class SimpleSortedSetFacetsExample {
     // Retrieve results
     Facets facets = new SortedSetDocValuesFacetCounts(state, fc);
 
-    List<FacetResult> results = new ArrayList<FacetResult>();
+    List<FacetResult> results = new ArrayList<>();
     results.add(facets.getTopChildren(10, "Author"));
     results.add(facets.getTopChildren(10, "Publish Year"));
     indexReader.close();
@@ -113,7 +115,7 @@ public class SimpleSortedSetFacetsExample {
   private FacetResult drillDown() throws IOException {
     DirectoryReader indexReader = DirectoryReader.open(indexDir);
     IndexSearcher searcher = new IndexSearcher(indexReader);
-    SortedSetDocValuesReaderState state = new SortedSetDocValuesReaderState(indexReader);
+    SortedSetDocValuesReaderState state = new DefaultSortedSetDocValuesReaderState(indexReader);
 
     // Now user drills down on Publish Year/2010:
     DrillDownQuery q = new DrillDownQuery(config);

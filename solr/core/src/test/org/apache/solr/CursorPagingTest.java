@@ -17,7 +17,7 @@
 
 package org.apache.solr;
 
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.SentinelIntSet;
 import org.apache.lucene.util.mutable.MutableValueInt;
 import org.apache.solr.core.SolrInfoMBean;
@@ -35,6 +35,7 @@ import org.apache.solr.search.CursorMark; //jdoc
 
 import org.noggit.ObjectBuilder;
 
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -42,7 +43,7 @@ import java.util.List;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
-import java.nio.ByteBuffer;
+import java.util.UUID;
 
 import org.junit.BeforeClass;
 import org.junit.After;
@@ -56,6 +57,9 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
   public final static String TEST_SOLRCONFIG_NAME = "solrconfig-deeppaging.xml";
   /** schema.xml file name, shared with other cursor related tests */
   public final static String TEST_SCHEMAXML_NAME = "schema-sorts.xml";
+  /** values from enumConfig.xml */
+  public static final String[] SEVERITY_ENUM_VALUES =
+      { "Not Available", "Low", "Medium", "High", "Critical" };
 
   @BeforeClass
   public static void beforeTests() throws Exception {
@@ -120,6 +124,9 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     String cursorMark;
     SolrParams params = null;
     
+    final String intsort = "int" + (random().nextBoolean() ? "" : "_dv");
+    final String intmissingsort = intsort;
+
     // trivial base case: ensure cursorMark against an empty index doesn't blow up
     cursorMark = CURSOR_MARK_START;
     params = params("q", "*:*", 
@@ -145,7 +152,7 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     assertU(adoc("id", "6", "str", "a", "float", "64.5", "int", "7"));
     assertU(adoc("id", "1", "str", "a", "float", "64.5", "int", "7"));
     assertU(adoc("id", "4", "str", "a", "float", "11.1", "int", "6"));
-    assertU(adoc("id", "3", "str", "a", "float", "11.1", "int", "3"));
+    assertU(adoc("id", "3", "str", "a", "float", "11.1")); // int is missing
     assertU(commit());
 
     // base case: ensure cursorMark that matches no docs doesn't blow up
@@ -241,7 +248,7 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
                     "facet", "true",
                     "facet.field", "str",
                     "json.nl", "map",
-                    "sort", "int asc, id asc");
+                    "sort", intsort + " asc, id asc");
     cursorMark = assertCursor(req(params, CURSOR_MARK_PARAM, cursorMark)
                               ,"/response/numFound==8"
                               ,"/response/start==0"
@@ -267,6 +274,66 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
                               ,"/response/start==0"
                               ,"/response/docs==[]"
                               ,"/facet_counts/facet_fields/str=={'a':4,'b':1,'c':3}"
+                              ));
+
+    // int missing first sort with dups, id tie breaker
+    cursorMark = CURSOR_MARK_START;
+    params = params("q", "-int:2001 -int:4055", 
+                    "rows","3",
+                    "fl", "id",
+                    "json.nl", "map",
+                    "sort", intmissingsort + "_first asc, id asc");
+    cursorMark = assertCursor(req(params, CURSOR_MARK_PARAM, cursorMark)
+                              ,"/response/numFound==8"
+                              ,"/response/start==0"
+                              ,"/response/docs==[{'id':3},{'id':7},{'id':0}]"
+                              );
+    cursorMark = assertCursor(req(params, CURSOR_MARK_PARAM, cursorMark)
+                              ,"/response/numFound==8"
+                              ,"/response/start==0"
+                              ,"/response/docs==[{'id':4},{'id':1},{'id':6}]"
+                              );
+    cursorMark = assertCursor(req(params, CURSOR_MARK_PARAM, cursorMark)
+                              ,"/response/numFound==8"
+                              ,"/response/start==0"
+                              ,"/response/docs==[{'id':9},{'id':2}]"
+                              );
+    // no more, so no change to cursorMark, and no new docs
+    assertEquals(cursorMark,
+                 assertCursor(req(params, CURSOR_MARK_PARAM, cursorMark)
+                              ,"/response/numFound==8" 
+                              ,"/response/start==0"
+                              ,"/response/docs==[]"
+                              ));
+
+    // int missing last sort with dups, id tie breaker
+    cursorMark = CURSOR_MARK_START;
+    params = params("q", "-int:2001 -int:4055", 
+                    "rows","3",
+                    "fl", "id",
+                    "json.nl", "map",
+                    "sort", intmissingsort + "_last asc, id asc");
+    cursorMark = assertCursor(req(params, CURSOR_MARK_PARAM, cursorMark)
+                              ,"/response/numFound==8"
+                              ,"/response/start==0"
+                              ,"/response/docs==[{'id':7},{'id':0},{'id':4}]"
+                              );
+    cursorMark = assertCursor(req(params, CURSOR_MARK_PARAM, cursorMark)
+                              ,"/response/numFound==8"
+                              ,"/response/start==0"
+                              ,"/response/docs==[{'id':1},{'id':6},{'id':9}]"
+                              );
+    cursorMark = assertCursor(req(params, CURSOR_MARK_PARAM, cursorMark)
+                              ,"/response/numFound==8"
+                              ,"/response/start==0"
+                              ,"/response/docs==[{'id':2},{'id':3}]"
+                              );
+    // no more, so no change to cursorMark, and no new docs
+    assertEquals(cursorMark,
+                 assertCursor(req(params, CURSOR_MARK_PARAM, cursorMark)
+                              ,"/response/numFound==8" 
+                              ,"/response/start==0"
+                              ,"/response/docs==[]"
                               ));
 
     // string sort with dups, id tie breaker
@@ -298,7 +365,7 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     params = params("q", "*:*", 
                     "rows","2",
                     "fl", "id",
-                    "sort", "float asc, int desc, id desc");
+                    "sort", "float asc, "+intsort+" desc, id desc");
     cursorMark = assertCursor(req(params, CURSOR_MARK_PARAM, cursorMark)
                               ,"/response/numFound==10"
                               ,"/response/start==0"
@@ -338,7 +405,7 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     params = params("q", "id:3 id:7", 
                     "rows","111",
                     "fl", "id",
-                    "sort", "int asc, id asc");
+                    "sort", intsort + " asc, id asc");
     cursorMark = assertCursor(req(params, CURSOR_MARK_PARAM, cursorMark)
                               ,"/response/numFound==2"
                               ,"/response/start==0"
@@ -367,7 +434,7 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     ids = assertFullWalkNoDups(9, params("q", "*:*", 
                                          "rows", "3",
                                          "fq", "-id:6",
-                                         "sort", "float desc, id asc, int asc"));
+                                         "sort", "float desc, id asc, "+intsort+" asc"));
     assertEquals(9, ids.size());
     assertFalse("matched on id:6 unexpectedly", ids.exists(6));
     ids = assertFullWalkNoDups(9, params("q", "float:[0 TO *] int:7 id:6", 
@@ -451,7 +518,7 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     assertU(adoc("id", "3", "str", "a", "float", "11.1", "int", "3"));
     assertU(commit());
 
-    final Collection<String> allFieldNames = getAllFieldNames();
+    final Collection<String> allFieldNames = getAllSortFieldNames();
 
     final SolrInfoMBean filterCacheStats 
       = h.getCore().getInfoRegistry().get("filterCache");
@@ -466,7 +533,7 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
 
     SentinelIntSet ids = assertFullWalkNoDups
       (10, params("q", "*:*",
-                  "rows",""+_TestUtil.nextInt(random(),1,11),
+                  "rows",""+ TestUtil.nextInt(random(), 1, 11),
                   "fq", "-id:[1 TO 2]",
                   "fq", "-id:[6 TO 7]",
                   "fl", "id",
@@ -488,10 +555,10 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
   /** randomized testing of a non-trivial number of docs using assertFullWalkNoDups 
    */
   public void testRandomSortsOnLargeIndex() throws Exception {
-    final Collection<String> allFieldNames = getAllFieldNames();
+    final Collection<String> allFieldNames = getAllSortFieldNames();
 
-    final int initialDocs = _TestUtil.nextInt(random(),100,200);
-    final int totalDocs = atLeast(5000);
+    final int initialDocs = TestUtil.nextInt(random(), 100, 200);
+    final int totalDocs = atLeast(500);
 
     // start with a smallish number of documents, and test that we can do a full walk using a 
     // sort on *every* field in the schema...
@@ -505,7 +572,7 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     for (String f : allFieldNames) {
       for (String order : new String[] {" asc", " desc"}) {
         String sort = f + order + ("id".equals(f) ? "" : ", id" + order);
-        String rows = "" + _TestUtil.nextInt(random(),13,50);
+        String rows = "" + TestUtil.nextInt(random(), 13, 50);
         SentinelIntSet ids = assertFullWalkNoDups(totalDocs, 
                                                   params("q", "*:*",
                                                          "fl","id",
@@ -522,10 +589,10 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     }
     assertU(commit());
 
-    final int numRandomSorts = atLeast(5);
+    final int numRandomSorts = atLeast(3);
     for (int i = 0; i < numRandomSorts; i++) {
       final String sort = buildRandomSort(allFieldNames);
-      final String rows = "" + _TestUtil.nextInt(random(),63,113);
+      final String rows = "" + TestUtil.nextInt(random(), 63, 113);
       final String fl = random().nextBoolean() ? "id" : "id,score";
       final boolean matchAll = random().nextBoolean();
       final String q = matchAll ? "*:*" : buildRandomQuery();
@@ -546,25 +613,41 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
    * of test multiplier and nightly status 
    */
   private static boolean useField() {
-    return 0 != _TestUtil.nextInt(random(), 0, 30);
-  }
-  
-  /** returns likely most (1/10) of the time, otherwise unlikely */
-  private static Object skewed(Object likely, Object unlikely) {
-    return (0 == _TestUtil.nextInt(random(), 0, 9)) ? unlikely : likely;
+    return 0 != TestUtil.nextInt(random(), 0, 30);
   }
   
   /**
-   * a list of the fields in the schema - excluding _version_
+   * An immutable list of the fields in the schema that can be used for sorting,
+   * deterministically random order.
    */
-  private Collection<String> getAllFieldNames() {
-    ArrayList<String> names = new ArrayList<String>(37);
-    for (String f : h.getCore().getLatestSchema().getFields().keySet()) {
-      if (! f.equals("_version_")) {
-        names.add(f);
+  private List<String> getAllSortFieldNames() {
+    return pruneAndDeterministicallySort
+      (h.getCore().getLatestSchema().getFields().keySet());
+  }
+
+  
+  /**
+   * <p>
+   * Given a list of field names in the schema, returns an immutable list in 
+   * deterministically random order with the following things removed:
+   * </p>
+   * <ul>
+   *  <li><code>_version_</code> is removed</li>
+   * </ul>
+   */
+  public static List<String> pruneAndDeterministicallySort(Collection<String> raw) {
+
+    ArrayList<String> names = new ArrayList<>(37);
+    for (String f : raw) {
+      if (f.equals("_version_")) {
+        continue;
       }
+      names.add(f);
     }
-    return Collections.<String>unmodifiableCollection(names);
+
+    Collections.sort(names);
+    Collections.shuffle(names,random());
+    return Collections.<String>unmodifiableList(names);
   }
 
   /**
@@ -581,7 +664,7 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     String cursorMark = CURSOR_MARK_START;
     int docsOnThisPage = Integer.MAX_VALUE;
     while (0 < docsOnThisPage) {
-      String json = assertJQ(req(params, 
+      String json = assertJQ(req(params,
                                  CURSOR_MARK_PARAM, cursorMark));
       Map rsp = (Map) ObjectBuilder.fromJSON(json);
       assertTrue("response doesn't contain " + CURSOR_MARK_NEXT + ": " + json,
@@ -615,7 +698,7 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
    * test faceting with deep paging
    */
   public void testFacetingWithRandomSorts() throws Exception {
-    final int numDocs = _TestUtil.nextInt(random(), 1000, 3000);
+    final int numDocs = TestUtil.nextInt(random(), 1000, 3000);
     String[] fieldsToFacetOn = { "int", "long", "str" };
     String[] facetMethods = { "enum", "fc", "fcs" };
 
@@ -625,17 +708,17 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     }
     assertU(commit());
 
-    Collection<String> allFieldNames = getAllFieldNames();
+    Collection<String> allFieldNames = getAllSortFieldNames();
     String[] fieldNames = new String[allFieldNames.size()];
-    getAllFieldNames().toArray(fieldNames);
-    String f = fieldNames[_TestUtil.nextInt(random(), 0, fieldNames.length - 1)];
-    String order = 0 == _TestUtil.nextInt(random(), 0, 1) ? " asc" : " desc";
+    allFieldNames.toArray(fieldNames);
+    String f = fieldNames[TestUtil.nextInt(random(), 0, fieldNames.length - 1)];
+    String order = 0 == TestUtil.nextInt(random(), 0, 1) ? " asc" : " desc";
     String sort = f + order + (f.equals("id") ? "" : ", id" + order);
-    String rows = "" + _TestUtil.nextInt(random(),13,50);
+    String rows = "" + TestUtil.nextInt(random(), 13, 50);
     String facetField = fieldsToFacetOn
-        [_TestUtil.nextInt(random(), 0, fieldsToFacetOn.length - 1)];
+        [TestUtil.nextInt(random(), 0, fieldsToFacetOn.length - 1)];
     String facetMethod = facetMethods
-        [_TestUtil.nextInt(random(), 0, facetMethods.length - 1)];
+        [TestUtil.nextInt(random(), 0, facetMethods.length - 1)];
     SentinelIntSet ids = assertFullWalkNoDupsWithFacets
         (numDocs, params("q", "*:*",
             "fl", "id," + facetField,
@@ -665,7 +748,7 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     assertNotNull("facet.field param not specified", facetField);
     assertFalse("facet.field param contains multiple values", facetField.contains(","));
     assertEquals("facet.limit param not set to -1", "-1", params.get("facet.limit"));
-    final Map<String,MutableValueInt> facetCounts = new HashMap<String,MutableValueInt>();
+    final Map<String,MutableValueInt> facetCounts = new HashMap<>();
     SentinelIntSet ids = new SentinelIntSet(maxSize, -1);
     String cursorMark = CURSOR_MARK_START;
     int docsOnThisPage = Integer.MAX_VALUE;
@@ -781,11 +864,11 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     // (hopefully with lots of duplication)
     if (useField()) {
       doc.addField("int", skewed(random().nextInt(), 
-                                 _TestUtil.nextInt(random(), 20, 50)));
+                                 TestUtil.nextInt(random(), 20, 50)));
     }
     if (useField()) {
       doc.addField("long", skewed(random().nextLong(), 
-                                  _TestUtil.nextInt(random(), 5000, 5100)));
+                                  TestUtil.nextInt(random(), 5000, 5100)));
     }
     if (useField()) {
       doc.addField("float", skewed(random().nextFloat() * random().nextInt(), 
@@ -796,15 +879,30 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
                                     1.0D / random().nextInt(37)));
     }
     if (useField()) {
-      doc.addField("str", skewed(randomUsableUnicodeString(),
-                                 _TestUtil.randomSimpleString(random(),1,1)));
-
+      doc.addField("str", skewed(randomXmlUsableUnicodeString(),
+                                 TestUtil.randomSimpleString(random(), 1, 1)));
     }
     if (useField()) {
-      int numBytes = (int) skewed(_TestUtil.nextInt(random(), 20, 50), 2);
+      int numBytes = (int) skewed(TestUtil.nextInt(random(), 20, 50), 2);
       byte[] randBytes = new byte[numBytes];
       random().nextBytes(randBytes);
       doc.addField("bin", ByteBuffer.wrap(randBytes));
+    }
+    if (useField()) {
+      doc.addField("date", skewed(randomDate(), randomSkewedDate()));
+    }
+    if (useField()) {
+      doc.addField("uuid", UUID.randomUUID().toString());
+    }
+    if (useField()) {
+      doc.addField("currency", skewed("" + (random().nextInt() / 100.) + "," + randomCurrency(),
+                                      "" + TestUtil.nextInt(random(), 250, 320) + ",USD"));
+    }
+    if (useField()) {
+      doc.addField("bool", random().nextBoolean() ? "t" : "f");
+    }
+    if (useField()) {
+      doc.addField("enum", randomEnumValue());
     }
     return doc;
   }
@@ -822,8 +920,8 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
       return "{!func}" + numericFields.get(0);
     } else {
       // several SHOULD clauses on range queries
-      int low = _TestUtil.nextInt(random(),-2379,2);
-      int high = _TestUtil.nextInt(random(),4,5713);
+      int low = TestUtil.nextInt(random(), -2379, 2);
+      int high = TestUtil.nextInt(random(), 4, 5713);
       return 
         numericFields.get(0) + ":[* TO 0] " +
         numericFields.get(1) + ":[0 TO *] " +
@@ -831,17 +929,14 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
     }
   }
 
-  /**
-   * We want "realistic" unicode strings beyond simple ascii, but because our
-   * updates use XML we need to ensure we don't get "special" code block.
-   */
-  private static String randomUsableUnicodeString() {
-    String result = _TestUtil.randomRealisticUnicodeString(random());
-    if (result.matches(".*\\p{InSpecials}.*")) {
-      // oh well
-      result = _TestUtil.randomSimpleString(random());
-    }
-    return result;
+  private static final String[] currencies = { "USD", "EUR", "NOK" };
+
+  public static String randomCurrency() {
+    return currencies[random().nextInt(currencies.length)];
+  }
+
+  private static String randomEnumValue() {
+    return SEVERITY_ENUM_VALUES[random().nextInt(SEVERITY_ENUM_VALUES.length)];
   }
 
   /**
@@ -850,26 +945,25 @@ public class CursorPagingTest extends SolrTestCaseJ4 {
    */
   public static String buildRandomSort(final Collection<String> fieldNames) {
 
-    ArrayList<String> shuffledNames = new ArrayList<String>(fieldNames);
+    ArrayList<String> shuffledNames = new ArrayList<>(fieldNames);
     Collections.replaceAll(shuffledNames, "id", "score");
     Collections.shuffle(shuffledNames, random());
 
     final StringBuilder result = new StringBuilder();
-    final int numClauses = atLeast(2);
+    final int numClauses = TestUtil.nextInt(random(), 2, 5);
 
     for (int i = 0; i < numClauses; i++) {
       String field = shuffledNames.get(i);
 
       // wrap in a function sometimes
-      if ( (!"score".equals(field))
-           && 
-           (0 == _TestUtil.nextInt(random(), 0, 7)) ) {
+      if ( ! "score".equals(field) && 0 == TestUtil.nextInt(random(), 0, 7)) {
         // specific function doesn't matter, just proving that we can handle the concept.
         // but we do have to be careful with non numeric fields
-        if (field.startsWith("str") || field.startsWith("bin")) {
-          field = "if(exists(" + field + "),47,83)";
-        } else {
+        if (field.contains("float") || field.contains("double")
+            || field.contains("int") || field.contains("long")) {
           field = "abs(" + field + ")";
+        } else {
+          field = "if(exists(" + field + "),47,83)";
         }
       }
       result.append(field).append(random().nextBoolean() ? " asc, " : " desc, ");

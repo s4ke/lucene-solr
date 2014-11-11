@@ -23,11 +23,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.index.FreqProxTermsWriterPerField.FreqProxPostingsArray;
 import org.apache.lucene.util.AttributeSource; // javadocs
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 
 /** Implements limited (iterators only, no stats) {@link
  *  Fields} interface over the in-RAM buffered
@@ -35,7 +35,7 @@ import org.apache.lucene.util.BytesRef;
  *  PostingsFormat. */
 
 class FreqProxFields extends Fields {
-  final Map<String,FreqProxTermsWriterPerField> fields = new LinkedHashMap<String,FreqProxTermsWriterPerField>();
+  final Map<String,FreqProxTermsWriterPerField> fields = new LinkedHashMap<>();
 
   public FreqProxFields(List<FreqProxTermsWriterPerField> fieldList) {
     // NOTE: fields are already sorted by field name
@@ -126,7 +126,7 @@ class FreqProxFields extends Fields {
   
     @Override
     public boolean hasPayloads() {
-      return terms.hasPayloads;
+      return terms.sawPayloads;
     }
   }
 
@@ -140,10 +140,10 @@ class FreqProxFields extends Fields {
 
     public FreqProxTermsEnum(FreqProxTermsWriterPerField terms) {
       this.terms = terms;
-      this.numTerms = terms.termsHashPerField.bytesHash.size();
+      this.numTerms = terms.bytesHash.size();
       sortedTermIDs = terms.sortedTermIDs;
       assert sortedTermIDs != null;
-      postingsArray = (FreqProxPostingsArray) terms.termsHashPerField.postingsArray;
+      postingsArray = (FreqProxPostingsArray) terms.postingsArray;
     }
 
     public void reset() {
@@ -161,7 +161,7 @@ class FreqProxFields extends Fields {
       while (hi >= lo) {
         int mid = (lo + hi) >>> 1;
         int textStart = postingsArray.textStarts[sortedTermIDs[mid]];
-        terms.termsHashPerField.bytePool.setBytesRef(scratch, textStart);
+        terms.bytePool.setBytesRef(scratch, textStart);
         int cmp = scratch.compareTo(text);
         if (cmp < 0) {
           lo = mid + 1;
@@ -176,9 +176,11 @@ class FreqProxFields extends Fields {
 
       // not found:
       ord = lo + 1;
-      if (ord == numTerms) {
+      if (ord >= numTerms) {
         return SeekStatus.END;
       } else {
+        int textStart = postingsArray.textStarts[sortedTermIDs[ord]];
+        terms.bytePool.setBytesRef(scratch, textStart);
         return SeekStatus.NOT_FOUND;
       }
     }
@@ -186,7 +188,7 @@ class FreqProxFields extends Fields {
     public void seekExact(long ord) {
       this.ord = (int) ord;
       int textStart = postingsArray.textStarts[sortedTermIDs[this.ord]];
-      terms.termsHashPerField.bytePool.setBytesRef(scratch, textStart);
+      terms.bytePool.setBytesRef(scratch, textStart);
     }
 
     @Override
@@ -196,7 +198,7 @@ class FreqProxFields extends Fields {
         return null;
       } else {
         int textStart = postingsArray.textStarts[sortedTermIDs[ord]];
-        terms.termsHashPerField.bytePool.setBytesRef(scratch, textStart);
+        terms.bytePool.setBytesRef(scratch, textStart);
         return scratch;
       }
     }
@@ -324,7 +326,7 @@ class FreqProxFields extends Fields {
 
     public void reset(int termID) {
       this.termID = termID;
-      terms.termsHashPerField.initReader(reader, termID, 0);
+      terms.initReader(reader, termID, 0);
       ended = false;
       docID = 0;
     }
@@ -403,7 +405,7 @@ class FreqProxFields extends Fields {
     int termID;
     boolean ended;
     boolean hasPayload;
-    BytesRef payload = new BytesRef();
+    BytesRefBuilder payload = new BytesRefBuilder();
 
     public FreqProxDocsAndPositionsEnum(FreqProxTermsWriterPerField terms, FreqProxPostingsArray postingsArray) {
       this.terms = terms;
@@ -415,8 +417,8 @@ class FreqProxFields extends Fields {
 
     public void reset(int termID) {
       this.termID = termID;
-      terms.termsHashPerField.initReader(reader, termID, 0);
-      terms.termsHashPerField.initReader(posReader, termID, 1);
+      terms.initReader(reader, termID, 0);
+      terms.initReader(posReader, termID, 1);
       ended = false;
       docID = 0;
       posLeft = 0;
@@ -483,11 +485,9 @@ class FreqProxFields extends Fields {
       if ((code & 1) != 0) {
         hasPayload = true;
         // has a payload
-        payload.length = posReader.readVInt();
-        if (payload.bytes.length < payload.length) {
-          payload.grow(payload.length);
-        }
-        posReader.readBytes(payload.bytes, 0, payload.length);
+        payload.setLength(posReader.readVInt());
+        payload.grow(payload.length());
+        posReader.readBytes(payload.bytes(), 0, payload.length());
       } else {
         hasPayload = false;
       }
@@ -519,7 +519,7 @@ class FreqProxFields extends Fields {
     @Override
     public BytesRef getPayload() {
       if (hasPayload) {
-        return payload;
+        return payload.get();
       } else {
         return null;
       }

@@ -49,7 +49,7 @@ public class TestLuceneDictionary extends LuceneTestCase {
   public void setUp() throws Exception {
     super.setUp();
     store = newDirectory();
-    IndexWriter writer = new IndexWriter(store, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
+    IndexWriter writer = new IndexWriter(store, newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false)));
 
     Document doc;
 
@@ -90,7 +90,7 @@ public class TestLuceneDictionary extends LuceneTestCase {
       indexReader = DirectoryReader.open(store);
 
       ld = new LuceneDictionary(indexReader, "nonexistent_field");
-      it = ld.getWordsIterator();
+      it = ld.getEntryIterator();
 
       assertNull("More elements than expected", spare = it.next());
     } finally {
@@ -103,7 +103,7 @@ public class TestLuceneDictionary extends LuceneTestCase {
       indexReader = DirectoryReader.open(store);
 
       ld = new LuceneDictionary(indexReader, "aaa");
-      it = ld.getWordsIterator();
+      it = ld.getEntryIterator();
       assertNotNull("First element doesn't exist.", spare = it.next());
       assertTrue("First element isn't correct", spare.utf8ToString().equals("foo"));
       assertNull("More elements than expected", it.next());
@@ -117,7 +117,7 @@ public class TestLuceneDictionary extends LuceneTestCase {
       indexReader = DirectoryReader.open(store);
 
       ld = new LuceneDictionary(indexReader, "contents");
-      it = ld.getWordsIterator();
+      it = ld.getEntryIterator();
 
       assertNotNull("First element doesn't exist.", spare = it.next());
       assertTrue("First element isn't correct", spare.utf8ToString().equals("Jerry"));
@@ -126,7 +126,7 @@ public class TestLuceneDictionary extends LuceneTestCase {
       assertNull("More elements than expected", it.next());
 
       ld = new LuceneDictionary(indexReader, "contents");
-      it = ld.getWordsIterator();
+      it = ld.getEntryIterator();
 
       int counter = 2;
       while (it.next() != null) {
@@ -145,7 +145,7 @@ public class TestLuceneDictionary extends LuceneTestCase {
       indexReader = DirectoryReader.open(store);
 
       ld = new LuceneDictionary(indexReader, "contents");
-      it = ld.getWordsIterator();
+      it = ld.getEntryIterator();
 
       // just iterate through words
       assertEquals("First element isn't correct", "Jerry", it.next().utf8ToString());
@@ -162,7 +162,7 @@ public class TestLuceneDictionary extends LuceneTestCase {
       indexReader = DirectoryReader.open(store);
 
       ld = new LuceneDictionary(indexReader, "zzz");
-      it = ld.getWordsIterator();
+      it = ld.getEntryIterator();
 
       assertNotNull("First element doesn't exist.", spare = it.next());
       assertEquals("First element isn't correct", "bar", spare.utf8ToString());
@@ -177,7 +177,7 @@ public class TestLuceneDictionary extends LuceneTestCase {
     Directory dir = newDirectory();
     SpellChecker sc = new SpellChecker(dir);
     indexReader = DirectoryReader.open(store);
-    sc.indexDictionary(new LuceneDictionary(indexReader, "contents"), newIndexWriterConfig(TEST_VERSION_CURRENT, null), false);
+    sc.indexDictionary(new LuceneDictionary(indexReader, "contents"), newIndexWriterConfig(null), false);
     String[] suggestions = sc.suggestSimilar("Tam", 1);
     assertEquals(1, suggestions.length);
     assertEquals("Tom", suggestions[0]);

@@ -47,7 +47,7 @@ public abstract class BaseTokenStreamFactoryTestCase extends BaseTokenStreamTest
     if (keysAndValues.length % 2 == 1) {
       throw new IllegalArgumentException("invalid keysAndValues map");
     }
-    Map<String,String> args = new HashMap<String,String>();
+    Map<String,String> args = new HashMap<>();
     for (int i = 0; i < keysAndValues.length; i += 2) {
       String previous = args.put(keysAndValues[i], keysAndValues[i+1]);
       assertNull("duplicate values for key: " + keysAndValues[i], previous);
@@ -79,7 +79,7 @@ public abstract class BaseTokenStreamFactoryTestCase extends BaseTokenStreamTest
    * be on the test classpath.
    */
   protected TokenizerFactory tokenizerFactory(String name, String... keysAndValues) throws Exception {
-    return tokenizerFactory(name, TEST_VERSION_CURRENT, keysAndValues);
+    return tokenizerFactory(name, Version.LATEST, keysAndValues);
   }
 
   /** 
@@ -114,7 +114,7 @@ public abstract class BaseTokenStreamFactoryTestCase extends BaseTokenStreamTest
    * be on the test classpath.
    */
   protected TokenFilterFactory tokenFilterFactory(String name, String... keysAndValues) throws Exception {
-    return tokenFilterFactory(name, TEST_VERSION_CURRENT, keysAndValues);
+    return tokenFilterFactory(name, Version.LATEST, keysAndValues);
   }
   
   /** 
@@ -131,7 +131,7 @@ public abstract class BaseTokenStreamFactoryTestCase extends BaseTokenStreamTest
    * be on the test classpath.
    */
   protected CharFilterFactory charFilterFactory(String name, String... keysAndValues) throws Exception {
-    return charFilterFactory(name, TEST_VERSION_CURRENT, new ClasspathResourceLoader(getClass()), keysAndValues);
+    return charFilterFactory(name, Version.LATEST, new ClasspathResourceLoader(getClass()), keysAndValues);
   }
   
   /** 

@@ -32,7 +32,7 @@ public class TestKeepWordFilter extends BaseTokenStreamTestCase {
   
   public void testStopAndGo() throws Exception 
   {  
-    Set<String> words = new HashSet<String>();
+    Set<String> words = new HashSet<>();
     words.add( "aaa" );
     words.add( "bbb" );
     
@@ -40,18 +40,18 @@ public class TestKeepWordFilter extends BaseTokenStreamTestCase {
     
     // Test Stopwords
     TokenStream stream = whitespaceMockTokenizer(input);
-    stream = new KeepWordFilter(TEST_VERSION_CURRENT, stream, new CharArraySet(TEST_VERSION_CURRENT, words, true));
+    stream = new KeepWordFilter(stream, new CharArraySet( words, true));
     assertTokenStreamContents(stream, new String[] { "aaa", "BBB" }, new int[] { 3, 2 });
        
     // Now force case
     stream = whitespaceMockTokenizer(input);
-    stream = new KeepWordFilter(TEST_VERSION_CURRENT, stream, new CharArraySet(TEST_VERSION_CURRENT,words, false));
+    stream = new KeepWordFilter(stream, new CharArraySet(words, false));
     assertTokenStreamContents(stream, new String[] { "aaa" }, new int[] { 3 });
   }
   
   /** blast some random strings through the analyzer */
   public void testRandomStrings() throws Exception {
-    final Set<String> words = new HashSet<String>();
+    final Set<String> words = new HashSet<>();
     words.add( "a" );
     words.add( "b" );
     
@@ -60,7 +60,7 @@ public class TestKeepWordFilter extends BaseTokenStreamTestCase {
       @Override
       protected TokenStreamComponents createComponents(String fieldName) {
         Tokenizer tokenizer = new MockTokenizer(MockTokenizer.WHITESPACE, false);
-        TokenStream stream = new KeepWordFilter(TEST_VERSION_CURRENT, tokenizer, new CharArraySet(TEST_VERSION_CURRENT, words, true));
+        TokenStream stream = new KeepWordFilter(tokenizer, new CharArraySet( words, true));
         return new TokenStreamComponents(tokenizer, stream);
       }
     };

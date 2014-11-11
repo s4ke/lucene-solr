@@ -17,6 +17,7 @@ package org.apache.solr.cloud;
  * limitations under the License.
  */
 
+import org.apache.lucene.util.LuceneTestCase.Slow;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.common.SolrDocument;
 import org.junit.BeforeClass;
@@ -26,6 +27,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 
+@Slow
 public class TriLevelCompositeIdRoutingTest extends ShardRoutingTest {
 
   int NUM_APPS = 5;
@@ -45,8 +47,8 @@ public class TriLevelCompositeIdRoutingTest extends ShardRoutingTest {
 
   public TriLevelCompositeIdRoutingTest() {
     schemaString = "schema15.xml";      // we need a string id
-    super.sliceCount = 12;             // a lot of slices for more ranges and buckets
-    super.shardCount = 24;
+    super.sliceCount = TEST_NIGHTLY ? 12 : 2;             // a lot of slices for more ranges and buckets
+    super.shardCount = TEST_NIGHTLY ? 24 : 3;
     super.fixShardCount = true;
 
   }
@@ -56,7 +58,6 @@ public class TriLevelCompositeIdRoutingTest extends ShardRoutingTest {
     boolean testFinished = false;
     try {
       handle.clear();
-      handle.put("QTime", SKIPVAL);
       handle.put("timestamp", SKIPVAL);
 
       // todo: do I have to do this here?
@@ -90,7 +91,7 @@ public class TriLevelCompositeIdRoutingTest extends ShardRoutingTest {
 
     commit();
 
-    HashMap<String, Integer> idMap = new HashMap<String, Integer>();
+    HashMap<String, Integer> idMap = new HashMap<>();
 
     for (int i = 1; i <= sliceCount; i++) {
 
@@ -122,7 +123,7 @@ public class TriLevelCompositeIdRoutingTest extends ShardRoutingTest {
 
     commit();
 
-    HashMap<String, Integer> idMap = new HashMap<String, Integer>();
+    HashMap<String, Integer> idMap = new HashMap<>();
 
     for (int i = 1; i <= sliceCount; i++) {
 
@@ -142,7 +143,7 @@ public class TriLevelCompositeIdRoutingTest extends ShardRoutingTest {
 
   Set<String> doQueryGetUniqueIdKeys(String... queryParams) throws Exception {
     QueryResponse rsp = cloudClient.query(params(queryParams));
-    Set<String> obtainedIdKeys = new HashSet<String>();
+    Set<String> obtainedIdKeys = new HashSet<>();
     for (SolrDocument doc : rsp.getResults()) {
       obtainedIdKeys.add(getKey((String) doc.get("id")));
     }

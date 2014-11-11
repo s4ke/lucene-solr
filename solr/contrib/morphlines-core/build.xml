@@ -23,8 +23,6 @@
     Solr Morphlines commands.
   </description>
 
-  <property name="test.lib.dir" location="test-lib"/>
-
   <import file="../contrib-build.xml"/>
   
   <solr-contrib-uptodate name="extraction" 
@@ -70,7 +68,7 @@
   </path>
   
   <!-- TODO: make this nicer like lucene? -->
-  <target name="javadocs" depends="compile-core,define-lucene-javadoc-url,lucene-javadocs,javadocs-solr-core,javadocs-extraction">
+  <target name="javadocs" depends="compile-core,define-lucene-javadoc-url,lucene-javadocs,javadocs-solr-core,javadocs-extraction,check-javadocs-uptodate" unless="javadocs-uptodate-${name}"> 
         <sequential>
       <mkdir dir="${javadoc.dir}/${name}"/>
       <solr-invoke-javadoc>

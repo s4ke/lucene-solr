@@ -25,7 +25,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.document.Field.Store;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.FieldInvertState;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriterConfig;
@@ -50,7 +50,7 @@ public class TestConjunctions extends LuceneTestCase {
     super.setUp();
     analyzer = new MockAnalyzer(random());
     dir = newDirectory();
-    IndexWriterConfig config = newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer);
+    IndexWriterConfig config = newIndexWriterConfig(analyzer);
     config.setMergePolicy(newLogMergePolicy()); // we will use docids to validate
     RandomIndexWriter writer = new RandomIndexWriter(random(), dir, config);
     writer.addDocument(doc("lucene", "lucene is a very popular search engine library"));
@@ -109,7 +109,7 @@ public class TestConjunctions extends LuceneTestCase {
     }
 
     @Override
-    public SimScorer simScorer(SimWeight weight, AtomicReaderContext context) throws IOException {
+    public SimScorer simScorer(SimWeight weight, LeafReaderContext context) throws IOException {
       return new SimScorer() {
         @Override
         public float score(int doc, float freq) {

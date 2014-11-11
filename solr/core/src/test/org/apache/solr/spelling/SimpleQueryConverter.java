@@ -40,8 +40,8 @@ class SimpleQueryConverter extends SpellingQueryConverter {
 
   @Override
   public Collection<Token> convert(String origQuery) {
-    Collection<Token> result = new HashSet<Token>();
-    WhitespaceAnalyzer analyzer = new WhitespaceAnalyzer(LuceneTestCase.TEST_VERSION_CURRENT);
+    Collection<Token> result = new HashSet<>();
+    WhitespaceAnalyzer analyzer = new WhitespaceAnalyzer();
     
     try (TokenStream ts = analyzer.tokenStream("", origQuery)) {
       // TODO: support custom attributes

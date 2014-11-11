@@ -28,7 +28,6 @@ import org.apache.solr.common.cloud.ZkNodeProps;
 import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
-import org.apache.solr.handler.admin.CollectionsHandler;
 import org.apache.zookeeper.KeeperException;
 import org.junit.After;
 import org.junit.Before;
@@ -91,7 +90,14 @@ public class DeleteShardTest extends AbstractFullDistribZkTestBase {
     assertEquals("Shard1 is not active", Slice.ACTIVE, slice1.getState());
     assertEquals("Shard2 is not active", Slice.ACTIVE, slice2.getState());
 
-    setSliceAsInactive(SHARD1);
+    try {
+      deleteShard(SHARD1);
+      fail("Deleting an active shard should not have succeeded");
+    } catch (HttpSolrServer.RemoteSolrException e) {
+      // expected
+    }
+
+    setSliceState(SHARD1, Slice.INACTIVE);
 
     clusterState = cloudClient.getZkStateReader().getClusterState();
 
@@ -102,6 +108,10 @@ public class DeleteShardTest extends AbstractFullDistribZkTestBase {
     deleteShard(SHARD1);
 
     confirmShardDeletion(SHARD1);
+
+    setSliceState(SHARD2, Slice.CONSTRUCTION);
+    deleteShard(SHARD2);
+    confirmShardDeletion(SHARD2);
   }
 
   protected void confirmShardDeletion(String shard) throws SolrServerException, KeeperException,
@@ -140,14 +150,15 @@ public class DeleteShardTest extends AbstractFullDistribZkTestBase {
     baseServer.setConnectionTimeout(15000);
     baseServer.setSoTimeout(60000);
     baseServer.request(request);
+    baseServer.shutdown();
   }
 
-  protected void setSliceAsInactive(String slice) throws SolrServerException, IOException,
+  protected void setSliceState(String slice, String state) throws SolrServerException, IOException,
       KeeperException, InterruptedException {
     DistributedQueue inQueue = Overseer.getInQueue(cloudClient.getZkStateReader().getZkClient());
-    Map<String, Object> propMap = new HashMap<String, Object>();
-    propMap.put(Overseer.QUEUE_OPERATION, "updateshardstate");
-    propMap.put(slice, Slice.INACTIVE);
+    Map<String, Object> propMap = new HashMap<>();
+    propMap.put(Overseer.QUEUE_OPERATION, Overseer.OverseerAction.UPDATESHARDSTATE.toLower());
+    propMap.put(slice, state);
     propMap.put(ZkStateReader.COLLECTION_PROP, "collection1");
     ZkNodeProps m = new ZkNodeProps(propMap);
     ZkStateReader zkStateReader = cloudClient.getZkStateReader();
@@ -158,7 +169,7 @@ public class DeleteShardTest extends AbstractFullDistribZkTestBase {
       zkStateReader.updateClusterState(true);
       ClusterState clusterState = zkStateReader.getClusterState();
       String sliceState = clusterState.getSlice("collection1", slice).getState();
-      if (sliceState.equals(Slice.INACTIVE)) {
+      if (sliceState.equals(state)) {
         transition = true;
         break;
       }
@@ -166,7 +177,7 @@ public class DeleteShardTest extends AbstractFullDistribZkTestBase {
     }
 
     if (!transition) {
-      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Could not set shard [" + slice + "] as INACTIVE");
+      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Could not set shard [" + slice + "] as " + state);
     }
   }
 

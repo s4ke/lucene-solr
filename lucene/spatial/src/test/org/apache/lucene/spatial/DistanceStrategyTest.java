@@ -17,31 +17,33 @@ package org.apache.lucene.spatial;
  * limitations under the License.
  */
 
-import com.carrotsearch.randomizedtesting.annotations.Name;
-import com.carrotsearch.randomizedtesting.annotations.ParametersFactory;
-import com.spatial4j.core.context.SpatialContext;
-import com.spatial4j.core.shape.Point;
-import com.spatial4j.core.shape.Shape;
-import org.apache.lucene.document.Document;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+import org.apache.lucene.document.FieldType;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.spatial.bbox.BBoxStrategy;
 import org.apache.lucene.spatial.prefix.RecursivePrefixTreeStrategy;
 import org.apache.lucene.spatial.prefix.TermQueryPrefixTreeStrategy;
 import org.apache.lucene.spatial.prefix.tree.GeohashPrefixTree;
 import org.apache.lucene.spatial.prefix.tree.QuadPrefixTree;
 import org.apache.lucene.spatial.prefix.tree.SpatialPrefixTree;
+import org.apache.lucene.spatial.serialized.SerializedDVStrategy;
 import org.apache.lucene.spatial.vector.PointVectorStrategy;
 import org.junit.Test;
-
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import com.carrotsearch.randomizedtesting.annotations.Name;
+import com.carrotsearch.randomizedtesting.annotations.ParametersFactory;
+import com.spatial4j.core.context.SpatialContext;
+import com.spatial4j.core.shape.Point;
+import com.spatial4j.core.shape.Shape;
 
 public class DistanceStrategyTest extends StrategyTestCase {
 
   @ParametersFactory
   public static Iterable<Object[]> parameters() {
-    List<Object[]> ctorArgs = new ArrayList<Object[]>();
+    List<Object[]> ctorArgs = new ArrayList<>();
 
     SpatialContext ctx = SpatialContext.GEO;
     SpatialPrefixTree grid;
@@ -59,6 +61,9 @@ public class DistanceStrategyTest extends StrategyTestCase {
     ctorArgs.add(new Object[]{new Param(strategy)});
 
     strategy = new BBoxStrategy(ctx, "bbox");
+    ctorArgs.add(new Object[]{new Param(strategy)});
+
+    strategy = new SerializedDVStrategy(ctx, "serialized");
     ctorArgs.add(new Object[]{new Param(strategy)});
 
     return ctorArgs;
@@ -86,15 +91,34 @@ public class DistanceStrategyTest extends StrategyTestCase {
     this.strategy = strategy;
   }
 
+  @Override
+  public void setUp() throws Exception {
+    super.setUp();
+    if (strategy instanceof BBoxStrategy && random().nextBoolean()) {//disable indexing sometimes
+      BBoxStrategy bboxStrategy = (BBoxStrategy)strategy;
+      final FieldType fieldType = new FieldType(bboxStrategy.getFieldType());
+      fieldType.setIndexOptions(IndexOptions.NONE);
+      bboxStrategy.setFieldType(fieldType);
+    }
+  }
+
+  @Override
+  protected boolean needsDocValues() {
+    return true;
+  }
+
   @Test
   public void testDistanceOrder() throws IOException {
-    adoc("100", ctx.makePoint(2,1));
-    adoc("101", ctx.makePoint(-1,4));
+    adoc("100", ctx.makePoint(2, 1));
+    adoc("101", ctx.makePoint(-1, 4));
     adoc("103", (Shape)null);//test score for nothing
+    adoc("999", ctx.makePoint(2, 1));//test deleted
+    commit();
+    deleteDoc("999");
     commit();
     //FYI distances are in docid order
-    checkDistValueSource("3,4", 2.8274937f, 5.0898066f, 180f);
-    checkDistValueSource("4,0", 3.6043684f, 0.9975641f, 180f);
+    checkDistValueSource(ctx.makePoint(4, 3), 2.8274937f, 5.0898066f, 180f);
+    checkDistValueSource(ctx.makePoint(0, 4), 3.6043684f, 0.9975641f, 180f);
   }
 
   @Test
@@ -104,6 +128,9 @@ public class DistanceStrategyTest extends StrategyTestCase {
     Point p101 = ctx.makePoint(-1, 4);
     adoc("101", p101);
     adoc("103", (Shape)null);//test score for nothing
+    adoc("999", ctx.makePoint(2, 1));//test deleted
+    commit();
+    deleteDoc("999");
     commit();
 
     double dist = ctx.getDistCalc().distance(p100, p101);
@@ -112,16 +139,7 @@ public class DistanceStrategyTest extends StrategyTestCase {
         new float[]{1.00f, 0.10f, 0f}, 0.09f);
   }
 
-  @Override
-  protected Document newDoc(String id, Shape shape) {
-    //called by adoc().  Make compatible with BBoxStrategy.
-    if (shape != null && strategy instanceof BBoxStrategy)
-      shape = ctx.makeRectangle(shape.getCenter(), shape.getCenter());
-    return super.newDoc(id, shape);
-  }
-
-  void checkDistValueSource(String ptStr, float... distances) throws IOException {
-    Point pt = (Point) ctx.readShape(ptStr);
+  void checkDistValueSource(Point pt, float... distances) throws IOException {
     float multiplier = random().nextFloat() * 100f;
     float[] dists2 = Arrays.copyOf(distances, distances.length);
     for (int i = 0; i < dists2.length; i++) {

@@ -17,9 +17,9 @@
 
 package org.apache.solr.handler.admin;
 
-import java.io.DataInputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.management.ManagementFactory;
 import java.lang.management.OperatingSystemMXBean;
@@ -92,6 +92,9 @@ public class SystemInfoHandler extends RequestHandlerBase
     if (core != null) rsp.add( "core", getCoreInfo( core, req.getSchema() ) );
     boolean solrCloudMode =  getCoreContainer(req, core).isZooKeeperAware();
     rsp.add( "mode", solrCloudMode ? "solrcloud" : "std");
+    if (solrCloudMode) {
+      rsp.add("zkHost", getCoreContainer(req, core).getZkController().getZkServerAddress());
+    }
     rsp.add( "lucene", getLuceneInfo() );
     rsp.add( "jvm", getJvmInfo() );
     rsp.add( "system", getSystemInfo() );
@@ -112,7 +115,7 @@ public class SystemInfoHandler extends RequestHandlerBase
    * Get system info
    */
   private SimpleOrderedMap<Object> getCoreInfo( SolrCore core, IndexSchema schema ) {
-    SimpleOrderedMap<Object> info = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> info = new SimpleOrderedMap<>();
     
     info.add( "schema", schema != null ? schema.getSchemaName():"no schema!" );
     
@@ -126,7 +129,7 @@ public class SystemInfoHandler extends RequestHandlerBase
     info.add( "start", new Date(core.getStartTime()) );
 
     // Solr Home
-    SimpleOrderedMap<Object> dirs = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> dirs = new SimpleOrderedMap<>();
     dirs.add( "cwd" , new File( System.getProperty("user.dir")).getAbsolutePath() );
     dirs.add( "instance", new File( core.getResourceLoader().getInstanceDir() ).getAbsolutePath() );
     try {
@@ -150,7 +153,7 @@ public class SystemInfoHandler extends RequestHandlerBase
    * Get system info
    */
   public static SimpleOrderedMap<Object> getSystemInfo() {
-    SimpleOrderedMap<Object> info = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> info = new SimpleOrderedMap<>();
     
     OperatingSystemMXBean os = ManagementFactory.getOperatingSystemMXBean();
     info.add( "name", os.getName() );
@@ -213,20 +216,24 @@ public class SystemInfoHandler extends RequestHandlerBase
    */
   private static String execute( String cmd )
   {
-    DataInputStream in = null;
+    InputStream in = null;
     Process process = null;
     
     try {
       process = Runtime.getRuntime().exec(cmd);
-      in = new DataInputStream( process.getInputStream() );
+      in = process.getInputStream();
       // use default charset from locale here, because the command invoked also uses the default locale:
       return IOUtils.toString(new InputStreamReader(in, Charset.defaultCharset()));
-    }
-    catch( Exception ex ) {
+    } catch( Exception ex ) {
       // ignore - log.warn("Error executing command", ex);
       return "(error executing: " + cmd + ")";
-    }
-    finally {
+    } catch (Error err) {
+      if (err.getMessage() != null && (err.getMessage().contains("posix_spawn") || err.getMessage().contains("UNIXProcess"))) {
+        log.warn("Error forking command due to JVM locale bug (see https://issues.apache.org/jira/browse/SOLR-6387): " + err.getMessage());
+        return "(error executing: " + cmd + ")";
+      }
+      throw err;
+    } finally {
       if (process != null) {
         IOUtils.closeQuietly( process.getOutputStream() );
         IOUtils.closeQuietly( process.getInputStream() );
@@ -240,7 +247,7 @@ public class SystemInfoHandler extends RequestHandlerBase
    */
   public static SimpleOrderedMap<Object> getJvmInfo()
   {
-    SimpleOrderedMap<Object> jvm = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> jvm = new SimpleOrderedMap<>();
 
     final String javaVersion = System.getProperty("java.specification.version", "unknown"); 
     final String javaVendor = System.getProperty("java.specification.vendor", "unknown"); 
@@ -256,16 +263,16 @@ public class SystemInfoHandler extends RequestHandlerBase
     jvm.add( "name", jreVendor + " " + vmName );
     
     // details
-    SimpleOrderedMap<Object> java = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> java = new SimpleOrderedMap<>();
     java.add( "vendor", javaVendor );
     java.add( "name", javaName );
     java.add( "version", javaVersion );
     jvm.add( "spec", java );
-    SimpleOrderedMap<Object> jre = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> jre = new SimpleOrderedMap<>();
     jre.add( "vendor", jreVendor );
     jre.add( "version", jreVersion );
     jvm.add( "jre", jre );
-    SimpleOrderedMap<Object> vm = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> vm = new SimpleOrderedMap<>();
     vm.add( "vendor", vmVendor );
     vm.add( "name", vmName );
     vm.add( "version", vmVersion );
@@ -278,8 +285,8 @@ public class SystemInfoHandler extends RequestHandlerBase
     // not thread safe, but could be thread local
     DecimalFormat df = new DecimalFormat("#.#", DecimalFormatSymbols.getInstance(Locale.ROOT));
 
-    SimpleOrderedMap<Object> mem = new SimpleOrderedMap<Object>();
-    SimpleOrderedMap<Object> raw = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> mem = new SimpleOrderedMap<>();
+    SimpleOrderedMap<Object> raw = new SimpleOrderedMap<>();
     long free = runtime.freeMemory();
     long max = runtime.maxMemory();
     long total = runtime.totalMemory();
@@ -300,7 +307,7 @@ public class SystemInfoHandler extends RequestHandlerBase
     jvm.add("memory", mem);
 
     // JMX properties -- probably should be moved to a different handler
-    SimpleOrderedMap<Object> jmx = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> jmx = new SimpleOrderedMap<>();
     try{
       RuntimeMXBean mx = ManagementFactory.getRuntimeMXBean();
       jmx.add( "bootclasspath", mx.getBootClassPath());
@@ -322,7 +329,7 @@ public class SystemInfoHandler extends RequestHandlerBase
   }
   
   private static SimpleOrderedMap<Object> getLuceneInfo() {
-    SimpleOrderedMap<Object> info = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> info = new SimpleOrderedMap<>();
 
     Package p = SolrCore.class.getPackage();
 
@@ -342,11 +349,6 @@ public class SystemInfoHandler extends RequestHandlerBase
   @Override
   public String getDescription() {
     return "Get System Info";
-  }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
   }
   
   private static final long ONE_KB = 1024;

@@ -18,7 +18,6 @@ package org.apache.lucene.queryparser.analyzing;
  */
 
 import java.io.IOException;
-import java.io.Reader;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -35,6 +34,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.queryparser.classic.ParseException;
 import org.apache.lucene.queryparser.classic.QueryParser;
@@ -42,11 +42,9 @@ import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 
 /**
  */
-@SuppressCodecs("Lucene3x") // binary terms
 public class TestAnalyzingQueryParser extends LuceneTestCase {
   private final static String FIELD = "field";
    
@@ -61,8 +59,8 @@ public class TestAnalyzingQueryParser extends LuceneTestCase {
   private String[] fuzzyInput;
   private String[] fuzzyExpected;
 
-  private Map<String, String> wildcardEscapeHits = new TreeMap<String, String>();
-  private Map<String, String> wildcardEscapeMisses = new TreeMap<String, String>();
+  private Map<String, String> wildcardEscapeHits = new TreeMap<>();
+  private Map<String, String> wildcardEscapeMisses = new TreeMap<>();
 
   @Override
   public void setUp() throws Exception {
@@ -120,7 +118,7 @@ public class TestAnalyzingQueryParser extends LuceneTestCase {
     assertEquals("Should have returned nothing", true, ex);
     ex = false;
      
-    AnalyzingQueryParser qp = new AnalyzingQueryParser(TEST_VERSION_CURRENT, FIELD, a);
+    AnalyzingQueryParser qp = new AnalyzingQueryParser(FIELD, a);
     try{
       qp.analyzeSingleChunk(FIELD, "", "not a single chunk");
     } catch (ParseException e){
@@ -212,7 +210,7 @@ public class TestAnalyzingQueryParser extends LuceneTestCase {
   }
 
   private Query getAnalyzedQuery(String s, Analyzer a, boolean allowLeadingWildcard) throws ParseException {
-    AnalyzingQueryParser qp = new AnalyzingQueryParser(TEST_VERSION_CURRENT, FIELD, a);
+    AnalyzingQueryParser qp = new AnalyzingQueryParser(FIELD, a);
     qp.setAllowLeadingWildcard(allowLeadingWildcard);
     org.apache.lucene.search.Query q = qp.parse(s);
     return q;
@@ -264,7 +262,7 @@ public class TestAnalyzingQueryParser extends LuceneTestCase {
   public void testByteTerms() throws Exception {
     String s = "เข";
     Analyzer analyzer = new MockBytesAnalyzer();
-    QueryParser qp = new AnalyzingQueryParser(TEST_VERSION_CURRENT, FIELD, analyzer);
+    QueryParser qp = new AnalyzingQueryParser(FIELD, analyzer);
     Query q = qp.parse("[เข TO เข]");
     assertEquals(true, isAHit(q, s, analyzer));
   }
@@ -275,7 +273,7 @@ public class TestAnalyzingQueryParser extends LuceneTestCase {
     RandomIndexWriter writer = new RandomIndexWriter(random(), ramDir, analyzer);
     Document doc = new Document();
     FieldType fieldType = new FieldType();
-    fieldType.setIndexed(true);
+    fieldType.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS);
     fieldType.setTokenized(true);
     fieldType.setStored(true);
     Field field = new Field(FIELD, content, fieldType);

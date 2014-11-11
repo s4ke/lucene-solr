@@ -28,34 +28,35 @@ import java.util.Set;
 
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.MultiReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.SlowCompositeReaderWrapper;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BitDocIdSet;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 public class TermsFilterTest extends LuceneTestCase {
 
   public void testCachability() throws Exception {
     TermsFilter a = termsFilter(random().nextBoolean(), new Term("field1", "a"), new Term("field1", "b"));
-    HashSet<Filter> cachedFilters = new HashSet<Filter>();
+    HashSet<Filter> cachedFilters = new HashSet<>();
     cachedFilters.add(a);
     TermsFilter b = termsFilter(random().nextBoolean(), new Term("field1", "b"), new Term("field1", "a"));
     assertTrue("Must be cached", cachedFilters.contains(b));
@@ -75,26 +76,26 @@ public class TermsFilterTest extends LuceneTestCase {
       w.addDocument(doc);
     }
     IndexReader reader = SlowCompositeReaderWrapper.wrap(w.getReader());
-    assertTrue(reader.getContext() instanceof AtomicReaderContext);
-    AtomicReaderContext context = (AtomicReaderContext) reader.getContext();
+    assertTrue(reader.getContext() instanceof LeafReaderContext);
+    LeafReaderContext context = (LeafReaderContext) reader.getContext();
     w.close();
 
-    List<Term> terms = new ArrayList<Term>();
+    List<Term> terms = new ArrayList<>();
     terms.add(new Term(fieldName, "19"));
-    FixedBitSet bits = (FixedBitSet) termsFilter(random().nextBoolean(), terms).getDocIdSet(context, context.reader().getLiveDocs());
+    BitDocIdSet bits = (BitDocIdSet) termsFilter(random().nextBoolean(), terms).getDocIdSet(context, context.reader().getLiveDocs());
     assertNull("Must match nothing", bits);
 
     terms.add(new Term(fieldName, "20"));
-    bits = (FixedBitSet) termsFilter(random().nextBoolean(), terms).getDocIdSet(context, context.reader().getLiveDocs());
-    assertEquals("Must match 1", 1, bits.cardinality());
+    bits = (BitDocIdSet) termsFilter(random().nextBoolean(), terms).getDocIdSet(context, context.reader().getLiveDocs());
+    assertEquals("Must match 1", 1, bits.bits().cardinality());
 
     terms.add(new Term(fieldName, "10"));
-    bits = (FixedBitSet) termsFilter(random().nextBoolean(), terms).getDocIdSet(context, context.reader().getLiveDocs());
-    assertEquals("Must match 2", 2, bits.cardinality());
+    bits = (BitDocIdSet) termsFilter(random().nextBoolean(), terms).getDocIdSet(context, context.reader().getLiveDocs());
+    assertEquals("Must match 2", 2, bits.bits().cardinality());
 
     terms.add(new Term(fieldName, "00"));
-    bits = (FixedBitSet) termsFilter(random().nextBoolean(), terms).getDocIdSet(context, context.reader().getLiveDocs());
-    assertEquals("Must match 2", 2, bits.cardinality());
+    bits = (BitDocIdSet) termsFilter(random().nextBoolean(), terms).getDocIdSet(context, context.reader().getLiveDocs());
+    assertEquals("Must match 2", 2, bits.bits().cardinality());
 
     reader.close();
     rd.close();
@@ -121,13 +122,13 @@ public class TermsFilterTest extends LuceneTestCase {
     
     TermsFilter tf = new TermsFilter(new Term(fieldName, "content1"));
     MultiReader multi = new MultiReader(reader1, reader2);
-    for (AtomicReaderContext context : multi.leaves()) {
+    for (LeafReaderContext context : multi.leaves()) {
       DocIdSet docIdSet = tf.getDocIdSet(context, context.reader().getLiveDocs());
       if (context.reader().docFreq(new Term(fieldName, "content1")) == 0) {
         assertNull(docIdSet);
       } else {
-        FixedBitSet bits = (FixedBitSet) docIdSet;
-        assertTrue("Must be >= 0", bits.cardinality() >= 0);      
+        BitDocIdSet bits = (BitDocIdSet) docIdSet;
+        assertTrue("Must be >= 0", bits.bits().cardinality() >= 0);      
       }
     }
     multi.close();
@@ -142,7 +143,7 @@ public class TermsFilterTest extends LuceneTestCase {
     RandomIndexWriter w = new RandomIndexWriter(random(), dir);
     int num = atLeast(3);
     int skip = random().nextInt(num);
-    List<Term> terms = new ArrayList<Term>();
+    List<Term> terms = new ArrayList<>();
     for (int i = 0; i < num; i++) {
       terms.add(new Term("field" + i, "content1"));
       Document doc = new Document();
@@ -160,11 +161,11 @@ public class TermsFilterTest extends LuceneTestCase {
     
     
     
-    AtomicReaderContext context = reader.leaves().get(0);
+    LeafReaderContext context = reader.leaves().get(0);
     TermsFilter tf = new TermsFilter(terms);
 
-    FixedBitSet bits = (FixedBitSet) tf.getDocIdSet(context, context.reader().getLiveDocs());
-    assertEquals("Must be num fields - 1 since we skip only one field", num-1, bits.cardinality());  
+    BitDocIdSet bits = (BitDocIdSet) tf.getDocIdSet(context, context.reader().getLiveDocs());
+    assertEquals("Must be num fields - 1 since we skip only one field", num-1, bits.bits().cardinality());  
     reader.close();
     dir.close();
   }
@@ -173,7 +174,7 @@ public class TermsFilterTest extends LuceneTestCase {
     Directory dir = newDirectory();
     RandomIndexWriter w = new RandomIndexWriter(random(), dir);
     int num = atLeast(10);
-    Set<Term> terms = new HashSet<Term>();
+    Set<Term> terms = new HashSet<>();
     for (int i = 0; i < num; i++) {
       String field = "field" + random().nextInt(100);
       terms.add(new Term(field, "content1"));
@@ -196,11 +197,11 @@ public class TermsFilterTest extends LuceneTestCase {
     IndexReader reader = w.getReader();
     w.close();
     assertEquals(1, reader.leaves().size());
-    AtomicReaderContext context = reader.leaves().get(0);
-    TermsFilter tf = new TermsFilter(new ArrayList<Term>(terms));
+    LeafReaderContext context = reader.leaves().get(0);
+    TermsFilter tf = new TermsFilter(new ArrayList<>(terms));
 
-    FixedBitSet bits = (FixedBitSet) tf.getDocIdSet(context, context.reader().getLiveDocs());
-    assertEquals(context.reader().numDocs(), bits.cardinality());  
+    BitDocIdSet bits = (BitDocIdSet) tf.getDocIdSet(context, context.reader().getLiveDocs());
+    assertEquals(context.reader().numDocs(), bits.bits().cardinality());  
     reader.close();
     dir.close();
   }
@@ -210,10 +211,10 @@ public class TermsFilterTest extends LuceneTestCase {
     RandomIndexWriter w = new RandomIndexWriter(random(), dir);
     int num = atLeast(100);
     final boolean singleField = random().nextBoolean();
-    List<Term> terms = new ArrayList<Term>();
+    List<Term> terms = new ArrayList<>();
     for (int i = 0; i < num; i++) {
       String field = "field" + (singleField ? "1" : random().nextInt(100));
-      String string = _TestUtil.randomRealisticUnicodeString(random());
+      String string = TestUtil.randomRealisticUnicodeString(random());
       terms.add(new Term(field, string));
       Document doc = new Document();
       doc.add(newStringField(field, string, Field.Store.YES));
@@ -255,10 +256,10 @@ public class TermsFilterTest extends LuceneTestCase {
 
   private TermsFilter termsFilter(boolean singleField, Collection<Term> termList) {
     if (!singleField) {
-      return new TermsFilter(new ArrayList<Term>(termList));
+      return new TermsFilter(new ArrayList<>(termList));
     }
     final TermsFilter filter;
-    List<BytesRef> bytes = new ArrayList<BytesRef>();
+    List<BytesRef> bytes = new ArrayList<>();
     String field = null;
     for (Term term : termList) {
         bytes.add(term.bytes());
@@ -275,11 +276,11 @@ public class TermsFilterTest extends LuceneTestCase {
   public void testHashCodeAndEquals() {
     int num = atLeast(100);
     final boolean singleField = random().nextBoolean();
-    List<Term> terms = new ArrayList<Term>();
-    Set<Term> uniqueTerms = new HashSet<Term>();
+    List<Term> terms = new ArrayList<>();
+    Set<Term> uniqueTerms = new HashSet<>();
     for (int i = 0; i < num; i++) {
       String field = "field" + (singleField ? "1" : random().nextInt(100));
-      String string = _TestUtil.randomRealisticUnicodeString(random());
+      String string = TestUtil.randomRealisticUnicodeString(random());
       terms.add(new Term(field, string));
       uniqueTerms.add(new Term(field, string));
       TermsFilter left = termsFilter(singleField ? random().nextBoolean() : false, uniqueTerms);
@@ -288,7 +289,7 @@ public class TermsFilterTest extends LuceneTestCase {
       assertEquals(right, left);
       assertEquals(right.hashCode(), left.hashCode());
       if (uniqueTerms.size() > 1) {
-        List<Term> asList = new ArrayList<Term>(uniqueTerms);
+        List<Term> asList = new ArrayList<>(uniqueTerms);
         asList.remove(0);
         TermsFilter notEqual = termsFilter(singleField ? random().nextBoolean() : false, asList);
         assertFalse(left.equals(notEqual));
@@ -296,7 +297,15 @@ public class TermsFilterTest extends LuceneTestCase {
       }
     }
   }
-  
+
+  public void testSingleFieldEquals() {
+    // Two terms with the same hash code
+    assertEquals("AaAaBB".hashCode(), "BBBBBB".hashCode());
+    TermsFilter left = termsFilter(true, new Term("id", "AaAaAa"), new Term("id", "AaAaBB"));
+    TermsFilter right = termsFilter(true, new Term("id", "AaAaAa"), new Term("id", "BBBBBB"));
+    assertFalse(left.equals(right));
+  }
+
   public void testNoTerms() {
     List<Term> emptyTerms = Collections.emptyList();
     List<BytesRef> emptyBytesRef = Collections.emptyList();

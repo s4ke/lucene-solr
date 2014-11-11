@@ -18,8 +18,10 @@
 package org.apache.solr.client.solrj.response;
 
 import junit.framework.Assert;
+
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.solr.client.solrj.impl.XMLResponseParser;
+import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.util.DateUtil;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.SolrResourceLoader;
@@ -28,6 +30,7 @@ import org.junit.Test;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
@@ -41,7 +44,7 @@ public class QueryResponseTest extends LuceneTestCase {
     XMLResponseParser parser = new XMLResponseParser();
     InputStream is = new SolrResourceLoader(null, null).openResource("solrj/sampleDateFacetResponse.xml");
     assertNotNull(is);
-    Reader in = new InputStreamReader(is, "UTF-8");
+    Reader in = new InputStreamReader(is, StandardCharsets.UTF_8);
     NamedList<Object> response = parser.processResponse(in);
     in.close();
     
@@ -65,7 +68,7 @@ public class QueryResponseTest extends LuceneTestCase {
     XMLResponseParser parser = new XMLResponseParser();
     InputStream is = new SolrResourceLoader(null, null).openResource("solrj/sampleDateFacetResponse.xml");
     assertNotNull(is);
-    Reader in = new InputStreamReader(is, "UTF-8");
+    Reader in = new InputStreamReader(is, StandardCharsets.UTF_8);
     NamedList<Object> response = parser.processResponse(in);
     in.close();
 
@@ -122,7 +125,7 @@ public class QueryResponseTest extends LuceneTestCase {
     XMLResponseParser parser = new XMLResponseParser();
     InputStream is = new SolrResourceLoader(null, null).openResource("solrj/sampleGroupResponse.xml");
     assertNotNull(is);
-    Reader in = new InputStreamReader(is, "UTF-8");
+    Reader in = new InputStreamReader(is, StandardCharsets.UTF_8);
     NamedList<Object> response = parser.processResponse(in);
     in.close();
 
@@ -217,6 +220,91 @@ public class QueryResponseTest extends LuceneTestCase {
     assertEquals("country:fr", queryCommandGroups.get(0).getGroupValue());
     assertEquals(2, queryCommandGroups.get(0).getResult().size());
     assertEquals(57074, queryCommandGroups.get(0).getResult().getNumFound());
+  }
+
+  @Test
+  public void testSimpleGroupResponse() throws Exception {
+    XMLResponseParser parser = new XMLResponseParser();
+    InputStream is = new SolrResourceLoader(null, null).openResource("solrj/sampleSimpleGroupResponse.xml");
+    assertNotNull(is);
+    Reader in = new InputStreamReader(is, StandardCharsets.UTF_8);
+    NamedList<Object> response = parser.processResponse(in);
+    in.close();
+
+    QueryResponse qr = new QueryResponse(response, null);
+    assertNotNull(qr);
+    GroupResponse groupResponse = qr.getGroupResponse();
+    assertNotNull(groupResponse);
+    List<GroupCommand> commands = groupResponse.getValues();
+    assertNotNull(commands);
+    assertEquals(1, commands.size());
+
+    GroupCommand fieldCommand = commands.get(0);
+    assertEquals("acco_id", fieldCommand.getName());
+    assertEquals(30000000, fieldCommand.getMatches());
+    assertEquals(5687, fieldCommand.getNGroups().intValue());
+    List<Group> fieldCommandGroups = fieldCommand.getValues();
+    assertEquals(1, fieldCommandGroups.size());
+    
+    assertEquals("acco_id", fieldCommandGroups.get(0).getGroupValue());
+    SolrDocumentList documents = fieldCommandGroups.get(0).getResult();
+    assertNotNull(documents);
+    
+    assertEquals(10, documents.size());
+    assertEquals("116_AR", documents.get(0).getFieldValue("acco_id"));
+    assertEquals("116_HI", documents.get(1).getFieldValue("acco_id"));
+    assertEquals("953_AR", documents.get(2).getFieldValue("acco_id"));
+    assertEquals("953_HI", documents.get(3).getFieldValue("acco_id"));
+    assertEquals("954_AR", documents.get(4).getFieldValue("acco_id"));
+    assertEquals("954_HI", documents.get(5).getFieldValue("acco_id"));
+    assertEquals("546_AR", documents.get(6).getFieldValue("acco_id"));
+    assertEquals("546_HI", documents.get(7).getFieldValue("acco_id"));
+    assertEquals("708_AR", documents.get(8).getFieldValue("acco_id"));
+    assertEquals("708_HI", documents.get(9).getFieldValue("acco_id"));
+  }
+  
+  
+  public void testIntervalFacetsResponse() throws Exception {
+    XMLResponseParser parser = new XMLResponseParser();
+    try(SolrResourceLoader loader = new SolrResourceLoader(null, null)) {
+      InputStream is = loader.openResource("solrj/sampleIntervalFacetsResponse.xml");
+      assertNotNull(is);
+      Reader in = new InputStreamReader(is, StandardCharsets.UTF_8);
+      NamedList<Object> response = parser.processResponse(in);
+      in.close();
+      
+      QueryResponse qr = new QueryResponse(response, null);
+      assertNotNull(qr);
+      assertNotNull(qr.getIntervalFacets());
+      assertEquals(2, qr.getIntervalFacets().size());
+      
+      IntervalFacet facet = qr.getIntervalFacets().get(0);
+      assertEquals("price", facet.getField());
+      assertEquals(3, facet.getIntervals().size());
+      
+      assertEquals("[0,10]", facet.getIntervals().get(0).getKey());
+      assertEquals("(10,100]", facet.getIntervals().get(1).getKey());
+      assertEquals("(100,*]", facet.getIntervals().get(2).getKey());
+      
+      assertEquals(3, facet.getIntervals().get(0).getCount());
+      assertEquals(4, facet.getIntervals().get(1).getCount());
+      assertEquals(9, facet.getIntervals().get(2).getCount());
+      
+      
+      facet = qr.getIntervalFacets().get(1);
+      assertEquals("popularity", facet.getField());
+      assertEquals(3, facet.getIntervals().size());
+      
+      assertEquals("bad", facet.getIntervals().get(0).getKey());
+      assertEquals("average", facet.getIntervals().get(1).getKey());
+      assertEquals("good", facet.getIntervals().get(2).getKey());
+      
+      assertEquals(3, facet.getIntervals().get(0).getCount());
+      assertEquals(10, facet.getIntervals().get(1).getCount());
+      assertEquals(2, facet.getIntervals().get(2).getCount());
+      
+    }
+    
   }
 
 }

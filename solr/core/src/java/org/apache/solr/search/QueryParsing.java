@@ -34,6 +34,7 @@ import org.apache.lucene.search.TermRangeQuery;
 import org.apache.lucene.search.WildcardQuery;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.CharsRef;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.MapSolrParams;
 import org.apache.solr.common.params.SolrParams;
@@ -42,6 +43,7 @@ import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.schema.FieldType;
 import org.apache.solr.schema.IndexSchema;
 import org.apache.solr.schema.SchemaField;
+
 import java.io.IOException;
 import java.util.Collections;
 import java.util.ArrayList;
@@ -207,7 +209,7 @@ public class QueryParsing {
     if (txt == null || !txt.startsWith(LOCALPARAM_START)) {
       return null;
     }
-    Map<String, String> localParams = new HashMap<String, String>();
+    Map<String, String> localParams = new HashMap<>();
     int start = QueryParsing.parseLocalParams(txt, 0, localParams, params);
 
     String val = localParams.get(V);
@@ -255,8 +257,8 @@ public class QueryParsing {
   public static SortSpec parseSortSpec(String sortSpec, SolrQueryRequest req) {
     if (sortSpec == null || sortSpec.length() == 0) return newEmptySortSpec();
 
-    List<SortField> sorts = new ArrayList<SortField>(4);
-    List<SchemaField> fields = new ArrayList<SchemaField>(4);
+    List<SortField> sorts = new ArrayList<>(4);
+    List<SchemaField> fields = new ArrayList<>(4);
 
     try {
 
@@ -421,9 +423,9 @@ public class QueryParsing {
   static void writeFieldVal(BytesRef val, FieldType ft, Appendable out, int flags) throws IOException {
     if (ft != null) {
       try {
-        CharsRef readable = new CharsRef();
+        CharsRefBuilder readable = new CharsRefBuilder();
         ft.indexedToReadable(val, readable);
-        out.append(readable);
+        out.append(readable.get());
       } catch (Exception e) {
         out.append("EXCEPTION(val=");
         out.append(val.utf8ToString());
@@ -920,7 +922,7 @@ public class QueryParsing {
    * Builds a list of String which are stringified versions of a list of Queries
    */
   public static List<String> toString(List<Query> queries, IndexSchema schema) {
-    List<String> out = new ArrayList<String>(queries.size());
+    List<String> out = new ArrayList<>(queries.size());
     for (Query q : queries) {
       out.add(QueryParsing.toString(q, schema));
     }

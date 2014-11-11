@@ -28,14 +28,14 @@ import java.util.TreeSet;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.TermVectorsReader;
 import org.apache.lucene.codecs.TermVectorsWriter;
-import org.apache.lucene.index.AtomicReader;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.Fields;
 import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.MergeState;
 import org.apache.lucene.index.SegmentInfo;
-import org.apache.lucene.index.SegmentReader;
+import org.apache.lucene.store.BufferedChecksumIndexInput;
+import org.apache.lucene.store.ChecksumIndexInput;
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
@@ -92,7 +92,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     final int posStart, offStart, payStart;
     DocData(int numFields, int posStart, int offStart, int payStart) {
       this.numFields = numFields;
-      this.fields = new ArrayDeque<FieldData>(numFields);
+      this.fields = new ArrayDeque<>(numFields);
       this.posStart = posStart;
       this.offStart = offStart;
       this.payStart = payStart;
@@ -214,22 +214,24 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     this.chunkSize = chunkSize;
 
     numDocs = 0;
-    pendingDocs = new ArrayDeque<DocData>();
+    pendingDocs = new ArrayDeque<>();
     termSuffixes = new GrowableByteArrayDataOutput(ArrayUtil.oversize(chunkSize, 1));
     payloadBytes = new GrowableByteArrayDataOutput(ArrayUtil.oversize(1, 1));
     lastTerm = new BytesRef(ArrayUtil.oversize(30, 1));
 
     boolean success = false;
-    IndexOutput indexStream = directory.createOutput(IndexFileNames.segmentFileName(segment, segmentSuffix, VECTORS_INDEX_EXTENSION), context);
+    IndexOutput indexStream = directory.createOutput(IndexFileNames.segmentFileName(segment, segmentSuffix, VECTORS_INDEX_EXTENSION), 
+                                                                     context);
     try {
-      vectorsStream = directory.createOutput(IndexFileNames.segmentFileName(segment, segmentSuffix, VECTORS_EXTENSION), context);
+      vectorsStream = directory.createOutput(IndexFileNames.segmentFileName(segment, segmentSuffix, VECTORS_EXTENSION),
+                                                     context);
 
       final String codecNameIdx = formatName + CODEC_SFX_IDX;
       final String codecNameDat = formatName + CODEC_SFX_DAT;
-      CodecUtil.writeHeader(indexStream, codecNameIdx, VERSION_CURRENT);
-      CodecUtil.writeHeader(vectorsStream, codecNameDat, VERSION_CURRENT);
-      assert CodecUtil.headerLength(codecNameDat) == vectorsStream.getFilePointer();
-      assert CodecUtil.headerLength(codecNameIdx) == indexStream.getFilePointer();
+      CodecUtil.writeIndexHeader(indexStream, codecNameIdx, VERSION_CURRENT, si.getId(), segmentSuffix);
+      CodecUtil.writeIndexHeader(vectorsStream, codecNameDat, VERSION_CURRENT, si.getId(), segmentSuffix);
+      assert CodecUtil.indexHeaderLength(codecNameDat, segmentSuffix) == vectorsStream.getFilePointer();
+      assert CodecUtil.indexHeaderLength(codecNameIdx, segmentSuffix) == indexStream.getFilePointer();
 
       indexWriter = new CompressingStoredFieldsIndexWriter(indexStream);
       indexStream = null;
@@ -393,7 +395,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
 
   /** Returns a sorted array containing unique field numbers */
   private int[] flushFieldNums() throws IOException {
-    SortedSet<Integer> fieldNums = new TreeSet<Integer>();
+    SortedSet<Integer> fieldNums = new TreeSet<>();
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
         fieldNums.add(fd.fieldNum);
@@ -658,7 +660,8 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     if (numDocs != this.numDocs) {
       throw new RuntimeException("Wrote " + this.numDocs + " docs, finish called with numDocs=" + numDocs);
     }
-    indexWriter.finish(numDocs);
+    indexWriter.finish(numDocs, vectorsStream.getFilePointer());
+    CodecUtil.writeFooter(vectorsStream);
   }
 
   @Override
@@ -722,45 +725,62 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   @Override
   public int merge(MergeState mergeState) throws IOException {
     int docCount = 0;
-    int idx = 0;
+    int numReaders = mergeState.maxDocs.length;
 
-    for (AtomicReader reader : mergeState.readers) {
-      final SegmentReader matchingSegmentReader = mergeState.matchingSegmentReaders[idx++];
+    MatchingReaders matching = new MatchingReaders(mergeState);
+    
+    for (int readerIndex=0;readerIndex<numReaders;readerIndex++) {
       CompressingTermVectorsReader matchingVectorsReader = null;
-      if (matchingSegmentReader != null) {
-        final TermVectorsReader vectorsReader = matchingSegmentReader.getTermVectorsReader();
+      final TermVectorsReader vectorsReader = mergeState.termVectorsReaders[readerIndex];
+      if (matching.matchingReaders[readerIndex]) {
         // we can only bulk-copy if the matching reader is also a CompressingTermVectorsReader
         if (vectorsReader != null && vectorsReader instanceof CompressingTermVectorsReader) {
           matchingVectorsReader = (CompressingTermVectorsReader) vectorsReader;
         }
       }
 
-      final int maxDoc = reader.maxDoc();
-      final Bits liveDocs = reader.getLiveDocs();
+      final int maxDoc = mergeState.maxDocs[readerIndex];
+      final Bits liveDocs = mergeState.liveDocs[readerIndex];
 
       if (matchingVectorsReader == null
+          || matchingVectorsReader.getVersion() != VERSION_CURRENT
           || matchingVectorsReader.getCompressionMode() != compressionMode
           || matchingVectorsReader.getChunkSize() != chunkSize
           || matchingVectorsReader.getPackedIntsVersion() != PackedInts.VERSION_CURRENT) {
         // naive merge...
+        if (vectorsReader != null) {
+          vectorsReader.checkIntegrity();
+        }
         for (int i = nextLiveDoc(0, liveDocs, maxDoc); i < maxDoc; i = nextLiveDoc(i + 1, liveDocs, maxDoc)) {
-          final Fields vectors = reader.getTermVectors(i);
+          Fields vectors;
+          if (vectorsReader == null) {
+            vectors = null;
+          } else {
+            vectors = vectorsReader.get(i);
+          }
           addAllDocVectors(vectors, mergeState);
           ++docCount;
           mergeState.checkAbort.work(300);
         }
       } else {
         final CompressingStoredFieldsIndexReader index = matchingVectorsReader.getIndex();
-        final IndexInput vectorsStream = matchingVectorsReader.getVectorsStream();
+        final IndexInput vectorsStreamOrig = matchingVectorsReader.getVectorsStream();
+        vectorsStreamOrig.seek(0);
+        final ChecksumIndexInput vectorsStream = new BufferedChecksumIndexInput(vectorsStreamOrig.clone());
+        
         for (int i = nextLiveDoc(0, liveDocs, maxDoc); i < maxDoc; ) {
-          if (pendingDocs.isEmpty()
-              && (i == 0 || index.getStartPointer(i - 1) < index.getStartPointer(i))) { // start of a chunk
-            final long startPointer = index.getStartPointer(i);
+          // We make sure to move the checksum input in any case, otherwise the final
+          // integrity check might need to read the whole file a second time
+          final long startPointer = index.getStartPointer(i);
+          if (startPointer > vectorsStream.getFilePointer()) {
             vectorsStream.seek(startPointer);
+          }
+          if (pendingDocs.isEmpty()
+              && (i == 0 || index.getStartPointer(i - 1) < startPointer)) { // start of a chunk
             final int docBase = vectorsStream.readVInt();
             final int chunkDocs = vectorsStream.readVInt();
-            assert docBase + chunkDocs <= matchingSegmentReader.maxDoc();
-            if (docBase + chunkDocs < matchingSegmentReader.maxDoc()
+            assert docBase + chunkDocs <= maxDoc;
+            if (docBase + chunkDocs < maxDoc
                 && nextDeletedDoc(docBase, liveDocs, docBase + chunkDocs) == docBase + chunkDocs) {
               final long chunkEnd = index.getStartPointer(docBase + chunkDocs);
               final long chunkLength = chunkEnd - vectorsStream.getFilePointer();
@@ -774,23 +794,36 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
               i = nextLiveDoc(docBase + chunkDocs, liveDocs, maxDoc);
             } else {
               for (; i < docBase + chunkDocs; i = nextLiveDoc(i + 1, liveDocs, maxDoc)) {
-                final Fields vectors = reader.getTermVectors(i);
+                Fields vectors;
+                if (vectorsReader == null) {
+                  vectors = null;
+                } else {
+                  vectors = vectorsReader.get(i);
+                }
                 addAllDocVectors(vectors, mergeState);
                 ++docCount;
                 mergeState.checkAbort.work(300);
               }
             }
           } else {
-            final Fields vectors = reader.getTermVectors(i);
+            Fields vectors;
+            if (vectorsReader == null) {
+              vectors = null;
+            } else {
+              vectors = vectorsReader.get(i);
+            }
             addAllDocVectors(vectors, mergeState);
             ++docCount;
             mergeState.checkAbort.work(300);
             i = nextLiveDoc(i + 1, liveDocs, maxDoc);
           }
         }
+        
+        vectorsStream.seek(vectorsStream.length() - CodecUtil.footerLength());
+        CodecUtil.checkFooter(vectorsStream);
       }
     }
-    finish(mergeState.fieldInfos, docCount);
+    finish(mergeState.mergeFieldInfos, docCount);
     return docCount;
   }
 

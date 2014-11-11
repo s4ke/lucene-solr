@@ -17,7 +17,7 @@ package org.apache.lucene.search.spans;
  * limitations under the License.
  */
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.TermContext;
@@ -62,7 +62,7 @@ public class SpanNotQuery extends SpanQuery implements Cloneable {
     this.pre = (pre >=0) ? pre : 0;
     this.post = (post >= 0) ? post : 0;
 
-    if (!include.getField().equals(exclude.getField()))
+    if (include.getField() != null && exclude.getField() != null && !include.getField().equals(exclude.getField()))
       throw new IllegalArgumentException("Clauses must have same field.");
   }
 
@@ -103,7 +103,7 @@ public class SpanNotQuery extends SpanQuery implements Cloneable {
   }
 
   @Override
-  public Spans getSpans(final AtomicReaderContext context, final Bits acceptDocs, final Map<Term,TermContext> termContexts) throws IOException {
+  public Spans getSpans(final LeafReaderContext context, final Bits acceptDocs, final Map<Term,TermContext> termContexts) throws IOException {
     return new Spans() {
         private Spans includeSpans = include.getSpans(context, acceptDocs, termContexts);
         private boolean moreInclude = true;
@@ -175,7 +175,7 @@ public class SpanNotQuery extends SpanQuery implements Cloneable {
       public Collection<byte[]> getPayload() throws IOException {
         ArrayList<byte[]> result = null;
         if (includeSpans.isPayloadAvailable()) {
-          result = new ArrayList<byte[]>(includeSpans.getPayload());
+          result = new ArrayList<>(includeSpans.getPayload());
         }
         return result;
       }

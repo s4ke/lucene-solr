@@ -16,8 +16,11 @@ package org.apache.solr.rest.schema;
  * limitations under the License.
  */
 
+import org.apache.solr.cloud.ZkSolrResourceLoader;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrException.ErrorCode;
+import org.apache.solr.core.CoreDescriptor;
+import org.apache.solr.core.SolrResourceLoader;
 import org.apache.solr.rest.GETable;
 import org.apache.solr.rest.PUTable;
 import org.apache.solr.schema.IndexSchema;
@@ -162,9 +165,27 @@ public class FieldResource extends BaseFieldResource implements GETable, PUTable
                 if (copyFieldNames != null) {
                   map.remove(IndexSchema.COPY_FIELDS);
                 }
-                SchemaField newField = oldSchema.newField(fieldName, fieldType, map);
-                IndexSchema newSchema = oldSchema.addField(newField, copyFieldNames);
-                getSolrCore().setLatestSchema(newSchema);
+
+                IndexSchema newSchema = null;
+                boolean success = false;
+                while (!success) {
+                  try {
+                    SchemaField newField = oldSchema.newField(fieldName, fieldType, map);
+                    synchronized (oldSchema.getSchemaUpdateLock()) {
+                      newSchema = oldSchema.addField(newField, copyFieldNames);
+                      if (null != newSchema) {
+                        getSolrCore().setLatestSchema(newSchema);
+                        success = true;
+                      } else {
+                        throw new SolrException(ErrorCode.SERVER_ERROR, "Failed to add field.");
+                      }
+                    }
+                  } catch (ManagedIndexSchema.SchemaChangedInZkException e) {
+                    log.debug("Schema changed while processing request, retrying");
+                    oldSchema = (ManagedIndexSchema)getSolrCore().getLatestSchema();
+                  }
+                }
+                waitForSchemaUpdateToPropagate(newSchema);
               }
             }
           }

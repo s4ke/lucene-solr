@@ -17,19 +17,44 @@ package org.apache.solr.store.blockcache;
  * limitations under the License.
  */
 
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * @lucene.experimental
+ */
 public class BlockDirectoryCache implements Cache {
-  private BlockCache blockCache;
-  private AtomicInteger counter = new AtomicInteger();
-  private Map<String,Integer> names = new ConcurrentHashMap<String,Integer>();
-  private Metrics metrics;
+  private final BlockCache blockCache;
+  private final AtomicInteger counter = new AtomicInteger();
+  private final Map<String,Integer> names = new ConcurrentHashMap<>();
+  private Set<BlockCacheKey> keysToRelease;
+  private final String path;
+  private final Metrics metrics;
   
-  public BlockDirectoryCache(BlockCache blockCache, Metrics metrics) {
+  public BlockDirectoryCache(BlockCache blockCache, String path, Metrics metrics) {
+    this(blockCache, path, metrics, false);
+  }
+  
+  public BlockDirectoryCache(BlockCache blockCache, String path, Metrics metrics, boolean releaseBlocks) {
     this.blockCache = blockCache;
+    this.path = path;
     this.metrics = metrics;
+    if (releaseBlocks) {
+      keysToRelease = Collections.synchronizedSet(new HashSet<BlockCacheKey>());
+    }
+  }
+  
+  /**
+   * Expert: mostly for tests
+   * 
+   * @lucene.experimental
+   */
+  public BlockCache getBlockCache() {
+    return blockCache;
   }
   
   @Override
@@ -46,9 +71,12 @@ public class BlockDirectoryCache implements Cache {
       names.put(name, file);
     }
     BlockCacheKey blockCacheKey = new BlockCacheKey();
+    blockCacheKey.setPath(path);
     blockCacheKey.setBlock(blockId);
     blockCacheKey.setFile(file);
-    blockCache.store(blockCacheKey, blockOffset, buffer, offset, length);
+    if (blockCache.store(blockCacheKey, blockOffset, buffer, offset, length) && keysToRelease != null) {
+      keysToRelease.add(blockCacheKey);
+    }
   }
   
   @Override
@@ -59,6 +87,7 @@ public class BlockDirectoryCache implements Cache {
       return false;
     }
     BlockCacheKey blockCacheKey = new BlockCacheKey();
+    blockCacheKey.setPath(path);
     blockCacheKey.setBlock(blockId);
     blockCacheKey.setFile(file);
     boolean fetch = blockCache.fetch(blockCacheKey, b, blockOffset, off,
@@ -82,6 +111,15 @@ public class BlockDirectoryCache implements Cache {
     // possible if the file is empty
     if (file != null) {
       names.put(dest, file);
+    }
+  }
+
+  @Override
+  public void releaseResources() {
+    if (keysToRelease != null) {
+      for (BlockCacheKey key : keysToRelease) {
+        blockCache.release(key);
+      }
     }
   }
 }

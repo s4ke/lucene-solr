@@ -18,25 +18,23 @@ package org.apache.lucene.codecs.blockterms;
  */
 
 import java.io.IOException;
-import java.io.FileOutputStream;   // for toDot
-import java.io.OutputStreamWriter; // for toDot
-import java.io.Writer;             // for toDot
+import java.util.Collections;
 import java.util.HashMap;
 
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.FieldInfo;
-import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.IndexFileNames;
-import org.apache.lucene.store.Directory;
+import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.fst.BytesRefFSTEnum;
 import org.apache.lucene.util.fst.FST;
 import org.apache.lucene.util.fst.PositiveIntOutputs;
-import org.apache.lucene.util.fst.Util; // for toDot
 
 /** See {@link VariableGapTermsIndexWriter}
  * 
@@ -45,39 +43,39 @@ public class VariableGapTermsIndexReader extends TermsIndexReaderBase {
 
   private final PositiveIntOutputs fstOutputs = PositiveIntOutputs.getSingleton();
 
-  final HashMap<FieldInfo,FieldIndexData> fields = new HashMap<FieldInfo,FieldIndexData>();
+  final HashMap<String,FieldIndexData> fields = new HashMap<>();
   
-  // start of the field info data
-  private long dirOffset;
-  
-  private final int version;
-
-  final String segment;
-  public VariableGapTermsIndexReader(Directory dir, FieldInfos fieldInfos, String segment, String segmentSuffix, IOContext context)
-    throws IOException {
-    final IndexInput in = dir.openInput(IndexFileNames.segmentFileName(segment, segmentSuffix, VariableGapTermsIndexWriter.TERMS_INDEX_EXTENSION), new IOContext(context, true));
-    this.segment = segment;
+  public VariableGapTermsIndexReader(SegmentReadState state) throws IOException {
+    String fileName = IndexFileNames.segmentFileName(state.segmentInfo.name, 
+                                                     state.segmentSuffix, 
+                                                     VariableGapTermsIndexWriter.TERMS_INDEX_EXTENSION);
+    final IndexInput in = state.directory.openInput(fileName, new IOContext(state.context, true));
     boolean success = false;
 
     try {
       
-      version = readHeader(in);
+      CodecUtil.checkIndexHeader(in, VariableGapTermsIndexWriter.CODEC_NAME,
+                                       VariableGapTermsIndexWriter.VERSION_START,
+                                       VariableGapTermsIndexWriter.VERSION_CURRENT,
+                                       state.segmentInfo.getId(), state.segmentSuffix);
+      
+      CodecUtil.checksumEntireFile(in);
 
-      seekDir(in, dirOffset);
+      seekDir(in);
 
       // Read directory
       final int numFields = in.readVInt();
       if (numFields < 0) {
-        throw new CorruptIndexException("invalid numFields: " + numFields + " (resource=" + in + ")");
+        throw new CorruptIndexException("invalid numFields: " + numFields, in);
       }
 
       for(int i=0;i<numFields;i++) {
         final int field = in.readVInt();
         final long indexStart = in.readVLong();
-        final FieldInfo fieldInfo = fieldInfos.fieldInfo(field);
-        FieldIndexData previous = fields.put(fieldInfo, new FieldIndexData(in, fieldInfo, indexStart));
+        final FieldInfo fieldInfo = state.fieldInfos.fieldInfo(field);
+        FieldIndexData previous = fields.put(fieldInfo.name, new FieldIndexData(in, fieldInfo, indexStart));
         if (previous != null) {
-          throw new CorruptIndexException("duplicate field: " + fieldInfo.name + " (resource=" + in + ")");
+          throw new CorruptIndexException("duplicate field: " + fieldInfo.name, in);
         }
       }
       success = true;
@@ -89,22 +87,13 @@ public class VariableGapTermsIndexReader extends TermsIndexReaderBase {
       }
     }
   }
-  
-  private int readHeader(IndexInput input) throws IOException {
-    int version = CodecUtil.checkHeader(input, VariableGapTermsIndexWriter.CODEC_NAME,
-      VariableGapTermsIndexWriter.VERSION_START, VariableGapTermsIndexWriter.VERSION_CURRENT);
-    if (version < VariableGapTermsIndexWriter.VERSION_APPEND_ONLY) {
-      dirOffset = input.readLong();
-    }
-    return version;
-  }
 
   private static class IndexEnum extends FieldIndexEnum {
     private final BytesRefFSTEnum<Long> fstEnum;
     private BytesRefFSTEnum.InputOutput<Long> current;
 
     public IndexEnum(FST<Long> fst) {
-      fstEnum = new BytesRefFSTEnum<Long>(fst);
+      fstEnum = new BytesRefFSTEnum<>(fst);
     }
 
     @Override
@@ -152,13 +141,13 @@ public class VariableGapTermsIndexReader extends TermsIndexReaderBase {
     return false;
   }
 
-  private final class FieldIndexData {
+  private final class FieldIndexData implements Accountable {
     private final FST<Long> fst;
 
     public FieldIndexData(IndexInput in, FieldInfo fieldInfo, long indexStart) throws IOException {
       IndexInput clone = in.clone();
       clone.seek(indexStart);
-      fst = new FST<Long>(clone, fstOutputs);
+      fst = new FST<>(clone, fstOutputs);
       clone.close();
 
       /*
@@ -170,15 +159,29 @@ public class VariableGapTermsIndexReader extends TermsIndexReaderBase {
       */
     }
 
-    /** Returns approximate RAM bytes used */
+    @Override
     public long ramBytesUsed() {
-      return fst == null ? 0 : fst.sizeInBytes();
+      return fst == null ? 0 : fst.ramBytesUsed();
+    }
+
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      if (fst == null) {
+        return Collections.emptyList();
+      } else {
+        return Collections.singletonList(Accountables.namedAccountable("index data", fst));
+      }
+    }
+    
+    @Override
+    public String toString() {
+      return "VarGapTermIndex";
     }
   }
 
   @Override
   public FieldIndexEnum getFieldEnum(FieldInfo fieldInfo) {
-    final FieldIndexData fieldData = fields.get(fieldInfo);
+    final FieldIndexData fieldData = fields.get(fieldInfo.name);
     if (fieldData.fst == null) {
       return null;
     } else {
@@ -189,11 +192,9 @@ public class VariableGapTermsIndexReader extends TermsIndexReaderBase {
   @Override
   public void close() throws IOException {}
 
-  private void seekDir(IndexInput input, long dirOffset) throws IOException {
-    if (version >= VariableGapTermsIndexWriter.VERSION_APPEND_ONLY) {
-      input.seek(input.length() - 8);
-      dirOffset = input.readLong();
-    }
+  private void seekDir(IndexInput input) throws IOException {
+    input.seek(input.length() - CodecUtil.footerLength() - 8);
+    long dirOffset = input.readLong();
     input.seek(dirOffset);
   }
 
@@ -204,5 +205,15 @@ public class VariableGapTermsIndexReader extends TermsIndexReaderBase {
       sizeInBytes += entry.ramBytesUsed();
     }
     return sizeInBytes;
+  }
+
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Accountables.namedAccountables("field", fields);
+  }
+
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(fields=" + fields.size() + ")";
   }
 }

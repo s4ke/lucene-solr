@@ -23,22 +23,40 @@ import java.util.Arrays;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
 
-// TODO: maybe merge with BitVector?  Problem is BitVector
-// caches its cardinality...
-
-/** BitSet of fixed length (numBits), backed by accessible
- *  ({@link #getBits}) long[], accessed with an int index,
- *  implementing Bits and DocIdSet.  Unlike {@link
- *  OpenBitSet} this bit set does not auto-expand, cannot
- *  handle long index, and does not have fastXX/XX variants
- *  (just X).
- *
+/**
+ * BitSet of fixed length (numBits), backed by accessible ({@link #getBits})
+ * long[], accessed with an int index, implementing {@link Bits} and
+ * {@link DocIdSet}. If you need to manage more than 2.1B bits, use
+ * {@link LongBitSet}.
+ * 
  * @lucene.internal
- **/
-public final class FixedBitSet extends DocIdSet implements Bits {
-  private final long[] bits;
-  private final int numBits;
-  private final int wordLength;
+ */
+public final class FixedBitSet extends BitSet implements MutableBits, Accountable {
+
+  private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(FixedBitSet.class);
+
+  /**
+   * If the given {@link FixedBitSet} is large enough to hold {@code numBits},
+   * returns the given bits, otherwise returns a new {@link FixedBitSet} which
+   * can hold the requested number of bits.
+   * 
+   * <p>
+   * <b>NOTE:</b> the returned bitset reuses the underlying {@code long[]} of
+   * the given {@code bits} if possible. Also, calling {@link #length()} on the
+   * returned bits may return a value greater than {@code numBits}.
+   */
+  public static FixedBitSet ensureCapacity(FixedBitSet bits, int numBits) {
+    if (numBits < bits.length()) {
+      return bits;
+    } else {
+      int numWords = bits2words(numBits);
+      long[] arr = bits.getBits();
+      if (numWords >= arr.length) {
+        arr = ArrayUtil.grow(arr, numWords + 1);
+      }
+      return new FixedBitSet(arr, arr.length << 6);
+    }
+  }
 
   /** returns the number of 64 bit words it would take to hold numBits */
   public static int bits2words(int numBits) {
@@ -49,41 +67,57 @@ public final class FixedBitSet extends DocIdSet implements Bits {
     return numLong;
   }
 
+  /**
+   * Returns the popcount or cardinality of the intersection of the two sets.
+   * Neither set is modified.
+   */
+  public static long intersectionCount(FixedBitSet a, FixedBitSet b) {
+    return BitUtil.pop_intersect(a.bits, b.bits, 0, Math.min(a.numWords, b.numWords));
+  }
+
+  /**
+   * Returns the popcount or cardinality of the union of the two sets. Neither
+   * set is modified.
+   */
+  public static long unionCount(FixedBitSet a, FixedBitSet b) {
+    long tot = BitUtil.pop_union(a.bits, b.bits, 0, Math.min(a.numWords, b.numWords));
+    if (a.numWords < b.numWords) {
+      tot += BitUtil.pop_array(b.bits, a.numWords, b.numWords - a.numWords);
+    } else if (a.numWords > b.numWords) {
+      tot += BitUtil.pop_array(a.bits, b.numWords, a.numWords - b.numWords);
+    }
+    return tot;
+  }
+
+  /**
+   * Returns the popcount or cardinality of "a and not b" or
+   * "intersection(a, not(b))". Neither set is modified.
+   */
+  public static long andNotCount(FixedBitSet a, FixedBitSet b) {
+    long tot = BitUtil.pop_andnot(a.bits, b.bits, 0, Math.min(a.numWords, b.numWords));
+    if (a.numWords > b.numWords) {
+      tot += BitUtil.pop_array(a.bits, b.numWords, a.numWords - b.numWords);
+    }
+    return tot;
+  }
+
+  final long[] bits;
+  final int numBits;
+  final int numWords;
+
   public FixedBitSet(int numBits) {
     this.numBits = numBits;
     bits = new long[bits2words(numBits)];
-    wordLength = bits.length;
+    numWords = bits.length;
   }
 
   public FixedBitSet(long[] storedBits, int numBits) {
-    this.wordLength = bits2words(numBits);
-    if (wordLength > storedBits.length) {
+    this.numWords = bits2words(numBits);
+    if (numWords > storedBits.length) {
       throw new IllegalArgumentException("The given long array is too small  to hold " + numBits + " bits");
     }
     this.numBits = numBits;
     this.bits = storedBits;
-  }
-  
-  /**
-   * Makes a full copy of the bits, while allowing to expand/shrink the bitset.
-   * If {@code numBits &lt; other.numBits}, then only the first {@code numBits}
-   * are copied from other.
-   */
-  public FixedBitSet(FixedBitSet other, int numBits) {
-    wordLength = bits2words(numBits);
-    bits = new long[wordLength];
-    System.arraycopy(other.bits, 0, bits, 0, Math.min(other.wordLength, wordLength));
-    this.numBits = numBits;
-  }
-
-  @Override
-  public DocIdSetIterator iterator() {
-    return new OpenBitSetIterator(bits, wordLength);
-  }
-
-  @Override
-  public Bits bits() {
-    return this;
   }
 
   @Override
@@ -91,10 +125,9 @@ public final class FixedBitSet extends DocIdSet implements Bits {
     return numBits;
   }
 
-  /** This DocIdSet implementation is cacheable. */
   @Override
-  public boolean isCacheable() {
-    return true;
+  public long ramBytesUsed() {
+    return BASE_RAM_BYTES_USED + RamUsageEstimator.sizeOf(bits);
   }
 
   /** Expert. */
@@ -102,86 +135,75 @@ public final class FixedBitSet extends DocIdSet implements Bits {
     return bits;
   }
 
-  /** Returns number of set bits.  NOTE: this visits every
-   *  long in the backing bits array, and the result is not
-   *  internally cached! */
+  @Override
   public int cardinality() {
     return (int) BitUtil.pop_array(bits, 0, bits.length);
   }
 
   @Override
   public boolean get(int index) {
-    assert index >= 0 && index < numBits: "index=" + index;
+    assert index >= 0 && index < numBits: "index=" + index + ", numBits=" + numBits;
     int i = index >> 6;               // div 64
     // signed shift will keep a negative index and force an
     // array-index-out-of-bounds-exception, removing the need for an explicit check.
-    int bit = index & 0x3f;           // mod 64
-    long bitmask = 1L << bit;
+    long bitmask = 1L << index;
     return (bits[i] & bitmask) != 0;
   }
 
   public void set(int index) {
-    assert index >= 0 && index < numBits: "index=" + index + " numBits=" + numBits;
+    assert index >= 0 && index < numBits: "index=" + index + ", numBits=" + numBits;
     int wordNum = index >> 6;      // div 64
-    int bit = index & 0x3f;     // mod 64
-    long bitmask = 1L << bit;
+    long bitmask = 1L << index;
     bits[wordNum] |= bitmask;
   }
 
   public boolean getAndSet(int index) {
     assert index >= 0 && index < numBits;
     int wordNum = index >> 6;      // div 64
-    int bit = index & 0x3f;     // mod 64
-    long bitmask = 1L << bit;
+    long bitmask = 1L << index;
     boolean val = (bits[wordNum] & bitmask) != 0;
     bits[wordNum] |= bitmask;
     return val;
   }
 
+  @Override
   public void clear(int index) {
     assert index >= 0 && index < numBits;
     int wordNum = index >> 6;
-    int bit = index & 0x03f;
-    long bitmask = 1L << bit;
+    long bitmask = 1L << index;
     bits[wordNum] &= ~bitmask;
   }
 
   public boolean getAndClear(int index) {
     assert index >= 0 && index < numBits;
     int wordNum = index >> 6;      // div 64
-    int bit = index & 0x3f;     // mod 64
-    long bitmask = 1L << bit;
+    long bitmask = 1L << index;
     boolean val = (bits[wordNum] & bitmask) != 0;
     bits[wordNum] &= ~bitmask;
     return val;
   }
 
-  /** Returns the index of the first set bit starting at the index specified.
-   *  -1 is returned if there are no more set bits.
-   */
+  @Override
   public int nextSetBit(int index) {
-    assert index >= 0 && index < numBits;
+    assert index >= 0 && index < numBits : "index=" + index + ", numBits=" + numBits;
     int i = index >> 6;
-    final int subIndex = index & 0x3f;      // index within the word
-    long word = bits[i] >> subIndex;  // skip all the bits to the right of index
+    long word = bits[i] >> index;  // skip all the bits to the right of index
 
     if (word!=0) {
-      return (i<<6) + subIndex + Long.numberOfTrailingZeros(word);
+      return index + Long.numberOfTrailingZeros(word);
     }
 
-    while(++i < wordLength) {
+    while(++i < numWords) {
       word = bits[i];
       if (word != 0) {
         return (i<<6) + Long.numberOfTrailingZeros(word);
       }
     }
 
-    return -1;
+    return DocIdSetIterator.NO_MORE_DOCS;
   }
 
-  /** Returns the index of the last set bit before or on the index specified.
-   *  -1 is returned if there are no more set bits.
-   */
+  @Override
   public int prevSetBit(int index) {
     assert index >= 0 && index < numBits: "index=" + index + " numBits=" + numBits;
     int i = index >> 6;
@@ -202,89 +224,103 @@ public final class FixedBitSet extends DocIdSet implements Bits {
     return -1;
   }
 
-  /** Does in-place OR of the bits provided by the
-   *  iterator. */
+  @Override
   public void or(DocIdSetIterator iter) throws IOException {
-    if (iter instanceof OpenBitSetIterator && iter.docID() == -1) {
-      final OpenBitSetIterator obs = (OpenBitSetIterator) iter;
-      or(obs.arr, obs.words);
-      // advance after last doc that would be accepted if standard
-      // iteration is used (to exhaust it):
-      obs.advance(numBits);
+    if (BitSetIterator.getFixedBitSetOrNull(iter) != null) {
+      assertUnpositioned(iter);
+      final FixedBitSet bits = BitSetIterator.getFixedBitSetOrNull(iter); 
+      or(bits);
     } else {
-      int doc;
-      while ((doc = iter.nextDoc()) < numBits) {
-        set(doc);
-      }
+      super.or(iter);
     }
   }
 
   /** this = this OR other */
   public void or(FixedBitSet other) {
-    or(other.bits, other.wordLength);
+    or(other.bits, other.numWords);
   }
   
-  private void or(final long[] otherArr, final int otherLen) {
+  private void or(final long[] otherArr, final int otherNumWords) {
+    assert otherNumWords <= numWords : "numWords=" + numWords + ", otherNumWords=" + otherNumWords;
     final long[] thisArr = this.bits;
-    int pos = Math.min(wordLength, otherLen);
+    int pos = Math.min(numWords, otherNumWords);
     while (--pos >= 0) {
       thisArr[pos] |= otherArr[pos];
     }
   }
-
-  /** Does in-place AND of the bits provided by the
-   *  iterator. */
-  public void and(DocIdSetIterator iter) throws IOException {
-    if (iter instanceof OpenBitSetIterator && iter.docID() == -1) {
-      final OpenBitSetIterator obs = (OpenBitSetIterator) iter;
-      and(obs.arr, obs.words);
-      // advance after last doc that would be accepted if standard
-      // iteration is used (to exhaust it):
-      obs.advance(numBits);
+  
+  /** this = this XOR other */
+  public void xor(FixedBitSet other) {
+    xor(other.bits, other.numWords);
+  }
+  
+  /** Does in-place XOR of the bits provided by the iterator. */
+  public void xor(DocIdSetIterator iter) throws IOException {
+    assertUnpositioned(iter);
+    if (BitSetIterator.getFixedBitSetOrNull(iter) != null) {
+      final FixedBitSet bits = BitSetIterator.getFixedBitSetOrNull(iter); 
+      xor(bits);
     } else {
-      if (numBits == 0) return;
-      int disiDoc, bitSetDoc = nextSetBit(0);
-      while (bitSetDoc != -1 && (disiDoc = iter.advance(bitSetDoc)) < numBits) {
-        clear(bitSetDoc, disiDoc);
-        disiDoc++;
-        bitSetDoc = (disiDoc < numBits) ? nextSetBit(disiDoc) : -1;
-      }
-      if (bitSetDoc != -1) {
-        clear(bitSetDoc, numBits);
+      int doc;
+      while ((doc = iter.nextDoc()) < numBits) {
+        flip(doc);
       }
     }
+  }
+
+  private void xor(long[] otherBits, int otherNumWords) {
+    assert otherNumWords <= numWords : "numWords=" + numWords + ", other.numWords=" + otherNumWords;
+    final long[] thisBits = this.bits;
+    int pos = Math.min(numWords, otherNumWords);
+    while (--pos >= 0) {
+      thisBits[pos] ^= otherBits[pos];
+    }
+  }
+
+  @Override
+  public void and(DocIdSetIterator iter) throws IOException {
+    if (BitSetIterator.getFixedBitSetOrNull(iter) != null) {
+      assertUnpositioned(iter);
+      final FixedBitSet bits = BitSetIterator.getFixedBitSetOrNull(iter); 
+      and(bits);
+    } else {
+      super.and(iter);
+    }
+  }
+
+  /** returns true if the sets have any elements in common */
+  public boolean intersects(FixedBitSet other) {
+    int pos = Math.min(numWords, other.numWords);
+    while (--pos>=0) {
+      if ((bits[pos] & other.bits[pos]) != 0) return true;
+    }
+    return false;
   }
 
   /** this = this AND other */
   public void and(FixedBitSet other) {
-    and(other.bits, other.wordLength);
+    and(other.bits, other.numWords);
   }
   
-  private void and(final long[] otherArr, final int otherLen) {
+  private void and(final long[] otherArr, final int otherNumWords) {
     final long[] thisArr = this.bits;
-    int pos = Math.min(this.wordLength, otherLen);
+    int pos = Math.min(this.numWords, otherNumWords);
     while(--pos >= 0) {
       thisArr[pos] &= otherArr[pos];
     }
-    if (this.wordLength > otherLen) {
-      Arrays.fill(thisArr, otherLen, this.wordLength, 0L);
+    if (this.numWords > otherNumWords) {
+      Arrays.fill(thisArr, otherNumWords, this.numWords, 0L);
     }
   }
 
-  /** Does in-place AND NOT of the bits provided by the
-   *  iterator. */
+  @Override
   public void andNot(DocIdSetIterator iter) throws IOException {
-    if (iter instanceof OpenBitSetIterator && iter.docID() == -1) {
-      final OpenBitSetIterator obs = (OpenBitSetIterator) iter;
-      andNot(obs.arr, obs.words);
-      // advance after last doc that would be accepted if standard
-      // iteration is used (to exhaust it):
-      obs.advance(numBits);
+    if (BitSetIterator.getFixedBitSetOrNull(iter) != null) {
+      assertUnpositioned(iter);
+      final FixedBitSet bits = BitSetIterator.getFixedBitSetOrNull(iter); 
+      andNot(bits);
     } else {
-      int doc;
-      while ((doc = iter.nextDoc()) < numBits) {
-        clear(doc);
-      }
+      super.andNot(iter);
     }
   }
 
@@ -293,9 +329,9 @@ public final class FixedBitSet extends DocIdSet implements Bits {
     andNot(other.bits, other.bits.length);
   }
   
-  private void andNot(final long[] otherArr, final int otherLen) {
+  private void andNot(final long[] otherArr, final int otherNumWords) {
     final long[] thisArr = this.bits;
-    int pos = Math.min(this.wordLength, otherLen);
+    int pos = Math.min(this.numWords, otherNumWords);
     while(--pos >= 0) {
       thisArr[pos] &= ~otherArr[pos];
     }
@@ -344,6 +380,15 @@ public final class FixedBitSet extends DocIdSet implements Bits {
     bits[endWord] ^= endmask;
   }
 
+  /** Flip the bit at the provided index. */
+  public void flip(int index) {
+    assert index >= 0 && index < numBits: "index=" + index + " numBits=" + numBits;
+    int wordNum = index >> 6;      // div 64
+    int bit = index & 0x3f;     // mod 64
+    long bitmask = 1L << bit;
+    bits[wordNum] ^= bitmask;
+  }
+
   /** Sets a range of bits
    *
    * @param startIndex lower index
@@ -372,14 +417,10 @@ public final class FixedBitSet extends DocIdSet implements Bits {
     bits[endWord] |= endmask;
   }
 
-  /** Clears a range of bits.
-   *
-   * @param startIndex lower index
-   * @param endIndex one-past the last bit to clear
-   */
+  @Override
   public void clear(int startIndex, int endIndex) {
-    assert startIndex >= 0 && startIndex < numBits;
-    assert endIndex >= 0 && endIndex <= numBits;
+    assert startIndex >= 0 && startIndex < numBits : "startIndex=" + startIndex + ", numBits=" + numBits;
+    assert endIndex >= 0 && endIndex <= numBits : "endIndex=" + endIndex + ", numBits=" + numBits;
     if (endIndex <= startIndex) {
       return;
     }
@@ -406,7 +447,9 @@ public final class FixedBitSet extends DocIdSet implements Bits {
 
   @Override
   public FixedBitSet clone() {
-    return new FixedBitSet(this, numBits);
+    long[] bits = new long[this.bits.length];
+    System.arraycopy(this.bits, 0, bits, 0, bits.length);
+    return new FixedBitSet(bits, numBits);
   }
 
   /** returns true if both sets have the same bits set */
@@ -428,7 +471,7 @@ public final class FixedBitSet extends DocIdSet implements Bits {
   @Override
   public int hashCode() {
     long h = 0;
-    for (int i = wordLength; --i>=0;) {
+    for (int i = numWords; --i>=0;) {
       h ^= bits[i];
       h = (h << 1) | (h >>> 63); // rotate left
     }

@@ -20,7 +20,7 @@ package org.apache.lucene.search.spans;
 import java.io.IOException;
 import java.util.Map;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.TermContext;
 import org.apache.lucene.search.Query;
@@ -32,9 +32,13 @@ import org.apache.lucene.util.Bits;
 public abstract class SpanQuery extends Query {
   /** Expert: Returns the matches for this query in an index.  Used internally
    * to search for spans. */
-  public abstract Spans getSpans(AtomicReaderContext context, Bits acceptDocs, Map<Term,TermContext> termContexts) throws IOException;
+  public abstract Spans getSpans(LeafReaderContext context, Bits acceptDocs, Map<Term,TermContext> termContexts) throws IOException;
 
-  /** Returns the name of the field matched by this query.*/
+  /** 
+   * Returns the name of the field matched by this query.
+   * <p>
+   * Note that this may return null if the query matches no terms.
+   */
   public abstract String getField();
 
   @Override

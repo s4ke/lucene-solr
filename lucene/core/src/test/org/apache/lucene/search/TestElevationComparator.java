@@ -20,6 +20,7 @@ package org.apache.lucene.search;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.index.*;
 import org.apache.lucene.search.FieldValueHitQueue.Entry;
 import org.apache.lucene.search.similarities.DefaultSimilarity;
@@ -32,14 +33,14 @@ import java.util.Map;
 
 public class TestElevationComparator extends LuceneTestCase {
 
-  private final Map<BytesRef,Integer> priority = new HashMap<BytesRef,Integer>();
+  private final Map<BytesRef,Integer> priority = new HashMap<>();
 
   //@Test
   public void testSorting() throws Throwable {
     Directory directory = newDirectory();
     IndexWriter writer = new IndexWriter(
         directory,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).
+        newIndexWriterConfig(new MockAnalyzer(random())).
             setMaxBufferedDocs(2).
             setMergePolicy(newLogMergePolicy(1000)).
             setSimilarity(new DefaultSimilarity())
@@ -126,6 +127,9 @@ public class TestElevationComparator extends LuceneTestCase {
    Document doc = new Document();
    for (int i = 0; i < vals.length - 2; i += 2) {
      doc.add(newTextField(vals[i], vals[i + 1], Field.Store.YES));
+     if (vals[i].equals("id")) {
+       doc.add(new SortedDocValuesField(vals[i], new BytesRef(vals[i+1])));
+     }
    }
    return doc;
  }
@@ -144,7 +148,6 @@ class ElevationComparatorSource extends FieldComparatorSource {
 
      SortedDocValues idIndex;
      private final int[] values = new int[numHits];
-     private final BytesRef tempBR = new BytesRef();
      int bottomVal;
 
      @Override
@@ -157,13 +160,18 @@ class ElevationComparatorSource extends FieldComparatorSource {
        bottomVal = values[slot];
      }
 
+     @Override
+     public void setTopValue(Integer value) {
+       throw new UnsupportedOperationException();
+     }
+
      private int docVal(int doc) {
        int ord = idIndex.getOrd(doc);
        if (ord == -1) {
          return 0;
        } else {
-         idIndex.lookupOrd(ord, tempBR);
-         Integer prio = priority.get(tempBR);
+         final BytesRef term = idIndex.lookupOrd(ord);
+         Integer prio = priority.get(term);
          return prio == null ? 0 : prio.intValue();
        }
      }
@@ -179,8 +187,8 @@ class ElevationComparatorSource extends FieldComparatorSource {
      }
 
      @Override
-     public FieldComparator<Integer> setNextReader(AtomicReaderContext context) throws IOException {
-       idIndex = FieldCache.DEFAULT.getTermsIndex(context.reader(), fieldname);
+     public FieldComparator<Integer> setNextReader(LeafReaderContext context) throws IOException {
+       idIndex = DocValues.getSorted(context.reader(), fieldname);
        return this;
      }
 
@@ -190,11 +198,8 @@ class ElevationComparatorSource extends FieldComparatorSource {
      }
 
      @Override
-     public int compareDocToValue(int doc, Integer valueObj) {
-       final int value = valueObj.intValue();
-       final int docValue = docVal(doc);
-       // values will be small enough that there is no overflow concern
-       return value - docValue;
+     public int compareTop(int doc) {
+       throw new UnsupportedOperationException();
      }
    };
  }

@@ -19,7 +19,7 @@ package org.apache.lucene.queries.function;
 
 import org.apache.lucene.search.*;
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.mutable.MutableValue;
 import org.apache.lucene.util.mutable.MutableValueFloat;
 
@@ -53,10 +53,10 @@ public abstract class FunctionValues {
   }
 
   /** returns the bytes representation of the string val - TODO: should this return the indexed raw bytes not? */
-  public boolean bytesVal(int doc, BytesRef target) {
+  public boolean bytesVal(int doc, BytesRefBuilder target) {
     String s = strVal(doc);
     if (s==null) {
-      target.length = 0;
+      target.clear();
       return false;
     }
     target.copyChars(s);
@@ -143,7 +143,7 @@ public abstract class FunctionValues {
   // A RangeValueSource can't easily be a ValueSource that takes another ValueSource
   // because it needs different behavior depending on the type of fields.  There is also
   // a setup cost - parsing and normalizing params, and doing a binary search on the StringIndex.
-  // TODO: change "reader" to AtomicReaderContext
+  // TODO: change "reader" to LeafReaderContext
   public ValueSourceScorer getRangeScorer(IndexReader reader, String lowerVal, String upperVal, boolean includeLower, boolean includeUpper) {
     float lower;
     float upper;

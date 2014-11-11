@@ -1,6 +1,7 @@
 package org.apache.solr.handler.dataimport;
 
 import java.io.File;
+import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -16,10 +17,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
+import junit.framework.Assert;
+
 import org.junit.After;
 import org.junit.Before;
-
-import junit.framework.Assert;
 
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
@@ -54,14 +55,13 @@ public abstract class AbstractSqlEntityProcessorTestCase extends
   
   @Before
   public void beforeSqlEntitiyProcessorTestCase() throws Exception {
-    File tmpdir = File.createTempFile("test", "tmp", TEMP_DIR);
-    tmpdir.delete();
-    tmpdir.mkdir();
+    File tmpdir = createTempDir().toFile();
     fileLocation = tmpdir.getPath();
     fileName = "the.properties";
   } 
+  
   @After
-  public void afterSqlEntitiyProcessorTestCase() {
+  public void afterSqlEntitiyProcessorTestCase() throws Exception {
     useSimpleCaches = false;
     countryEntity = false;
     countryCached = false;
@@ -75,13 +75,13 @@ public abstract class AbstractSqlEntityProcessorTestCase extends
     //If an Assume was tripped while setting up the test, 
     //the file might not ever have been created...
     if(fileLocation!=null) {
-      new File(fileLocation + File.separatorChar + fileName).delete();
-      new File(fileLocation).delete();
+      Files.deleteIfExists(new File(fileLocation + File.separatorChar + fileName).toPath());
+      Files.deleteIfExists(new File(fileLocation).toPath());
     }
   }
   
   protected void logPropertiesFile() {
-    Map<String,String> init = new HashMap<String,String>();
+    Map<String,String> init = new HashMap<>();
     init.put("filename", fileName);
     init.put("directory", fileLocation);
     SimplePropertiesWriter spw = new SimplePropertiesWriter();
@@ -339,7 +339,7 @@ public abstract class AbstractSqlEntityProcessorTestCase extends
       conn = newConnection();
       s = conn.createStatement();
       rs = s.executeQuery(query);
-      List<String> results = new ArrayList<String>();
+      List<String> results = new ArrayList<>();
       while (rs.next()) {
         results.add(rs.getString(1));
       }
@@ -409,9 +409,9 @@ public abstract class AbstractSqlEntityProcessorTestCase extends
   public IntChanges modifySomePeople() throws Exception {
     underlyingDataModified = true;
     int numberToChange = random().nextInt(people.length + 1);
-    Set<Integer> changeSet = new HashSet<Integer>();
-    Set<Integer> deleteSet = new HashSet<Integer>();
-    Set<Integer> addSet = new HashSet<Integer>();
+    Set<Integer> changeSet = new HashSet<>();
+    Set<Integer> deleteSet = new HashSet<>();
+    Set<Integer> addSet = new HashSet<>();
     Connection conn = null;
     PreparedStatement change = null;
     PreparedStatement delete = null;
@@ -484,7 +484,7 @@ public abstract class AbstractSqlEntityProcessorTestCase extends
   public String[] modifySomeCountries() throws Exception {
     underlyingDataModified = true;
     int numberToChange = random().nextInt(countries.length + 1);
-    Set<String> changeSet = new HashSet<String>();
+    Set<String> changeSet = new HashSet<>();
     Connection conn = null;
     PreparedStatement change = null;
     // One second in the future ensures a change time after the last import (DIH
@@ -566,7 +566,7 @@ public abstract class AbstractSqlEntityProcessorTestCase extends
     sb.append("\n<dataConfig> \n");
     sb.append("<propertyWriter type=''SimplePropertiesWriter'' directory=''" + fileLocation + "'' filename=''" + fileName + "'' />\n");
     sb.append("<dataSource name=''hsqldb'' driver=''org.hsqldb.jdbcDriver'' url=''jdbc:hsqldb:mem:.'' /> \n");
-    sb.append("<dataSource name=''derby'' driver=''org.apache.derby.jdbc.EmbeddedDriver'' url=''jdbc:derby:memory:derbyDB;'' /> \n");
+    sb.append("<dataSource name=''derby'' driver=''org.apache.derby.jdbc.EmbeddedDriver'' url=''jdbc:derby:memory:derbyDB;territory=en_US'' /> \n");
     sb.append("<document name=''TestSqlEntityProcessor''> \n");
     sb.append("<entity name=''People'' ");
     sb.append("pk=''" + (random().nextBoolean() ? "ID" : "People.ID") + "'' ");

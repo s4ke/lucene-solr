@@ -260,7 +260,7 @@ public class TestDirectoryTaxonomyReader extends FacetTestCase {
     // hold onto IW to forceMerge
     // note how we don't close it, since DTW will close it.
     final IndexWriter iw = new IndexWriter(dir,
-        new IndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()))
+        new IndexWriterConfig(new MockAnalyzer(random()))
             .setMergePolicy(new LogByteSizeMergePolicy()));
     DirectoryTaxonomyWriter writer = new DirectoryTaxonomyWriter(dir) {
       @Override
@@ -303,7 +303,7 @@ public class TestDirectoryTaxonomyReader extends FacetTestCase {
     // hold onto IW to forceMerge
     // note how we don't close it, since DTW will close it.
     final IndexWriter iw = new IndexWriter(dir,
-        new IndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()))
+        new IndexWriterConfig(new MockAnalyzer(random()))
             .setMergePolicy(new LogByteSizeMergePolicy()));
     DirectoryTaxonomyWriter writer = new DirectoryTaxonomyWriter(dir) {
       @Override
@@ -504,7 +504,7 @@ public class TestDirectoryTaxonomyReader extends FacetTestCase {
     assertEquals(TaxonomyReader.INVALID_ORDINAL, it.next());
 
     // root's children
-    Set<String> roots = new HashSet<String>(Arrays.asList("a", "b", "c"));
+    Set<String> roots = new HashSet<>(Arrays.asList("a", "b", "c"));
     it = taxoReader.getChildren(TaxonomyReader.ROOT_ORDINAL);
     while (!roots.isEmpty()) {
       FacetLabel root = taxoReader.getPath(it.next());

@@ -36,7 +36,7 @@ import org.apache.lucene.util.LineFileDocs;
 import org.apache.lucene.util.LuceneTestCase.Slow;
 import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * Test that norms info is preserved during index life - including
@@ -75,7 +75,9 @@ public class TestNorms extends LuceneTestCase {
   // LUCENE-1260
   public void testCustomEncoder() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig config = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    MockAnalyzer analyzer = new MockAnalyzer(random());
+
+    IndexWriterConfig config = newIndexWriterConfig(analyzer);
     config.setSimilarity(new CustomNormEncodingSimilarity());
     RandomIndexWriter writer = new RandomIndexWriter(random(), dir, config);
     Document doc = new Document();
@@ -107,9 +109,9 @@ public class TestNorms extends LuceneTestCase {
   }
   
   public void testMaxByteNorms() throws IOException {
-    Directory dir = newFSDirectory(_TestUtil.getTempDir("TestNorms.testMaxByteNorms"));
+    Directory dir = newFSDirectory(createTempDir("TestNorms.testMaxByteNorms"));
     buildIndex(dir);
-    AtomicReader open = SlowCompositeReaderWrapper.wrap(DirectoryReader.open(dir));
+    LeafReader open = SlowCompositeReaderWrapper.wrap(DirectoryReader.open(dir));
     NumericDocValues normValues = open.getNormValues(byteTestField);
     assertNotNull(normValues);
     for (int i = 0; i < open.maxDoc(); i++) {
@@ -125,8 +127,9 @@ public class TestNorms extends LuceneTestCase {
 
   public void buildIndex(Directory dir) throws IOException {
     Random random = random();
-    IndexWriterConfig config = newIndexWriterConfig(TEST_VERSION_CURRENT,
-        new MockAnalyzer(random()));
+    MockAnalyzer analyzer = new MockAnalyzer(random());
+    analyzer.setMaxTokenLength(TestUtil.nextInt(random(), 1, IndexWriter.MAX_TERM_LENGTH));
+    IndexWriterConfig config = newIndexWriterConfig(analyzer);
     Similarity provider = new MySimProvider();
     config.setSimilarity(provider);
     RandomIndexWriter writer = new RandomIndexWriter(random, dir, config);
@@ -189,7 +192,7 @@ public class TestNorms extends LuceneTestCase {
     }
 
     @Override
-    public SimScorer simScorer(SimWeight weight, AtomicReaderContext context) throws IOException {
+    public SimScorer simScorer(SimWeight weight, LeafReaderContext context) throws IOException {
       throw new UnsupportedOperationException();
     }
   } 

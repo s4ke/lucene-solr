@@ -17,7 +17,7 @@ package org.apache.lucene.search.grouping.function;
  * limitations under the License.
  */
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.queries.function.FunctionValues;
 import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.search.grouping.AbstractAllGroupsCollector;
@@ -45,7 +45,7 @@ public class FunctionAllGroupsCollector extends AbstractAllGroupsCollector<Mutab
 
   private final Map<?, ?> vsContext;
   private final ValueSource groupBy;
-  private final SortedSet<MutableValue> groups = new TreeSet<MutableValue>();
+  private final SortedSet<MutableValue> groups = new TreeSet<>();
 
   private FunctionValues.ValueFiller filler;
   private MutableValue mval;
@@ -75,7 +75,7 @@ public class FunctionAllGroupsCollector extends AbstractAllGroupsCollector<Mutab
   }
 
   @Override
-  public void setNextReader(AtomicReaderContext context) throws IOException {
+  protected void doSetNextReader(LeafReaderContext context) throws IOException {
     FunctionValues values = groupBy.getValues(vsContext, context);
     filler = values.getValueFiller();
     mval = filler.getValue();

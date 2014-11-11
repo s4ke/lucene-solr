@@ -116,10 +116,10 @@ public class TestStressIndexing extends LuceneTestCase {
     stress test.
   */
   public void runStressTest(Directory directory, MergeScheduler mergeScheduler) throws Exception {
-    IndexWriter modifier = new IndexWriter(directory, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random()))
-        .setOpenMode(OpenMode.CREATE).setMaxBufferedDocs(10).setMergeScheduler(
-            mergeScheduler));
+    IndexWriter modifier = new IndexWriter(directory, newIndexWriterConfig(new MockAnalyzer(random()))
+        .setOpenMode(OpenMode.CREATE)
+        .setMaxBufferedDocs(10)
+        .setMergeScheduler(mergeScheduler));
     modifier.commit();
     
     TimedThread[] threads = new TimedThread[4];
@@ -165,6 +165,10 @@ public class TestStressIndexing extends LuceneTestCase {
   */
   public void testStressIndexAndSearching() throws Exception {
     Directory directory = newDirectory();
+    if (directory instanceof MockDirectoryWrapper) {
+      ((MockDirectoryWrapper) directory).setAssertNoUnrefencedFilesOnClose(true);
+    }
+
     runStressTest(directory, new ConcurrentMergeScheduler());
     directory.close();
   }

@@ -28,8 +28,7 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
-import org.junit.Assume;
+import org.apache.lucene.util.TestUtil;
 
 public class TestSegmentReader extends LuceneTestCase {
   private Directory dir;
@@ -76,23 +75,23 @@ public class TestSegmentReader extends LuceneTestCase {
   }
   
   public void testGetFieldNameVariations() {
-    Collection<String> allFieldNames = new HashSet<String>();
-    Collection<String> indexedFieldNames = new HashSet<String>();
-    Collection<String> notIndexedFieldNames = new HashSet<String>();
-    Collection<String> tvFieldNames = new HashSet<String>();
-    Collection<String> noTVFieldNames = new HashSet<String>();
+    Collection<String> allFieldNames = new HashSet<>();
+    Collection<String> indexedFieldNames = new HashSet<>();
+    Collection<String> notIndexedFieldNames = new HashSet<>();
+    Collection<String> tvFieldNames = new HashSet<>();
+    Collection<String> noTVFieldNames = new HashSet<>();
 
     for(FieldInfo fieldInfo : reader.getFieldInfos()) {
       final String name = fieldInfo.name;
       allFieldNames.add(name);
-      if (fieldInfo.isIndexed()) {
+      if (fieldInfo.getIndexOptions() != IndexOptions.NONE) {
         indexedFieldNames.add(name);
       } else {
         notIndexedFieldNames.add(name);
       }
       if (fieldInfo.hasVectors()) {
         tvFieldNames.add(name);
-      } else if (fieldInfo.isIndexed()) {
+      } else if (fieldInfo.getIndexOptions() != IndexOptions.NONE) {
         noTVFieldNames.add(name);
       }
     }
@@ -128,20 +127,20 @@ public class TestSegmentReader extends LuceneTestCase {
       }
     }
     
-    DocsEnum termDocs = _TestUtil.docs(random(), reader,
-                                       DocHelper.TEXT_FIELD_1_KEY,
-                                       new BytesRef("field"),
-                                       MultiFields.getLiveDocs(reader),
-                                       null,
-                                       0);
+    DocsEnum termDocs = TestUtil.docs(random(), reader,
+        DocHelper.TEXT_FIELD_1_KEY,
+        new BytesRef("field"),
+        MultiFields.getLiveDocs(reader),
+        null,
+        0);
     assertTrue(termDocs.nextDoc() != DocIdSetIterator.NO_MORE_DOCS);
 
-    termDocs = _TestUtil.docs(random(), reader,
-                              DocHelper.NO_NORMS_KEY,
-                              new BytesRef(DocHelper.NO_NORMS_TEXT),
-                              MultiFields.getLiveDocs(reader),
-                              null,
-                              0);
+    termDocs = TestUtil.docs(random(), reader,
+        DocHelper.NO_NORMS_KEY,
+        new BytesRef(DocHelper.NO_NORMS_TEXT),
+        MultiFields.getLiveDocs(reader),
+        null,
+        0);
 
     assertTrue(termDocs.nextDoc() != DocIdSetIterator.NO_MORE_DOCS);
 
@@ -173,11 +172,11 @@ public class TestSegmentReader extends LuceneTestCase {
     checkNorms(reader);
   }
 
-  public static void checkNorms(AtomicReader reader) throws IOException {
+  public static void checkNorms(LeafReader reader) throws IOException {
     // test omit norms
     for (int i=0; i<DocHelper.fields.length; i++) {
       IndexableField f = DocHelper.fields[i];
-      if (f.fieldType().indexed()) {
+      if (f.fieldType().indexOptions() != IndexOptions.NONE) {
         assertEquals(reader.getNormValues(f.name()) != null, !f.fieldType().omitNorms());
         assertEquals(reader.getNormValues(f.name()) != null, !DocHelper.noNorms.containsKey(f.name()));
         if (reader.getNormValues(f.name()) == null) {

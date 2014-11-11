@@ -90,7 +90,7 @@ public class CompositeIdRouter extends HashBasedRouter {
 
     Range completeRange = new KeyParser(id).getRange();
 
-    List<Slice> targetSlices = new ArrayList<Slice>(1);
+    List<Slice> targetSlices = new ArrayList<>(1);
     for (Slice slice : collection.getActiveSlices()) {
       Range range = slice.getRange();
       if (range != null && range.overlaps(completeRange)) {
@@ -102,7 +102,7 @@ public class CompositeIdRouter extends HashBasedRouter {
   }
 
   public List<Range> partitionRangeByKey(String key, Range range) {
-    List<Range> result = new ArrayList<Range>(3);
+    List<Range> result = new ArrayList<>(3);
     Range keyRange = keyHashRange(key);
     if (!keyRange.overlaps(range)) {
       throw new IllegalArgumentException("Key range does not overlap given range");
@@ -133,7 +133,7 @@ public class CompositeIdRouter extends HashBasedRouter {
     long rangeSize = (long) max - (long) min;
     long rangeStep = Math.max(1, rangeSize / partitions);
 
-    List<Range> ranges = new ArrayList<Range>(partitions);
+    List<Range> ranges = new ArrayList<>(partitions);
 
     long start = min;
     long end = start;
@@ -187,14 +187,41 @@ public class CompositeIdRouter extends HashBasedRouter {
     boolean triLevel;
     int pieces;
 
-    public KeyParser(String key) {
-      String[] parts = key.split(SEPARATOR);
+    public KeyParser(final String key) {
       this.key = key;
-      pieces = parts.length;
-      hashes = new int[pieces];
+      List<String> partsList = new ArrayList<>(3);
+      int firstSeparatorPos = key.indexOf(SEPARATOR);
+      if (-1 == firstSeparatorPos) {
+        partsList.add(key);
+      } else {
+        partsList.add(key.substring(0, firstSeparatorPos));
+        int lastPos = key.length() - 1;
+        // Don't make any more parts if the first separator is the last char
+        if (firstSeparatorPos < lastPos) {
+          int secondSeparatorPos = key.indexOf(SEPARATOR, firstSeparatorPos + 1);
+          if (-1 == secondSeparatorPos) {
+            partsList.add(key.substring(firstSeparatorPos + 1));
+          } else if (secondSeparatorPos == lastPos) {
+            // Don't make any more parts if the key has exactly two separators and 
+            // they're the last two chars - back-compatibility with the behavior of
+            // String.split() - see SOLR-6257.
+            if (firstSeparatorPos < secondSeparatorPos - 1) {
+              partsList.add(key.substring(firstSeparatorPos + 1, secondSeparatorPos));
+            }
+          } else { // The second separator is not the last char
+            partsList.add(key.substring(firstSeparatorPos + 1, secondSeparatorPos));
+            partsList.add(key.substring(secondSeparatorPos + 1));
+          }
+          // Ignore any further separators beyond the first two
+        }
+      }
+      pieces = partsList.size();
+      String[] parts = partsList.toArray(new String[pieces]);
       numBits = new int[2];
-      if (key.endsWith("!"))
+      if (key.endsWith("!") && pieces < 3)
         pieces++;
+      hashes = new int[pieces];
+
       if (pieces == 3) {
         numBits[0] = 8;
         numBits[1] = 8;
@@ -204,7 +231,7 @@ public class CompositeIdRouter extends HashBasedRouter {
         triLevel = false;
       }
 
-      for (int i = 0; i < parts.length; i++) {
+      for (int i = 0; i < pieces; i++) {
         if (i < pieces - 1) {
           int commaIdx = parts[i].indexOf(bitsSeparator);
 
@@ -213,7 +240,11 @@ public class CompositeIdRouter extends HashBasedRouter {
             parts[i] = parts[i].substring(0, commaIdx);
           }
         }
-        hashes[i] = Hash.murmurhash3_x86_32(parts[i], 0, parts[i].length(), 0);
+        //Last component of an ID that ends with a '!'
+        if(i >= parts.length)
+          hashes[i] = Hash.murmurhash3_x86_32("", 0, "".length(), 0);
+        else
+          hashes[i] = Hash.murmurhash3_x86_32(parts[i], 0, parts[i].length(), 0);
       }
       masks = getMasks();
     }

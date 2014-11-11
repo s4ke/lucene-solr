@@ -32,12 +32,9 @@ import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.similarities.Similarity;
 import org.apache.lucene.store.Directory;
-
-import static org.apache.lucene.util.LuceneTestCase.TEST_VERSION_CURRENT;
 
 class DocHelper {
   
@@ -99,7 +96,7 @@ class DocHelper {
   public static Field noTFField;
   static {
     customType6 = new FieldType(TextField.TYPE_STORED);
-    customType6.setIndexOptions(IndexOptions.DOCS_ONLY);
+    customType6.setIndexOptions(IndexOptions.DOCS);
     noTFField = new Field(NO_TF_KEY, NO_TF_TEXT, customType6);
   }
 
@@ -175,16 +172,16 @@ class DocHelper {
     largeLazyField//placeholder for large field, since this is null.  It must always be last
   };
 
-  public static Map<String,IndexableField> all     =new HashMap<String,IndexableField>();
-  public static Map<String,IndexableField> indexed =new HashMap<String,IndexableField>();
-  public static Map<String,IndexableField> stored  =new HashMap<String,IndexableField>();
-  public static Map<String,IndexableField> unstored=new HashMap<String,IndexableField>();
-  public static Map<String,IndexableField> unindexed=new HashMap<String,IndexableField>();
-  public static Map<String,IndexableField> termvector=new HashMap<String,IndexableField>();
-  public static Map<String,IndexableField> notermvector=new HashMap<String,IndexableField>();
-  public static Map<String,IndexableField> lazy= new HashMap<String,IndexableField>();
-  public static Map<String,IndexableField> noNorms=new HashMap<String,IndexableField>();
-  public static Map<String,IndexableField> noTf=new HashMap<String,IndexableField>();
+  public static Map<String,IndexableField> all     =new HashMap<>();
+  public static Map<String,IndexableField> indexed =new HashMap<>();
+  public static Map<String,IndexableField> stored  =new HashMap<>();
+  public static Map<String,IndexableField> unstored=new HashMap<>();
+  public static Map<String,IndexableField> unindexed=new HashMap<>();
+  public static Map<String,IndexableField> termvector=new HashMap<>();
+  public static Map<String,IndexableField> notermvector=new HashMap<>();
+  public static Map<String,IndexableField> lazy= new HashMap<>();
+  public static Map<String,IndexableField> noNorms=new HashMap<>();
+  public static Map<String,IndexableField> noTf=new HashMap<>();
 
   static {
     //Initialize the large Lazy Field
@@ -206,15 +203,15 @@ class DocHelper {
     for (int i=0; i<fields.length; i++) {
       IndexableField f = fields[i];
       add(all,f);
-      if (f.fieldType().indexed()) add(indexed,f);
+      if (f.fieldType().indexOptions() != IndexOptions.NONE) add(indexed,f);
       else add(unindexed,f);
       if (f.fieldType().storeTermVectors()) add(termvector,f);
-      if (f.fieldType().indexed() && !f.fieldType().storeTermVectors()) add(notermvector,f);
+      if (f.fieldType().indexOptions() != IndexOptions.NONE && !f.fieldType().storeTermVectors()) add(notermvector,f);
       if (f.fieldType().stored()) add(stored,f);
       else add(unstored,f);
-      if (f.fieldType().indexOptions() == IndexOptions.DOCS_ONLY) add(noTf,f);
+      if (f.fieldType().indexOptions() == IndexOptions.DOCS) add(noTf,f);
       if (f.fieldType().omitNorms()) add(noNorms,f);
-      if (f.fieldType().indexOptions() == IndexOptions.DOCS_ONLY) add(noTf,f);
+      if (f.fieldType().indexOptions() == IndexOptions.DOCS) add(noTf,f);
       //if (f.isLazy()) add(lazy, f);
     }
   }
@@ -227,7 +224,7 @@ class DocHelper {
 
   static
   {
-    nameValues = new HashMap<String,Object>();
+    nameValues = new HashMap<>();
     nameValues.put(TEXT_FIELD_1_KEY, FIELD_1_TEXT);
     nameValues.put(TEXT_FIELD_2_KEY, FIELD_2_TEXT);
     nameValues.put(TEXT_FIELD_3_KEY, FIELD_3_TEXT);
@@ -271,7 +268,7 @@ class DocHelper {
    */ 
   public static SegmentCommitInfo writeDoc(Random random, Directory dir, Analyzer analyzer, Similarity similarity, Document doc) throws IOException {
     IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig( /* LuceneTestCase.newIndexWriterConfig(random, */ 
-        TEST_VERSION_CURRENT, analyzer).setSimilarity(similarity == null ? IndexSearcher.getDefaultSimilarity() : similarity));
+        analyzer).setSimilarity(similarity == null ? IndexSearcher.getDefaultSimilarity() : similarity));
     //writer.setNoCFSRatio(0.0);
     writer.addDocument(doc);
     writer.commit();

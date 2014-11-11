@@ -24,6 +24,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FilenameFilter;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -68,6 +69,7 @@ import org.slf4j.LoggerFactory;
 
 /** @lucene.experimental */
 public class UpdateLog implements PluginInfoInitialized {
+  private static final long STATUS_TIME = TimeUnit.NANOSECONDS.convert(60, TimeUnit.SECONDS);
   public static String LOG_FILENAME_PATTERN = "%s.%019d";
   public static String TLOG_NAME="tlog";
 
@@ -128,11 +130,11 @@ public class UpdateLog implements PluginInfoInitialized {
 
   protected TransactionLog tlog;
   protected TransactionLog prevTlog;
-  protected Deque<TransactionLog> logs = new LinkedList<TransactionLog>();  // list of recent logs, newest first
-  protected LinkedList<TransactionLog> newestLogsOnStartup = new LinkedList<TransactionLog>();
+  protected Deque<TransactionLog> logs = new LinkedList<>();  // list of recent logs, newest first
+  protected LinkedList<TransactionLog> newestLogsOnStartup = new LinkedList<>();
   protected int numOldRecords;  // number of records in the recent logs
 
-  protected Map<BytesRef,LogPtr> map = new HashMap<BytesRef, LogPtr>();
+  protected Map<BytesRef,LogPtr> map = new HashMap<>();
   protected Map<BytesRef,LogPtr> prevMap;  // used while committing/reopening is happening
   protected Map<BytesRef,LogPtr> prevMap2;  // used while committing/reopening is happening
   protected TransactionLog prevMapLog;  // the transaction log used to look up entries found in prevMap
@@ -160,7 +162,7 @@ public class UpdateLog implements PluginInfoInitialized {
     }
   }
 
-  protected LinkedList<DBQ> deleteByQueries = new LinkedList<DBQ>();
+  protected LinkedList<DBQ> deleteByQueries = new LinkedList<>();
 
   protected String[] tlogFiles;
   protected File tlogDir;
@@ -195,7 +197,7 @@ public class UpdateLog implements PluginInfoInitialized {
 
   public long getTotalLogsSize() {
     long size = 0;
-    synchronized (logs) {
+    synchronized (this) {
       for (TransactionLog log : logs) {
         size += log.getLogSize();
       }
@@ -204,7 +206,9 @@ public class UpdateLog implements PluginInfoInitialized {
   }
 
   public long getTotalLogsNumber() {
-    return logs.size();
+    synchronized (this) {
+      return logs.size();
+    }
   }
 
   public VersionInfo getVersionInfo() {
@@ -222,15 +226,7 @@ public class UpdateLog implements PluginInfoInitialized {
    * for an existing log whenever the core or update handler changes.
    */
   public void init(UpdateHandler uhandler, SolrCore core) {
-    // ulogDir from CoreDescriptor overrides
-    String ulogDir = core.getCoreDescriptor().getUlogDir();
-    if (ulogDir != null) {
-      dataDir = ulogDir;
-    }
-
-    if (dataDir == null || dataDir.length()==0) {
-      dataDir = core.getDataDir();
-    }
+    dataDir = core.getUlogDir();
 
     this.uhandler = uhandler;
 
@@ -267,7 +263,7 @@ public class UpdateLog implements PluginInfoInitialized {
     }
 
     // Record first two logs (oldest first) at startup for potential tlog recovery.
-    // It's possible that at abnormal shutdown both "tlog" and "prevTlog" were uncapped.
+    // It's possible that at abnormal close both "tlog" and "prevTlog" were uncapped.
     for (TransactionLog ll : logs) {
       newestLogsOnStartup.addFirst(ll);
       if (newestLogsOnStartup.size() >= 2) break;
@@ -323,7 +319,7 @@ public class UpdateLog implements PluginInfoInitialized {
   /* Takes over ownership of the log, keeping it until no longer needed
      and then decrementing it's reference and dropping it.
    */
-  protected void addOldLog(TransactionLog oldLog, boolean removeOld) {
+  protected synchronized void addOldLog(TransactionLog oldLog, boolean removeOld) {
     if (oldLog == null) return;
 
     numOldRecords += oldLog.numRecords();
@@ -566,7 +562,7 @@ public class UpdateLog implements PluginInfoInitialized {
         return null;
       }
 
-      List<DBQ> dbqList = new ArrayList<DBQ>();
+      List<DBQ> dbqList = new ArrayList<>();
       for (DBQ dbq : deleteByQueries) {
         if (dbq.version <= version) break;
         dbqList.add(dbq);
@@ -582,7 +578,7 @@ public class UpdateLog implements PluginInfoInitialized {
     prevMap = map;
     prevMapLog = tlog;
 
-    map = new HashMap<BytesRef, LogPtr>();
+    map = new HashMap<>();
   }
 
   private void clearOldMaps() {
@@ -656,7 +652,7 @@ public class UpdateLog implements PluginInfoInitialized {
       // any added documents will make it into this commit or not.
       // But we do know that any updates already added will definitely
       // show up in the latest reader after the commit succeeds.
-      map = new HashMap<BytesRef, LogPtr>();
+      map = new HashMap<>();
 
       if (debug) {
         log.debug("TLOG: preSoftCommit: prevMap="+ System.identityHashCode(prevMap) + " new map=" + System.identityHashCode(map));
@@ -792,7 +788,7 @@ public class UpdateLog implements PluginInfoInitialized {
   public Future<RecoveryInfo> recoverFromLog() {
     recoveryInfo = new RecoveryInfo();
 
-    List<TransactionLog> recoverLogs = new ArrayList<TransactionLog>(1);
+    List<TransactionLog> recoverLogs = new ArrayList<>(1);
     for (TransactionLog ll : newestLogsOnStartup) {
       if (!ll.try_incref()) continue;
 
@@ -802,7 +798,7 @@ public class UpdateLog implements PluginInfoInitialized {
           continue;
         }
       } catch (IOException e) {
-        log.error("Error inspecting tlog " + ll);
+        log.error("Error inspecting tlog " + ll, e);
         ll.decref();
         continue;
       }
@@ -812,7 +808,7 @@ public class UpdateLog implements PluginInfoInitialized {
 
     if (recoverLogs.isEmpty()) return null;
 
-    ExecutorCompletionService<RecoveryInfo> cs = new ExecutorCompletionService<RecoveryInfo>(recoveryExecutor);
+    ExecutorCompletionService<RecoveryInfo> cs = new ExecutorCompletionService<>(recoveryExecutor);
     LogReplayer replayer = new LogReplayer(recoverLogs, false);
 
     versionInfo.blockUpdates();
@@ -925,7 +921,7 @@ public class UpdateLog implements PluginInfoInitialized {
 
     /** Returns the list of deleteByQueries that happened after the given version */
     public List<Object> getDeleteByQuery(long afterVersion) {
-      List<Object> result = new ArrayList<Object>(deleteByQueryList.size());
+      List<Object> result = new ArrayList<>(deleteByQueryList.size());
       for (Update update : deleteByQueryList) {
         if (Math.abs(update.version) > afterVersion) {
           Object dbq = update.log.lookup(update.pointer);
@@ -942,13 +938,13 @@ public class UpdateLog implements PluginInfoInitialized {
 
     private void update() {
       int numUpdates = 0;
-      updateList = new ArrayList<List<Update>>(logList.size());
-      deleteByQueryList = new ArrayList<Update>();
-      deleteList = new ArrayList<DeleteUpdate>();
-      updates = new HashMap<Long,Update>(numRecordsToKeep);
+      updateList = new ArrayList<>(logList.size());
+      deleteByQueryList = new ArrayList<>();
+      deleteList = new ArrayList<>();
+      updates = new HashMap<>(numRecordsToKeep);
 
       for (TransactionLog oldLog : logList) {
-        List<Update> updatesForLog = new ArrayList<Update>();
+        List<Update> updatesForLog = new ArrayList<>();
 
         TransactionLog.ReverseReader reader = null;
         try {
@@ -1030,7 +1026,7 @@ public class UpdateLog implements PluginInfoInitialized {
   public RecentUpdates getRecentUpdates() {
     Deque<TransactionLog> logList;
     synchronized (this) {
-      logList = new LinkedList<TransactionLog>(logs);
+      logList = new LinkedList<>(logs);
       for (TransactionLog log : logList) {
         log.incref();
       }
@@ -1156,7 +1152,7 @@ public class UpdateLog implements PluginInfoInitialized {
       tlog.decref();
       throw new RuntimeException("executor is not running...");
     }
-    ExecutorCompletionService<RecoveryInfo> cs = new ExecutorCompletionService<RecoveryInfo>(recoveryExecutor);
+    ExecutorCompletionService<RecoveryInfo> cs = new ExecutorCompletionService<>(recoveryExecutor);
     LogReplayer replayer = new LogReplayer(Arrays.asList(new TransactionLog[]{tlog}), true);
     return cs.submit(replayer, recoveryInfo);
   }
@@ -1188,7 +1184,7 @@ public class UpdateLog implements PluginInfoInitialized {
     boolean debug = loglog.isDebugEnabled();
 
     public LogReplayer(List<TransactionLog> translogs, boolean activeLog) {
-      this.translogs = new LinkedList<TransactionLog>();
+      this.translogs = new LinkedList<>();
       this.translogs.addAll(translogs);
       this.activeLog = activeLog;
     }
@@ -1251,7 +1247,7 @@ public class UpdateLog implements PluginInfoInitialized {
     public void doReplay(TransactionLog translog) {
       try {
         loglog.warn("Starting log replay " + translog + " active="+activeLog + " starting pos=" + recoveryInfo.positionOfStart);
-
+        long lastStatusTime = System.nanoTime();
         tlogReader = translog.getReader(recoveryInfo.positionOfStart);
 
         // NOTE: we don't currently handle a core reload during recovery.  This would cause the core
@@ -1262,12 +1258,27 @@ public class UpdateLog implements PluginInfoInitialized {
 
         long commitVersion = 0;
         int operationAndFlags = 0;
+        long nextCount = 0;
 
         for(;;) {
           Object o = null;
           if (cancelApplyBufferUpdate) break;
           try {
             if (testing_logReplayHook != null) testing_logReplayHook.run();
+            if (nextCount++ % 1000 == 0) {
+              long now = System.nanoTime();
+              if (now - lastStatusTime > STATUS_TIME) {
+                lastStatusTime = now;
+                long cpos = tlogReader.currentPos();
+                long csize = tlogReader.currentSize();
+                loglog.info(
+                        "log replay status {} active={} starting pos={} current pos={} current size={} % read={}",
+                        translog, activeLog, recoveryInfo.positionOfStart, cpos, csize,
+                        Math.round(cpos / (double) csize * 100.));
+                
+              }
+            }
+            
             o = null;
             o = tlogReader.next();
             if (o == null && activeLog) {
@@ -1436,10 +1447,8 @@ public class UpdateLog implements PluginInfoInitialized {
   public static void deleteFile(File file) {
     boolean success = false;
     try {
-      success = file.delete();
-      if (!success) {
-        log.error("Error deleting file: " + file);
-      }
+      Files.deleteIfExists(file.toPath());
+      success = true;
     } catch (Exception e) {
       log.error("Error deleting file: " + file, e);
     }
@@ -1481,9 +1490,11 @@ public class UpdateLog implements PluginInfoInitialized {
       String[] files = getLogList(tlogDir);
       for (String file : files) {
         File f = new File(tlogDir, file);
-        boolean s = f.delete();
-        if (!s) {
-          log.error("Could not remove tlog file:" + f);
+        try {
+          Files.delete(f.toPath());
+        } catch (IOException cause) {
+          // NOTE: still throws SecurityException as before.
+          log.error("Could not remove tlog file:" + f, cause);
         }
       }
     }

@@ -37,7 +37,8 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
   public void testSameFieldNumbersAcrossSegments() throws Exception {
     for (int i = 0; i < 2; i++) {
       Directory dir = newDirectory();
-      IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(NoMergePolicy.COMPOUND_FILES));
+      IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                   .setMergePolicy(NoMergePolicy.INSTANCE));
 
       Document d1 = new Document();
       d1.add(new StringField("f1", "first field", Field.Store.YES));
@@ -46,7 +47,8 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
 
       if (i == 1) {
         writer.close();
-        writer = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(NoMergePolicy.COMPOUND_FILES));
+        writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                         .setMergePolicy(NoMergePolicy.INSTANCE));
       } else {
         writer.commit();
       }
@@ -62,12 +64,11 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
 
       writer.close();
 
-      SegmentInfos sis = new SegmentInfos();
-      sis.read(dir);
+      SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
       assertEquals(2, sis.size());
 
-      FieldInfos fis1 = SegmentReader.readFieldInfos(sis.info(0));
-      FieldInfos fis2 = SegmentReader.readFieldInfos(sis.info(1));
+      FieldInfos fis1 = IndexWriter.readFieldInfos(sis.info(0));
+      FieldInfos fis2 = IndexWriter.readFieldInfos(sis.info(1));
 
       assertEquals("f1", fis1.fieldInfo(0).name);
       assertEquals("f2", fis1.fieldInfo(1).name);
@@ -76,15 +77,14 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
       assertEquals("f3", fis2.fieldInfo(2).name);
       assertEquals("f4", fis2.fieldInfo(3).name);
 
-      writer = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+      writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random())));
       writer.forceMerge(1);
       writer.close();
 
-      sis = new SegmentInfos();
-      sis.read(dir);
+      sis = SegmentInfos.readLatestCommit(dir);
       assertEquals(1, sis.size());
 
-      FieldInfos fis3 = SegmentReader.readFieldInfos(sis.info(0));
+      FieldInfos fis3 = IndexWriter.readFieldInfos(sis.info(0));
 
       assertEquals("f1", fis3.fieldInfo(0).name);
       assertEquals("f2", fis3.fieldInfo(1).name);
@@ -100,7 +100,8 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
   public void testAddIndexes() throws Exception {
     Directory dir1 = newDirectory();
     Directory dir2 = newDirectory();
-    IndexWriter writer = new IndexWriter(dir1, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(NoMergePolicy.COMPOUND_FILES));
+    IndexWriter writer = new IndexWriter(dir1, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                 .setMergePolicy(NoMergePolicy.INSTANCE));
 
     Document d1 = new Document();
     d1.add(new TextField("f1", "first field", Field.Store.YES));
@@ -108,7 +109,8 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
     writer.addDocument(d1);
 
     writer.close();
-    writer = new IndexWriter(dir2, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(NoMergePolicy.COMPOUND_FILES));
+    writer = new IndexWriter(dir2, newIndexWriterConfig(new MockAnalyzer(random()))
+                                     .setMergePolicy(NoMergePolicy.INSTANCE));
 
     Document d2 = new Document();
     FieldType customType2 = new FieldType(TextField.TYPE_STORED);
@@ -121,16 +123,16 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
 
     writer.close();
 
-    writer = new IndexWriter(dir1, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(NoMergePolicy.COMPOUND_FILES));
+    writer = new IndexWriter(dir1, newIndexWriterConfig(new MockAnalyzer(random()))
+                                     .setMergePolicy(NoMergePolicy.INSTANCE));
     writer.addIndexes(dir2);
     writer.close();
 
-    SegmentInfos sis = new SegmentInfos();
-    sis.read(dir1);
+    SegmentInfos sis = SegmentInfos.readLatestCommit(dir1);
     assertEquals(2, sis.size());
 
-    FieldInfos fis1 = SegmentReader.readFieldInfos(sis.info(0));
-    FieldInfos fis2 = SegmentReader.readFieldInfos(sis.info(1));
+    FieldInfos fis1 = IndexWriter.readFieldInfos(sis.info(0));
+    FieldInfos fis2 = IndexWriter.readFieldInfos(sis.info(1));
 
     assertEquals("f1", fis1.fieldInfo(0).name);
     assertEquals("f2", fis1.fieldInfo(1).name);
@@ -149,38 +151,33 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
     for (int i = 0; i < numIters; i++) {
       Directory dir = newDirectory();
       {
-        IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-            TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(
-            NoMergePolicy.NO_COMPOUND_FILES));
+        IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                    .setMergePolicy(NoMergePolicy.INSTANCE));
         Document d = new Document();
         d.add(new TextField("f1", "d1 first field", Field.Store.YES));
         d.add(new TextField("f2", "d1 second field", Field.Store.YES));
         writer.addDocument(d);
         writer.close();
-        SegmentInfos sis = new SegmentInfos();
-        sis.read(dir);
+        SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
         assertEquals(1, sis.size());
-        FieldInfos fis1 = SegmentReader.readFieldInfos(sis.info(0));
+        FieldInfos fis1 = IndexWriter.readFieldInfos(sis.info(0));
         assertEquals("f1", fis1.fieldInfo(0).name);
         assertEquals("f2", fis1.fieldInfo(1).name);
       }
       
 
       {
-        IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-            TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(
-            random().nextBoolean() ? NoMergePolicy.NO_COMPOUND_FILES
-                : NoMergePolicy.COMPOUND_FILES));
+        IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                    .setMergePolicy(NoMergePolicy.INSTANCE));
         Document d = new Document();
         d.add(new TextField("f1", "d2 first field", Field.Store.YES));
         d.add(new StoredField("f3", new byte[] { 1, 2, 3 }));
         writer.addDocument(d);
         writer.close();
-        SegmentInfos sis = new SegmentInfos();
-        sis.read(dir);
+        SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
         assertEquals(2, sis.size());
-        FieldInfos fis1 = SegmentReader.readFieldInfos(sis.info(0));
-        FieldInfos fis2 = SegmentReader.readFieldInfos(sis.info(1));
+        FieldInfos fis1 = IndexWriter.readFieldInfos(sis.info(0));
+        FieldInfos fis2 = IndexWriter.readFieldInfos(sis.info(1));
         assertEquals("f1", fis1.fieldInfo(0).name);
         assertEquals("f2", fis1.fieldInfo(1).name);
         assertEquals("f1", fis2.fieldInfo(0).name);
@@ -189,22 +186,19 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
       }
 
       {
-        IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-            TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(
-            random().nextBoolean() ? NoMergePolicy.NO_COMPOUND_FILES
-                : NoMergePolicy.COMPOUND_FILES));
+        IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                    .setMergePolicy(NoMergePolicy.INSTANCE));
         Document d = new Document();
         d.add(new TextField("f1", "d3 first field", Field.Store.YES));
         d.add(new TextField("f2", "d3 second field", Field.Store.YES));
         d.add(new StoredField("f3", new byte[] { 1, 2, 3, 4, 5 }));
         writer.addDocument(d);
         writer.close();
-        SegmentInfos sis = new SegmentInfos();
-        sis.read(dir);
+        SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
         assertEquals(3, sis.size());
-        FieldInfos fis1 = SegmentReader.readFieldInfos(sis.info(0));
-        FieldInfos fis2 = SegmentReader.readFieldInfos(sis.info(1));
-        FieldInfos fis3 = SegmentReader.readFieldInfos(sis.info(2));
+        FieldInfos fis1 = IndexWriter.readFieldInfos(sis.info(0));
+        FieldInfos fis2 = IndexWriter.readFieldInfos(sis.info(1));
+        FieldInfos fis3 = IndexWriter.readFieldInfos(sis.info(2));
         assertEquals("f1", fis1.fieldInfo(0).name);
         assertEquals("f2", fis1.fieldInfo(1).name);
         assertEquals("f1", fis2.fieldInfo(0).name);
@@ -216,10 +210,8 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
       }
 
       {
-        IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-            TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(
-            random().nextBoolean() ? NoMergePolicy.NO_COMPOUND_FILES
-                : NoMergePolicy.COMPOUND_FILES));
+        IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                    .setMergePolicy(NoMergePolicy.INSTANCE));
         writer.deleteDocuments(new Term("f1", "d1"));
         // nuke the first segment entirely so that the segment with gaps is
         // loaded first!
@@ -227,16 +219,15 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
         writer.close();
       }
 
-      IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-          TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(
-          new LogByteSizeMergePolicy()).setInfoStream(new FailOnNonBulkMergesInfoStream()));
+      IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                  .setMergePolicy(new LogByteSizeMergePolicy())
+                                                  .setInfoStream(new FailOnNonBulkMergesInfoStream()));
       writer.forceMerge(1);
       writer.close();
 
-      SegmentInfos sis = new SegmentInfos();
-      sis.read(dir);
+      SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
       assertEquals(1, sis.size());
-      FieldInfos fis1 = SegmentReader.readFieldInfos(sis.info(0));
+      FieldInfos fis1 = IndexWriter.readFieldInfos(sis.info(0));
       assertEquals("f1", fis1.fieldInfo(0).name);
       assertEquals("f2", fis1.fieldInfo(1).name);
       assertEquals("f3", fis1.fieldInfo(2).name);
@@ -257,7 +248,7 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
     }
 
     Directory dir = newDirectory();
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random())));
 
     for (int i = 0; i < NUM_DOCS; i++) {
       Document d = new Document();
@@ -271,14 +262,13 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
     writer.forceMerge(1);
     writer.close();
 
-    SegmentInfos sis = new SegmentInfos();
-    sis.read(dir);
+    SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
     for (SegmentCommitInfo si : sis) {
-      FieldInfos fis = SegmentReader.readFieldInfos(si);
+      FieldInfos fis = IndexWriter.readFieldInfos(si);
 
       for (FieldInfo fi : fis) {
         Field expected = getField(Integer.parseInt(fi.name));
-        assertEquals(expected.fieldType().indexed(), fi.isIndexed());
+        assertEquals(expected.fieldType().indexOptions(), fi.getIndexOptions());
         assertEquals(expected.fieldType().storeTermVectors(), fi.hasVectors());
       }
     }

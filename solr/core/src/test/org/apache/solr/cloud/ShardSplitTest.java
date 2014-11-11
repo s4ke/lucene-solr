@@ -38,8 +38,6 @@ import org.apache.solr.common.cloud.ZkNodeProps;
 import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
-import org.apache.solr.handler.admin.CollectionsHandler;
-import org.apache.solr.update.DirectUpdateHandler2;
 import org.junit.After;
 import org.junit.Before;
 
@@ -53,10 +51,10 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
-import static org.apache.lucene.util.LuceneTestCase.Slow;
-import static org.apache.solr.cloud.OverseerCollectionProcessor.MAX_SHARDS_PER_NODE;
+import org.apache.lucene.util.LuceneTestCase.Slow;
 import static org.apache.solr.cloud.OverseerCollectionProcessor.NUM_SLICES;
-import static org.apache.solr.cloud.OverseerCollectionProcessor.REPLICATION_FACTOR;
+import static org.apache.solr.common.cloud.ZkStateReader.REPLICATION_FACTOR;
+import static org.apache.solr.common.cloud.ZkStateReader.MAX_SHARDS_PER_NODE;
 
 @Slow
 public class ShardSplitTest extends BasicDistributedZkTest {
@@ -79,8 +77,6 @@ public class ShardSplitTest extends BasicDistributedZkTest {
   @Override
   @After
   public void tearDown() throws Exception {
-    super.tearDown();
-
     if (VERBOSE || printLayoutOnTearDown) {
       super.printLayout();
     }
@@ -94,21 +90,16 @@ public class ShardSplitTest extends BasicDistributedZkTest {
       controlClientCloud.shutdown();
     }
     super.tearDown();
-
-    System.clearProperty("zkHost");
-    System.clearProperty("numShards");
-    System.clearProperty("solr.xml.persist");
-
-    // insurance
-    DirectUpdateHandler2.commitOnClose = true;
-
-
   }
 
   @Override
   public void doTest() throws Exception {
     waitForThingsToLevelOut(15);
 
+    if (usually()) {
+      log.info("Using legacyCloud=false for cluster");
+      CollectionsAPIDistributedZkTest.setClusterProp(cloudClient, "legacyCloud", "false");
+    }
     incompleteOrOverlappingCustomRangeTest();
     splitByUniqueKeyTest();
     splitByRouteFieldTest();
@@ -127,7 +118,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
     Slice shard1 = clusterState.getSlice(AbstractDistribZkTestBase.DEFAULT_COLLECTION, SHARD1);
     DocRouter.Range shard1Range = shard1.getRange() != null ? shard1.getRange() : router.fullRange();
 
-    List<DocRouter.Range> subRanges = new ArrayList<DocRouter.Range>();
+    List<DocRouter.Range> subRanges = new ArrayList<>();
     List<DocRouter.Range> ranges = router.partitionRange(4, shard1Range);
 
     // test with only one range
@@ -170,7 +161,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
     final DocRouter router = clusterState.getCollection(AbstractDistribZkTestBase.DEFAULT_COLLECTION).getRouter();
     Slice shard1 = clusterState.getSlice(AbstractDistribZkTestBase.DEFAULT_COLLECTION, SHARD1);
     DocRouter.Range shard1Range = shard1.getRange() != null ? shard1.getRange() : router.fullRange();
-    List<DocRouter.Range> subRanges = new ArrayList<DocRouter.Range>();
+    List<DocRouter.Range> subRanges = new ArrayList<>();
     if (usually())  {
       List<DocRouter.Range> ranges = router.partitionRange(4, shard1Range);
       // 75% of range goes to shard1_0 and the rest to shard1_1
@@ -197,7 +188,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
         int max = atLeast(random, 401);
         int sleep = atLeast(random, 25);
         log.info("SHARDSPLITTEST: Going to add " + max + " number of docs at 1 doc per " + sleep + "ms");
-        Set<String> deleted = new HashSet<String>();
+        Set<String> deleted = new HashSet<>();
         for (int id = 101; id < max; id++) {
           try {
             indexAndUpdateCount(router, ranges, docCounts, String.valueOf(id), id);
@@ -213,7 +204,9 @@ public class ShardSplitTest extends BasicDistributedZkTest {
               }
             }
           } catch (Exception e) {
-            log.error("Exception while adding docs", e);
+            log.error("Exception while adding doc id = " + id, e);
+            // do not select this id for deletion ever
+            deleted.add(String.valueOf(id));
           }
         }
       }
@@ -245,7 +238,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
       }
     }
 
-    waitForRecoveriesToFinish(false);
+    waitForRecoveriesToFinish(true);
     checkDocCountsAndShardStates(docCounts, numReplicas);
   }
 
@@ -258,7 +251,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
     int maxShardsPerNode = (((numShards * replicationFactor) / getCommonCloudSolrServer()
         .getZkStateReader().getClusterState().getLiveNodes().size())) + 1;
 
-    HashMap<String, List<Integer>> collectionInfos = new HashMap<String, List<Integer>>();
+    HashMap<String, List<Integer>> collectionInfos = new HashMap<>();
     CloudSolrServer client = null;
     String shard_fld = "shard_s";
     try {
@@ -326,6 +319,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
 
     assertEquals(docCounts[0], collectionClient.query(new SolrQuery("*:*").setParam("shards", "shard1_0")).getResults().getNumFound());
     assertEquals(docCounts[1], collectionClient.query(new SolrQuery("*:*").setParam("shards", "shard1_1")).getResults().getNumFound());
+    collectionClient.shutdown();
   }
 
   private void splitByRouteKeyTest() throws Exception {
@@ -336,7 +330,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
     int maxShardsPerNode = (((numShards * replicationFactor) / getCommonCloudSolrServer()
         .getZkStateReader().getClusterState().getLiveNodes().size())) + 1;
 
-    HashMap<String, List<Integer>> collectionInfos = new HashMap<String, List<Integer>>();
+    HashMap<String, List<Integer>> collectionInfos = new HashMap<>();
     CloudSolrServer client = null;
     try {
       client = createCloudClient(null);
@@ -416,6 +410,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
     assertEquals("shard1_0 must have 0 docs for route key: " + splitKey, 0, collectionClient.query(solrQuery.setParam("shards", "shard1_0")).getResults().getNumFound());
     assertEquals("Wrong number of docs on shard1_1 for route key: " + splitKey, splitKeyDocCount, collectionClient.query(solrQuery.setParam("shards", "shard1_1")).getResults().getNumFound());
     assertEquals("shard1_2 must have 0 docs for route key: " + splitKey, 0, collectionClient.query(solrQuery.setParam("shards", "shard1_2")).getResults().getNumFound());
+    collectionClient.shutdown();
   }
 
   protected void checkDocCountsAndShardStates(int[] docCounts, int numReplicas) throws Exception {
@@ -474,8 +469,8 @@ public class ShardSplitTest extends BasicDistributedZkTest {
 
     logDebugHelp(docCounts, response, shard10Count, response2, shard11Count);
 
-    assertEquals("Wrong doc count on shard1_0", docCounts[0], shard10Count);
-    assertEquals("Wrong doc count on shard1_1", docCounts[1], shard11Count);
+    assertEquals("Wrong doc count on shard1_0. See SOLR-5309", docCounts[0], shard10Count);
+    assertEquals("Wrong doc count on shard1_1. See SOLR-5309", docCounts[1], shard11Count);
   }
 
   protected void checkSubShardConsistency(String shard) throws SolrServerException {
@@ -532,9 +527,10 @@ public class ShardSplitTest extends BasicDistributedZkTest {
     baseUrl = baseUrl.substring(0, baseUrl.length() - "collection1".length());
 
     HttpSolrServer baseServer = new HttpSolrServer(baseUrl);
-    baseServer.setConnectionTimeout(15000);
+    baseServer.setConnectionTimeout(30000);
     baseServer.setSoTimeout(60000 * 5);
     baseServer.request(request);
+    baseServer.shutdown();
   }
 
   protected void indexAndUpdateCount(DocRouter router, List<DocRouter.Range> ranges, int[] docCounts, String id, int n) throws Exception {
@@ -578,9 +574,9 @@ public class ShardSplitTest extends BasicDistributedZkTest {
 
     log.info("Actual docCount for shard1_0 = {}", shard10Count);
     log.info("Actual docCount for shard1_1 = {}", shard11Count);
-    Map<String, String> idVsVersion = new HashMap<String, String>();
-    Map<String, SolrDocument> shard10Docs = new HashMap<String, SolrDocument>();
-    Map<String, SolrDocument> shard11Docs = new HashMap<String, SolrDocument>();
+    Map<String, String> idVsVersion = new HashMap<>();
+    Map<String, SolrDocument> shard10Docs = new HashMap<>();
+    Map<String, SolrDocument> shard11Docs = new HashMap<>();
     for (int i = 0; i < response.getResults().size(); i++) {
       SolrDocument document = response.getResults().get(i);
       idVsVersion.put(document.getFieldValue("id").toString(), document.getFieldValue("_version_").toString());
@@ -618,7 +614,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
   }
 
   @Override
-  protected CloudSolrServer createCloudClient(String defaultCollection) throws MalformedURLException {
+  protected CloudSolrServer createCloudClient(String defaultCollection) {
     CloudSolrServer client = super.createCloudClient(defaultCollection);
     client.getLbServer().getHttpClient().getParams().setParameter(CoreConnectionPNames.SO_TIMEOUT, 5 * 60 * 1000);
     return client;

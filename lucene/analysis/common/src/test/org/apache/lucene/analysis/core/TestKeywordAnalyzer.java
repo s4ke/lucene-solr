@@ -37,7 +37,7 @@ import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 public class TestKeywordAnalyzer extends BaseTokenStreamTestCase {
   
@@ -49,8 +49,7 @@ public class TestKeywordAnalyzer extends BaseTokenStreamTestCase {
   public void setUp() throws Exception {
     super.setUp();
     directory = newDirectory();
-    IndexWriter writer = new IndexWriter(directory, new IndexWriterConfig(
-        TEST_VERSION_CURRENT, new SimpleAnalyzer(TEST_VERSION_CURRENT)));
+    IndexWriter writer = new IndexWriter(directory, new IndexWriterConfig(new SimpleAnalyzer()));
 
     Document doc = new Document();
     doc.add(new StringField("partnum", "Q36", Field.Store.YES));
@@ -72,10 +71,10 @@ public class TestKeywordAnalyzer extends BaseTokenStreamTestCase {
 
   /*
   public void testPerFieldAnalyzer() throws Exception {
-    PerFieldAnalyzerWrapper analyzer = new PerFieldAnalyzerWrapper(new SimpleAnalyzer(TEST_VERSION_CURRENT));
+    PerFieldAnalyzerWrapper analyzer = new PerFieldAnalyzerWrapper(new SimpleAnalyzer());
     analyzer.addAnalyzer("partnum", new KeywordAnalyzer());
 
-    QueryParser queryParser = new QueryParser(TEST_VERSION_CURRENT, "description", analyzer);
+    QueryParser queryParser = new QueryParser("description", analyzer);
     Query query = queryParser.parse("partnum:Q36 AND SPACE");
 
     ScoreDoc[] hits = searcher.search(query, null, 1000).scoreDocs;
@@ -87,7 +86,7 @@ public class TestKeywordAnalyzer extends BaseTokenStreamTestCase {
 
   public void testMutipleDocument() throws Exception {
     RAMDirectory dir = new RAMDirectory();
-    IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(TEST_VERSION_CURRENT, new KeywordAnalyzer()));
+    IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(new KeywordAnalyzer()));
     Document doc = new Document();
     doc.add(new TextField("partnum", "Q36", Field.Store.YES));
     writer.addDocument(doc);
@@ -97,21 +96,21 @@ public class TestKeywordAnalyzer extends BaseTokenStreamTestCase {
     writer.close();
 
     IndexReader reader = DirectoryReader.open(dir);
-    DocsEnum td = _TestUtil.docs(random(),
-                                 reader,
-                                 "partnum",
-                                 new BytesRef("Q36"),
-                                 MultiFields.getLiveDocs(reader),
-                                 null,
-                                 0);
+    DocsEnum td = TestUtil.docs(random(),
+        reader,
+        "partnum",
+        new BytesRef("Q36"),
+        MultiFields.getLiveDocs(reader),
+        null,
+        0);
     assertTrue(td.nextDoc() != DocIdSetIterator.NO_MORE_DOCS);
-    td = _TestUtil.docs(random(),
-                        reader,
-                        "partnum",
-                        new BytesRef("Q37"),
-                        MultiFields.getLiveDocs(reader),
-                        null,
-                        0);
+    td = TestUtil.docs(random(),
+        reader,
+        "partnum",
+        new BytesRef("Q37"),
+        MultiFields.getLiveDocs(reader),
+        null,
+        0);
     assertTrue(td.nextDoc() != DocIdSetIterator.NO_MORE_DOCS);
   }
 

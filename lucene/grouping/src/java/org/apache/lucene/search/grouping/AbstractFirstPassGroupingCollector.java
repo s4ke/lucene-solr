@@ -17,7 +17,7 @@ package org.apache.lucene.search.grouping;
  * limitations under the License.
  */
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.*;
 
 import java.io.IOException;
@@ -33,7 +33,7 @@ import java.util.*;
  *
  * @lucene.experimental
  */
-abstract public class AbstractFirstPassGroupingCollector<GROUP_VALUE_TYPE> extends Collector {
+abstract public class AbstractFirstPassGroupingCollector<GROUP_VALUE_TYPE> extends SimpleCollector {
 
   private final Sort groupSort;
   private final FieldComparator<?>[] comparators;
@@ -326,7 +326,7 @@ abstract public class AbstractFirstPassGroupingCollector<GROUP_VALUE_TYPE> exten
   }
 
   @Override
-  public void setNextReader(AtomicReaderContext readerContext) throws IOException {
+  protected void doSetNextReader(LeafReaderContext readerContext) throws IOException {
     docBase = readerContext.docBase;
     for (int i=0; i<comparators.length; i++) {
       comparators[i] = comparators[i].setNextReader(readerContext);

@@ -19,7 +19,6 @@ package org.apache.solr.handler.dataimport;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -27,7 +26,8 @@ import java.util.Map;
 import java.util.Map.Entry;
 
 import org.apache.commons.io.FileUtils;
-import org.apache.http.client.HttpClient;
+import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.TestUtil;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.embedded.JettySolrRunner;
 import org.apache.solr.client.solrj.impl.HttpSolrServer;
@@ -53,17 +53,17 @@ public class TestSolrEntityProcessorEndToEnd extends AbstractDataImportHandlerTe
 
   private static final String DEAD_SOLR_SERVER = "http://[ff01::114]:33332/solr";
   
-  private static final List<Map<String,Object>> DB_DOCS = new ArrayList<Map<String,Object>>();
-  private static final List<Map<String,Object>> SOLR_DOCS = new ArrayList<Map<String,Object>>();
+  private static final List<Map<String,Object>> DB_DOCS = new ArrayList<>();
+  private static final List<Map<String,Object>> SOLR_DOCS = new ArrayList<>();
   
   static {
     // dynamic fields in the destination schema
-    Map<String,Object> dbDoc = new HashMap<String,Object>();
+    Map<String,Object> dbDoc = new HashMap<>();
     dbDoc.put("dbid_s", "1");
     dbDoc.put("dbdesc_s", "DbDescription");
     DB_DOCS.add(dbDoc);
 
-    Map<String,Object> solrDoc = new HashMap<String,Object>();
+    Map<String,Object> solrDoc = new HashMap<>();
     solrDoc.put("id", "1");
     solrDoc.put("desc", "SolrDescription");
     SOLR_DOCS.add(solrDoc);
@@ -95,7 +95,7 @@ public class TestSolrEntityProcessorEndToEnd extends AbstractDataImportHandlerTe
   }
   
   private String getSourceUrl() {
-    return "http://127.0.0.1:" + jetty.getLocalPort() + "/solr";
+    return buildUrl(jetty.getLocalPort(), "/solr");
   }
   
   //TODO: fix this test to close its directories
@@ -161,7 +161,7 @@ public class TestSolrEntityProcessorEndToEnd extends AbstractDataImportHandlerTe
     
     try {
       addDocumentsToSolr(generateSolrDocuments(30));
-      Map<String,String> map = new HashMap<String,String>();
+      Map<String,String> map = new HashMap<>();
       map.put("rows", "50");
       runFullImport(generateDIHConfig("query='*:*' fq='desc:Description1*,desc:Description*2' rows='2'", false), map);
     } catch (Exception e) {
@@ -202,15 +202,15 @@ public class TestSolrEntityProcessorEndToEnd extends AbstractDataImportHandlerTe
     assertQ(req("*:*"), "//result[@numFound='0']");
     
     try {
-      List<Map<String,Object>> DOCS = new ArrayList<Map<String,Object>>(DB_DOCS);
-      Map<String, Object> doc = new HashMap<String, Object>();
+      List<Map<String,Object>> DOCS = new ArrayList<>(DB_DOCS);
+      Map<String, Object> doc = new HashMap<>();
       doc.put("dbid_s", "2");
       doc.put("dbdesc_s", "DbDescription2");
       DOCS.add(doc);
       MockDataSource.setIterator("select * from x", DOCS.iterator());
 
-      DOCS = new ArrayList<Map<String,Object>>(SOLR_DOCS);
-      Map<String,Object> solrDoc = new HashMap<String,Object>();
+      DOCS = new ArrayList<>(SOLR_DOCS);
+      Map<String,Object> solrDoc = new HashMap<>();
       solrDoc.put("id", "2");
       solrDoc.put("desc", "SolrDescription2");
       DOCS.add(solrDoc);
@@ -261,9 +261,9 @@ public class TestSolrEntityProcessorEndToEnd extends AbstractDataImportHandlerTe
   }
     
   private static List<Map<String,Object>> generateSolrDocuments(int num) {
-    List<Map<String,Object>> docList = new ArrayList<Map<String,Object>>();
+    List<Map<String,Object>> docList = new ArrayList<>();
     for (int i = 1; i <= num; i++) {
-      Map<String,Object> map = new HashMap<String,Object>();
+      Map<String,Object> map = new HashMap<>();
       map.put("id", i);
       map.put("desc", "Description" + i);
       docList.add(map);
@@ -272,7 +272,7 @@ public class TestSolrEntityProcessorEndToEnd extends AbstractDataImportHandlerTe
   }
   
   private void addDocumentsToSolr(List<Map<String,Object>> docs) throws SolrServerException, IOException {
-    List<SolrInputDocument> sidl = new ArrayList<SolrInputDocument>();
+    List<SolrInputDocument> sidl = new ArrayList<>();
     for (Map<String,Object> doc : docs) {
       SolrInputDocument sd = new SolrInputDocument();
       for (Entry<String,Object> entry : doc.entrySet()) {
@@ -293,7 +293,6 @@ public class TestSolrEntityProcessorEndToEnd extends AbstractDataImportHandlerTe
   }
   
   private static class SolrInstance {
-
     File homeDir;
     File confDir;
     
@@ -306,7 +305,7 @@ public class TestSolrEntityProcessorEndToEnd extends AbstractDataImportHandlerTe
     }
     
     public String getDataDir() {
-      return dataDir.toString();
+      return initCoreDataDir.toString();
     }
     
     public String getSolrConfigFile() {
@@ -318,16 +317,12 @@ public class TestSolrEntityProcessorEndToEnd extends AbstractDataImportHandlerTe
     }
 
     public void setUp() throws Exception {
-      
-      File home = new File(TEMP_DIR, getClass().getName() + "-"
-          + System.currentTimeMillis());
-      
-      homeDir = new File(home + "inst");
-      dataDir = new File(homeDir + "/collection1", "data");
+      homeDir = createTempDir().toFile();
+      initCoreDataDir = new File(homeDir + "/collection1", "data");
       confDir = new File(homeDir + "/collection1", "conf");
       
       homeDir.mkdirs();
-      dataDir.mkdirs();
+      initCoreDataDir.mkdirs();
       confDir.mkdirs();
 
       FileUtils.copyFile(getFile(getSolrXmlFile()), new File(homeDir, "solr.xml"));
@@ -339,16 +334,15 @@ public class TestSolrEntityProcessorEndToEnd extends AbstractDataImportHandlerTe
       f = new File(confDir, "data-config.xml");
       FileUtils.copyFile(getFile(SOURCE_CONF_DIR + "dataconfig-contentstream.xml"), f);
     }
-    
+
     public void tearDown() throws Exception {
-      recurseDelete(homeDir);
+      IOUtils.rm(homeDir.toPath());
     }
-    
   }
   
   private JettySolrRunner createJetty(SolrInstance instance) throws Exception {
-    System.setProperty("solr.data.dir", instance.getDataDir());
-    JettySolrRunner jetty = new JettySolrRunner(instance.getHomeDir(), "/solr", 0);
+    JettySolrRunner jetty = new JettySolrRunner(instance.getHomeDir(), "/solr", 0, null, null, true, null, sslConfig);
+    jetty.setDataDir(instance.getDataDir());
     jetty.start();
     return jetty;
   }

@@ -23,7 +23,7 @@ import java.util.BitSet;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
@@ -32,6 +32,8 @@ import org.apache.lucene.search.TimeLimitingCollector.TimerThread;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.Counter;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.LuceneTestCase.SuppressSysoutChecks;
+import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.ThreadInterruptedException;
 
 /**
@@ -39,6 +41,7 @@ import org.apache.lucene.util.ThreadInterruptedException;
  * correctness (regardless of timeout), (2) expected timeout behavior,
  * and (3) a sanity test with multiple searching threads.
  */
+@SuppressSysoutChecks(bugUrl = "http://test.is.timing.sensitive.so.it.prints.instead.of.failing")
 public class TestTimeLimitingCollector extends LuceneTestCase {
   private static final int SLOW_DOWN = 3;
   private static final long TIME_ALLOWED = 17 * SLOW_DOWN; // so searches can find about 17 docs.
@@ -80,7 +83,7 @@ public class TestTimeLimitingCollector extends LuceneTestCase {
         "blueberry pizza",
     };
     directory = newDirectory();
-    RandomIndexWriter iw = new RandomIndexWriter(random(), directory, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
+    RandomIndexWriter iw = new RandomIndexWriter(random(), directory, newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
     
     for (int i=0; i<N_DOCS; i++) {
       add(docText[i%docText.length], iw);
@@ -141,7 +144,8 @@ public class TestTimeLimitingCollector extends LuceneTestCase {
       
       myHc = new MyHitCollector();
       long oneHour = 3600000;
-      Collector tlCollector = createTimedCollector(myHc, oneHour, false);
+      long duration = TestUtil.nextLong(random(), oneHour, Long.MAX_VALUE); 
+      Collector tlCollector = createTimedCollector(myHc, duration, false);
       search(tlCollector);
       totalTLCResults = myHc.hitCount();
     } catch (Exception e) {
@@ -307,7 +311,7 @@ public class TestTimeLimitingCollector extends LuceneTestCase {
   }
   
   // counting collector that can slow down at collect().
-  private class MyHitCollector extends Collector {
+  private class MyHitCollector extends SimpleCollector {
     private final BitSet bits = new BitSet();
     private int slowdown = 0;
     private int lastDocCollected = -1;
@@ -349,7 +353,7 @@ public class TestTimeLimitingCollector extends LuceneTestCase {
     }
     
     @Override
-    public void setNextReader(AtomicReaderContext context) {
+    protected void doSetNextReader(LeafReaderContext context) throws IOException {
       docBase = context.docBase;
     }
     

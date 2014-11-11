@@ -17,7 +17,7 @@ package org.apache.lucene.search;
  * limitations under the License.
  */
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.util.Counter;
 import org.apache.lucene.util.ThreadInterruptedException;
 
@@ -29,7 +29,7 @@ import java.io.IOException;
  * exceeded, the search thread is stopped by throwing a
  * {@link TimeExceededException}.
  */
-public class TimeLimitingCollector extends Collector {
+public class TimeLimitingCollector implements Collector {
 
 
   /** Thrown when elapsed search time exceeds allowed search time. */
@@ -39,7 +39,7 @@ public class TimeLimitingCollector extends Collector {
     private long timeElapsed;
     private int lastDocCollected;
     private TimeExceededException(long timeAllowed, long timeElapsed, int lastDocCollected) {
-      super("Elapsed time: " + timeElapsed + "Exceeded allowed search time: " + timeAllowed + " ms.");
+      super("Elapsed time: " + timeElapsed + ".  Exceeded allowed search time: " + timeAllowed + " ms.");
       this.timeAllowed = timeAllowed;
       this.timeElapsed = timeElapsed;
       this.lastDocCollected = lastDocCollected;
@@ -131,45 +131,30 @@ public class TimeLimitingCollector extends Collector {
     this.greedy = greedy;
   }
   
-  /**
-   * Calls {@link Collector#collect(int)} on the decorated {@link Collector}
-   * unless the allowed time has passed, in which case it throws an exception.
-   * 
-   * @throws TimeExceededException
-   *           if the time allowed has exceeded.
-   */
   @Override
-  public void collect(final int doc) throws IOException {
-    final long time = clock.get();
-    if (timeout < time) {
-      if (greedy) {
-        //System.out.println(this+"  greedy: before failing, collecting doc: "+(docBase + doc)+"  "+(time-t0));
-        collector.collect(doc);
-      }
-      //System.out.println(this+"  failing on:  "+(docBase + doc)+"  "+(time-t0));
-      throw new TimeExceededException( timeout-t0, time-t0, docBase + doc );
-    }
-    //System.out.println(this+"  collecting: "+(docBase + doc)+"  "+(time-t0));
-    collector.collect(doc);
-  }
-  
-  @Override
-  public void setNextReader(AtomicReaderContext context) throws IOException {
-    collector.setNextReader(context);
+  public LeafCollector getLeafCollector(LeafReaderContext context) throws IOException {
     this.docBase = context.docBase;
     if (Long.MIN_VALUE == t0) {
       setBaseline();
     }
-  }
-  
-  @Override
-  public void setScorer(Scorer scorer) throws IOException {
-    collector.setScorer(scorer);
-  }
-
-  @Override
-  public boolean acceptsDocsOutOfOrder() {
-    return collector.acceptsDocsOutOfOrder();
+    return new FilterLeafCollector(collector.getLeafCollector(context)) {
+      
+      @Override
+      public void collect(int doc) throws IOException {
+        final long time = clock.get();
+        if (time - timeout > 0L) {
+          if (greedy) {
+            //System.out.println(this+"  greedy: before failing, collecting doc: "+(docBase + doc)+"  "+(time-t0));
+            in.collect(doc);
+          }
+          //System.out.println(this+"  failing on:  "+(docBase + doc)+"  "+(time-t0));
+          throw new TimeExceededException( timeout-t0, time-t0, docBase + doc );
+        }
+        //System.out.println(this+"  collecting: "+(docBase + doc)+"  "+(time-t0));
+        in.collect(doc);
+      }
+      
+    };
   }
   
   /**

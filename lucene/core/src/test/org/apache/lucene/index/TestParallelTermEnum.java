@@ -28,11 +28,11 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 public class TestParallelTermEnum extends LuceneTestCase {
-  private AtomicReader ir1;
-  private AtomicReader ir2;
+  private LeafReader ir1;
+  private LeafReader ir2;
   private Directory rd1;
   private Directory rd2;
   
@@ -41,8 +41,7 @@ public class TestParallelTermEnum extends LuceneTestCase {
     super.setUp();
     Document doc;
     rd1 = newDirectory();
-    IndexWriter iw1 = new IndexWriter(rd1, newIndexWriterConfig( 
-        TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    IndexWriter iw1 = new IndexWriter(rd1, newIndexWriterConfig(new MockAnalyzer(random())));
 
     doc = new Document();
     doc.add(newTextField("field1", "the quick brown fox jumps", Field.Store.YES));
@@ -51,8 +50,7 @@ public class TestParallelTermEnum extends LuceneTestCase {
 
     iw1.close();
     rd2 = newDirectory();
-    IndexWriter iw2 = new IndexWriter(rd2, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    IndexWriter iw2 = new IndexWriter(rd2, newIndexWriterConfig(new MockAnalyzer(random())));
 
     doc = new Document();
     doc.add(newTextField("field1", "the fox jumps over the lazy dog", Field.Store.YES));
@@ -82,7 +80,7 @@ public class TestParallelTermEnum extends LuceneTestCase {
       BytesRef b = te.next();
       assertNotNull(b);
       assertEquals(t, b.utf8ToString());
-      DocsEnum td = _TestUtil.docs(random(), te, liveDocs, null, DocsEnum.FLAG_NONE);
+      DocsEnum td = TestUtil.docs(random(), te, liveDocs, null, DocsEnum.FLAG_NONE);
       assertTrue(td.nextDoc() != DocIdSetIterator.NO_MORE_DOCS);
       assertEquals(0, td.docID());
       assertEquals(td.nextDoc(), DocIdSetIterator.NO_MORE_DOCS);
@@ -91,7 +89,7 @@ public class TestParallelTermEnum extends LuceneTestCase {
   }
 
   public void test1() throws IOException {
-    ParallelAtomicReader pr = new ParallelAtomicReader(ir1, ir2);
+    ParallelLeafReader pr = new ParallelLeafReader(ir1, ir2);
 
     Bits liveDocs = pr.getLiveDocs();
 

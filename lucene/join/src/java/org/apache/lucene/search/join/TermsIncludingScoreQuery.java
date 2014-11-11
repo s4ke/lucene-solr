@@ -17,28 +17,30 @@ package org.apache.lucene.search.join;
  * limitations under the License.
  */
 
-import org.apache.lucene.index.AtomicReaderContext;
+import java.io.IOException;
+import java.util.Locale;
+import java.util.Set;
+
 import org.apache.lucene.index.DocsEnum;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
-import org.apache.lucene.search.Collector;
+import org.apache.lucene.search.BulkScorer;
 import org.apache.lucene.search.ComplexExplanation;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.Explanation;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.LeafCollector;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.Weight;
+import org.apache.lucene.util.BitSetIterator;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.BytesRefHash;
 import org.apache.lucene.util.FixedBitSet;
-
-import java.io.IOException;
-import java.util.Locale;
-import java.util.Set;
 
 class TermsIncludingScoreQuery extends Query {
 
@@ -130,14 +132,19 @@ class TermsIncludingScoreQuery extends Query {
       private TermsEnum segmentTermsEnum;
 
       @Override
-      public Explanation explain(AtomicReaderContext context, int doc) throws IOException {
-        SVInnerScorer scorer = (SVInnerScorer) scorer(context, false, false, context.reader().getLiveDocs());
+      public Explanation explain(LeafReaderContext context, int doc) throws IOException {
+        SVInnerScorer scorer = (SVInnerScorer) bulkScorer(context, false, null);
         if (scorer != null) {
-          if (scorer.advanceForExplainOnly(doc) == doc) {
-            return scorer.explain();
-          }
+          return scorer.explain(doc);
         }
         return new ComplexExplanation(false, 0.0f, "Not a match");
+      }
+
+      @Override
+      public boolean scoresDocsOutOfOrder() {
+        // We have optimized impls below if we are allowed
+        // to score out-of-order:
+        return true;
       }
 
       @Override
@@ -156,7 +163,7 @@ class TermsIncludingScoreQuery extends Query {
       }
 
       @Override
-      public Scorer scorer(AtomicReaderContext context, boolean scoreDocsInOrder, boolean topScorer, Bits acceptDocs) throws IOException {
+      public Scorer scorer(LeafReaderContext context, Bits acceptDocs) throws IOException {
         Terms terms = context.reader().terms(field);
         if (terms == null) {
           return null;
@@ -166,23 +173,41 @@ class TermsIncludingScoreQuery extends Query {
         final long cost = context.reader().maxDoc() * terms.size();
 
         segmentTermsEnum = terms.iterator(segmentTermsEnum);
-        if (scoreDocsInOrder) {
-          if (multipleValuesPerDocument) {
-            return new MVInOrderScorer(this, acceptDocs, segmentTermsEnum, context.reader().maxDoc(), cost);
-          } else {
-            return new SVInOrderScorer(this, acceptDocs, segmentTermsEnum, context.reader().maxDoc(), cost);
-          }
-        } else if (multipleValuesPerDocument) {
-          return new MVInnerScorer(this, acceptDocs, segmentTermsEnum, context.reader().maxDoc(), cost);
+        if (multipleValuesPerDocument) {
+          return new MVInOrderScorer(this, acceptDocs, segmentTermsEnum, context.reader().maxDoc(), cost);
         } else {
-          return new SVInnerScorer(this, acceptDocs, segmentTermsEnum, cost);
+          return new SVInOrderScorer(this, acceptDocs, segmentTermsEnum, context.reader().maxDoc(), cost);
+        }
+      }
+
+      @Override
+      public BulkScorer bulkScorer(LeafReaderContext context, boolean scoreDocsInOrder, Bits acceptDocs) throws IOException {
+
+        if (scoreDocsInOrder) {
+          return super.bulkScorer(context, scoreDocsInOrder, acceptDocs);
+        } else {
+          Terms terms = context.reader().terms(field);
+          if (terms == null) {
+            return null;
+          }
+          // what is the runtime...seems ok?
+          final long cost = context.reader().maxDoc() * terms.size();
+
+          segmentTermsEnum = terms.iterator(segmentTermsEnum);
+          // Optimized impls that take advantage of docs
+          // being allowed to be out of order:
+          if (multipleValuesPerDocument) {
+            return new MVInnerScorer(this, acceptDocs, segmentTermsEnum, context.reader().maxDoc(), cost);
+          } else {
+            return new SVInnerScorer(this, acceptDocs, segmentTermsEnum, cost);
+          }
         }
       }
     };
   }
 
   // This impl assumes that the 'join' values are used uniquely per doc per field. Used for one to many relations.
-  class SVInnerScorer extends Scorer {
+  class SVInnerScorer extends BulkScorer {
 
     final BytesRef spare = new BytesRef();
     final Bits acceptDocs;
@@ -196,7 +221,6 @@ class TermsIncludingScoreQuery extends Query {
     int doc;
 
     SVInnerScorer(Weight weight, Bits acceptDocs, TermsEnum termsEnum, long cost) {
-      super(weight);
       this.acceptDocs = acceptDocs;
       this.termsEnum = termsEnum;
       this.cost = cost;
@@ -204,25 +228,20 @@ class TermsIncludingScoreQuery extends Query {
     }
 
     @Override
-    public void score(Collector collector) throws IOException {
-      collector.setScorer(this);
-      for (int doc = nextDocOutOfOrder(); doc != NO_MORE_DOCS; doc = nextDocOutOfOrder()) {
-        collector.collect(doc);
+    public boolean score(LeafCollector collector, int max) throws IOException {
+      FakeScorer fakeScorer = new FakeScorer();
+      collector.setScorer(fakeScorer);
+      if (doc == -1) {
+        doc = nextDocOutOfOrder();
       }
-    }
+      while(doc < max) {
+        fakeScorer.doc = doc;
+        fakeScorer.score = scores[ords[scoreUpto]];
+        collector.collect(doc);
+        doc = nextDocOutOfOrder();
+      }
 
-    @Override
-    public float score() throws IOException {
-      return scores[ords[scoreUpto]];
-    }
-
-    Explanation explain() throws IOException {
-      return new ComplexExplanation(true, score(), "Score based on join value " + termsEnum.term().utf8ToString());
-    }
-
-    @Override
-    public int docID() {
-      return doc;
+      return doc != DocsEnum.NO_MORE_DOCS;
     }
 
     int nextDocOutOfOrder() throws IOException {
@@ -251,17 +270,7 @@ class TermsIncludingScoreQuery extends Query {
       return docsEnum.nextDoc();
     }
 
-    @Override
-    public int nextDoc() throws IOException {
-      throw new UnsupportedOperationException("nextDoc() isn't supported because doc ids are emitted out of order");
-    }
-
-    @Override
-    public int advance(int target) throws IOException {
-      throw new UnsupportedOperationException("advance() isn't supported because doc ids are emitted out of order");
-    }
-
-    private int advanceForExplainOnly(int target) throws IOException {
+    private Explanation explain(int target) throws IOException {
       int docId;
       do {
         docId = nextDocOutOfOrder();
@@ -276,17 +285,8 @@ class TermsIncludingScoreQuery extends Query {
         }
         docsEnum = null; // goto the next ord.
       } while (docId != DocIdSetIterator.NO_MORE_DOCS);
-      return docId;
-    }
 
-    @Override
-    public int freq() {
-      return 1;
-    }
-
-    @Override
-    public long cost() {
-      return cost;
+      return new ComplexExplanation(true, scores[ords[scoreUpto]], "Score based on join value " + termsEnum.term().utf8ToString());
     }
   }
 
@@ -329,7 +329,7 @@ class TermsIncludingScoreQuery extends Query {
       FixedBitSet matchingDocs = new FixedBitSet(maxDoc);
       this.scores = new float[maxDoc];
       fillDocsAndScores(matchingDocs, acceptDocs, termsEnum);
-      this.matchingDocsIterator = matchingDocs.iterator();
+      this.matchingDocsIterator = new BitSetIterator(matchingDocs, cost);
       this.cost = cost;
     }
 

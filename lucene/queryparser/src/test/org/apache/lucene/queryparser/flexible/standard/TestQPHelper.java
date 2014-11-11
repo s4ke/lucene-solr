@@ -18,7 +18,6 @@ package org.apache.lucene.queryparser.flexible.standard;
  */
 
 import java.io.IOException;
-import java.io.Reader;
 import java.text.DateFormat;
 import java.util.Calendar;
 import java.util.Date;
@@ -67,7 +66,7 @@ import org.apache.lucene.search.TermRangeQuery;
 import org.apache.lucene.search.WildcardQuery;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.automaton.BasicAutomata;
+import org.apache.lucene.util.automaton.Automata;
 import org.apache.lucene.util.automaton.CharacterRunAutomaton;
 import org.apache.lucene.util.automaton.RegExp;
 import org.junit.AfterClass;
@@ -322,15 +321,15 @@ public class TestQPHelper extends LuceneTestCase {
     StandardQueryParser qp = new StandardQueryParser(new MockAnalyzer(random(), MockTokenizer.WHITESPACE, false));
     Query q = qp.parse("foo*bar", "field");
     assertTrue(q instanceof WildcardQuery);
-    assertEquals(MultiTermQuery.CONSTANT_SCORE_AUTO_REWRITE_DEFAULT, ((MultiTermQuery) q).getRewriteMethod());
+    assertEquals(MultiTermQuery.CONSTANT_SCORE_FILTER_REWRITE, ((MultiTermQuery) q).getRewriteMethod());
 
     q = qp.parse("foo*", "field");
     assertTrue(q instanceof PrefixQuery);
-    assertEquals(MultiTermQuery.CONSTANT_SCORE_AUTO_REWRITE_DEFAULT, ((MultiTermQuery) q).getRewriteMethod());
+    assertEquals(MultiTermQuery.CONSTANT_SCORE_FILTER_REWRITE, ((MultiTermQuery) q).getRewriteMethod());
 
     q = qp.parse("[a TO z]", "field");
     assertTrue(q instanceof TermRangeQuery);
-    assertEquals(MultiTermQuery.CONSTANT_SCORE_AUTO_REWRITE_DEFAULT, ((MultiTermQuery) q).getRewriteMethod());
+    assertEquals(MultiTermQuery.CONSTANT_SCORE_FILTER_REWRITE, ((MultiTermQuery) q).getRewriteMethod());
   }
 
   public void testCJK() throws Exception {
@@ -660,7 +659,7 @@ public class TestQPHelper extends LuceneTestCase {
 
   public void testRange() throws Exception {
     assertQueryEquals("[ a TO z]", null, "[a TO z]");
-    assertEquals(MultiTermQuery.CONSTANT_SCORE_AUTO_REWRITE_DEFAULT, ((TermRangeQuery)getQuery("[ a TO z]", null)).getRewriteMethod());
+    assertEquals(MultiTermQuery.CONSTANT_SCORE_FILTER_REWRITE, ((TermRangeQuery)getQuery("[ a TO z]", null)).getRewriteMethod());
 
     StandardQueryParser qp = new StandardQueryParser();
     
@@ -741,7 +740,7 @@ public class TestQPHelper extends LuceneTestCase {
     final String hourField = "hour";
     StandardQueryParser qp = new StandardQueryParser();
 
-    Map<CharSequence, DateTools.Resolution> dateRes =  new HashMap<CharSequence, DateTools.Resolution>();
+    Map<CharSequence, DateTools.Resolution> dateRes =  new HashMap<>();
     
     // set a field specific date resolution    
     dateRes.put(monthField, DateTools.Resolution.MONTH);
@@ -957,7 +956,7 @@ public class TestQPHelper extends LuceneTestCase {
   }
 
   public void testBoost() throws Exception {
-    CharacterRunAutomaton stopSet = new CharacterRunAutomaton(BasicAutomata.makeString("on"));
+    CharacterRunAutomaton stopSet = new CharacterRunAutomaton(Automata.makeString("on"));
     Analyzer oneStopAnalyzer = new MockAnalyzer(random(), MockTokenizer.SIMPLE, true, stopSet);
     StandardQueryParser qp = new StandardQueryParser();
     qp.setAnalyzer(oneStopAnalyzer);
@@ -1049,7 +1048,7 @@ public class TestQPHelper extends LuceneTestCase {
 // Todo: Convert from DateField to DateUtil
 //  public void testLocalDateFormat() throws IOException, QueryNodeException {
 //    Directory ramDir = newDirectory();
-//    IndexWriter iw = new IndexWriter(ramDir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random, MockTokenizer.WHITESPACE, false)));
+//    IndexWriter iw = new IndexWriter(ramDir, newIndexWriterConfig(new MockAnalyzer(random, MockTokenizer.WHITESPACE, false)));
 //    addDateDoc("a", 2005, 12, 2, 10, 15, 33, iw);
 //    addDateDoc("b", 2005, 12, 4, 22, 15, 00, iw);
 //    iw.close();
@@ -1153,7 +1152,7 @@ public class TestQPHelper extends LuceneTestCase {
     assertTrue(qp.parse("/[A-Z][123]/^0.5", df) instanceof RegexpQuery);
     assertEquals(q, qp.parse("/[A-Z][123]/^0.5", df));
     assertEquals(MultiTermQuery.SCORING_BOOLEAN_QUERY_REWRITE, ((RegexpQuery)qp.parse("/[A-Z][123]/^0.5", df)).getRewriteMethod());
-    qp.setMultiTermRewriteMethod(MultiTermQuery.CONSTANT_SCORE_AUTO_REWRITE_DEFAULT);
+    qp.setMultiTermRewriteMethod(MultiTermQuery.CONSTANT_SCORE_FILTER_REWRITE);
     
     Query escaped = new RegexpQuery(new Term("field", "[a-z]\\/[123]"));
     assertEquals(escaped, qp.parse("/[a-z]\\/[123]/", df));
@@ -1310,7 +1309,7 @@ public class TestQPHelper extends LuceneTestCase {
 
   public void testMultiPhraseQuery() throws Exception {
     Directory dir = newDirectory();
-    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new CannedAnalyzer()));
+    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(new CannedAnalyzer()));
     Document doc = new Document();
     doc.add(newTextField("field", "", Field.Store.NO));
     w.addDocument(doc);

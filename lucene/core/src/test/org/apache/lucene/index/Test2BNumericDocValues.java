@@ -23,36 +23,41 @@ import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.store.BaseDirectoryWrapper;
 import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.TimeUnits;
-import org.apache.lucene.util._TestUtil;
-import org.junit.Ignore;
+import org.apache.lucene.util.LuceneTestCase.Monster;
+import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 
 import com.carrotsearch.randomizedtesting.annotations.TimeoutSuite;
 
-@TimeoutSuite(millis = 80 * TimeUnits.HOUR)
-@Ignore("takes ~ 30 minutes")
+@SuppressCodecs({"SimpleText", "Memory", "Direct"})
+@TimeoutSuite(millis = 8 * TimeUnits.HOUR)
+// The two hour time was achieved on a Linux 3.13 system with these specs:
+// 3-core AMD at 2.5Ghz, 12 GB RAM, 5GB test heap, 2 test JVMs, 2TB SATA.
+@Monster("takes ~ 2 hours if the heap is 5gb")
 public class Test2BNumericDocValues extends LuceneTestCase {
   
-  // indexes Integer.MAX_VALUE docs with an increasing dv field
+  // indexes IndexWriter.MAX_DOCS docs with an increasing dv field
   public void testNumerics() throws Exception {
-    BaseDirectoryWrapper dir = newFSDirectory(_TestUtil.getTempDir("2BNumerics"));
+    BaseDirectoryWrapper dir = newFSDirectory(createTempDir("2BNumerics"));
     if (dir instanceof MockDirectoryWrapper) {
       ((MockDirectoryWrapper)dir).setThrottling(MockDirectoryWrapper.Throttling.NEVER);
     }
     
     IndexWriter w = new IndexWriter(dir,
-        new IndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()))
+        new IndexWriterConfig(new MockAnalyzer(random()))
         .setMaxBufferedDocs(IndexWriterConfig.DISABLE_AUTO_FLUSH)
         .setRAMBufferSizeMB(256.0)
         .setMergeScheduler(new ConcurrentMergeScheduler())
         .setMergePolicy(newLogMergePolicy(false, 10))
-        .setOpenMode(IndexWriterConfig.OpenMode.CREATE));
+        .setOpenMode(IndexWriterConfig.OpenMode.CREATE)
+        .setCodec(TestUtil.getDefaultCodec()));
 
     Document doc = new Document();
     NumericDocValuesField dvField = new NumericDocValuesField("dv", 0);
     doc.add(dvField);
     
-    for (int i = 0; i < Integer.MAX_VALUE; i++) {
+    for (int i = 0; i < IndexWriter.MAX_DOCS; i++) {
       dvField.setLongValue(i);
       w.addDocument(doc);
       if (i % 100000 == 0) {
@@ -69,8 +74,8 @@ public class Test2BNumericDocValues extends LuceneTestCase {
     
     DirectoryReader r = DirectoryReader.open(dir);
     long expectedValue = 0;
-    for (AtomicReaderContext context : r.leaves()) {
-      AtomicReader reader = context.reader();
+    for (LeafReaderContext context : r.leaves()) {
+      LeafReader reader = context.reader();
       NumericDocValues dv = reader.getNumericDocValues("dv");
       for (int i = 0; i < reader.maxDoc(); i++) {
         assertEquals(expectedValue, dv.get(i));

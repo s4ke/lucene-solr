@@ -18,7 +18,7 @@ package org.apache.lucene.analysis.uima;
  */
 
 import org.apache.lucene.analysis.util.TokenizerFactory;
-import org.apache.lucene.util.AttributeSource.AttributeFactory;
+import org.apache.lucene.util.AttributeFactory;
 
 import java.io.Reader;
 import java.util.HashMap;
@@ -31,7 +31,7 @@ public class UIMAAnnotationsTokenizerFactory extends TokenizerFactory {
 
   private String descriptorPath;
   private String tokenType;
-  private final Map<String,Object> configurationParameters = new HashMap<String,Object>();
+  private final Map<String,Object> configurationParameters = new HashMap<>();
 
   /** Creates a new UIMAAnnotationsTokenizerFactory */
   public UIMAAnnotationsTokenizerFactory(Map<String,String> args) {

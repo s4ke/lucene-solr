@@ -31,34 +31,36 @@ import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.analysis.tokenattributes.PayloadAttribute;
 import org.apache.lucene.document.BinaryDocValuesField;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field;
 import org.apache.lucene.document.Field.Store;
+import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.SortedDocValuesField;
+import org.apache.lucene.document.SortedNumericDocValuesField;
 import org.apache.lucene.document.SortedSetDocValuesField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.DocsEnum;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.index.FieldInvertState;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.SlowCompositeReaderWrapper;
 import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.Terms;
-import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.index.TermsEnum.SeekStatus;
-import org.apache.lucene.index.sorter.SortingAtomicReader.SortingDocsAndPositionsEnum;
-import org.apache.lucene.index.sorter.SortingAtomicReader.SortingDocsEnum;
+import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.index.sorter.SortingLeafReader.SortingDocsAndPositionsEnum;
+import org.apache.lucene.index.sorter.SortingLeafReader.SortingDocsEnum;
 import org.apache.lucene.search.CollectionStatistics;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.TermStatistics;
@@ -68,7 +70,7 @@ import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -98,7 +100,7 @@ public abstract class SorterTestBase extends LuceneTestCase {
     }
     
     @Override
-    public SimScorer simScorer(SimWeight weight, AtomicReaderContext context) throws IOException {
+    public SimScorer simScorer(SimWeight weight, LeafReaderContext context) throws IOException {
       return in.simScorer(weight, context);
     }
     
@@ -145,6 +147,7 @@ public abstract class SorterTestBase extends LuceneTestCase {
   protected static final String DOC_POSITIONS_FIELD = "positions";
   protected static final String DOC_POSITIONS_TERM = "$all$";
   protected static final String NUMERIC_DV_FIELD = "numeric";
+  protected static final String SORTED_NUMERIC_DV_FIELD = "sorted_numeric";
   protected static final String NORMS_FIELD = "norm";
   protected static final String BINARY_DV_FIELD = "binary";
   protected static final String SORTED_DV_FIELD = "sorted";
@@ -164,7 +167,8 @@ public abstract class SorterTestBase extends LuceneTestCase {
   }
   
   protected static Directory dir;
-  protected static AtomicReader reader;
+  protected static LeafReader unsortedReader;
+  protected static LeafReader sortedReader;
   protected static Integer[] sortedValues;
 
   private static Document doc(final int id, PositionsTokenStream positions) {
@@ -172,29 +176,24 @@ public abstract class SorterTestBase extends LuceneTestCase {
     doc.add(new StringField(ID_FIELD, Integer.toString(id), Store.YES));
     doc.add(new StringField(DOCS_ENUM_FIELD, DOCS_ENUM_TERM, Store.NO));
     positions.setId(id);
-    if (doesntSupportOffsets.contains(_TestUtil.getPostingsFormat(DOC_POSITIONS_FIELD))) {
-      // codec doesnt support offsets: just index positions for the field
-      doc.add(new Field(DOC_POSITIONS_FIELD, positions, TextField.TYPE_NOT_STORED));
-    } else {
-      doc.add(new Field(DOC_POSITIONS_FIELD, positions, POSITIONS_TYPE));
-    }
+    doc.add(new Field(DOC_POSITIONS_FIELD, positions, POSITIONS_TYPE));
     doc.add(new NumericDocValuesField(NUMERIC_DV_FIELD, id));
     TextField norms = new TextField(NORMS_FIELD, Integer.toString(id), Store.NO);
     norms.setBoost(Float.intBitsToFloat(id));
     doc.add(norms);
     doc.add(new BinaryDocValuesField(BINARY_DV_FIELD, new BytesRef(Integer.toString(id))));
     doc.add(new SortedDocValuesField(SORTED_DV_FIELD, new BytesRef(Integer.toString(id))));
-    if (defaultCodecSupportsSortedSet()) {
-      doc.add(new SortedSetDocValuesField(SORTED_SET_DV_FIELD, new BytesRef(Integer.toString(id))));
-      doc.add(new SortedSetDocValuesField(SORTED_SET_DV_FIELD, new BytesRef(Integer.toString(id + 1))));
-    }
+    doc.add(new SortedSetDocValuesField(SORTED_SET_DV_FIELD, new BytesRef(Integer.toString(id))));
+    doc.add(new SortedSetDocValuesField(SORTED_SET_DV_FIELD, new BytesRef(Integer.toString(id + 1))));
+    doc.add(new SortedNumericDocValuesField(SORTED_NUMERIC_DV_FIELD, id));
+    doc.add(new SortedNumericDocValuesField(SORTED_NUMERIC_DV_FIELD, id + 1));
     doc.add(new Field(TERM_VECTORS_FIELD, Integer.toString(id), TERM_VECTORS_TYPE));
     return doc;
   }
 
-  /** Creates an index for sorting. */
-  public static void createIndex(Directory dir, int numDocs, Random random) throws IOException {
-    List<Integer> ids = new ArrayList<Integer>();
+  /** Creates an unsorted index; subclasses then sort this index and open sortedReader. */
+  private static void createIndex(Directory dir, int numDocs, Random random) throws IOException {
+    List<Integer> ids = new ArrayList<>();
     for (int i = 0; i < numDocs; i++) {
       ids.add(Integer.valueOf(i * 10));
     }
@@ -205,7 +204,7 @@ public abstract class SorterTestBase extends LuceneTestCase {
     }
     
     PositionsTokenStream positions = new PositionsTokenStream();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random));
     conf.setMaxBufferedDocs(4); // create some segments
     conf.setSimilarity(new NormsSimilarity(conf.getSimilarity())); // for testing norms field
     RandomIndexWriter writer = new RandomIndexWriter(random, dir, conf);
@@ -232,28 +231,28 @@ public abstract class SorterTestBase extends LuceneTestCase {
     int numDocs = atLeast(20);
     createIndex(dir, numDocs, random());
     
-    reader = SlowCompositeReaderWrapper.wrap(DirectoryReader.open(dir));
+    unsortedReader = SlowCompositeReaderWrapper.wrap(DirectoryReader.open(dir));
   }
   
   @AfterClass
   public static void afterClassSorterTestBase() throws Exception {
-    reader.close();
+    unsortedReader.close();
+    sortedReader.close();
     dir.close();
   }
   
   @Test
   public void testBinaryDocValuesField() throws Exception {
-    BinaryDocValues dv = reader.getBinaryDocValues(BINARY_DV_FIELD);
-    BytesRef bytes = new BytesRef();
-    for (int i = 0; i < reader.maxDoc(); i++) {
-      dv.get(i, bytes);
+    BinaryDocValues dv = sortedReader.getBinaryDocValues(BINARY_DV_FIELD);
+    for (int i = 0; i < sortedReader.maxDoc(); i++) {
+      final BytesRef bytes = dv.get(i);
       assertEquals("incorrect binary DocValues for doc " + i, sortedValues[i].toString(), bytes.utf8ToString());
     }
   }
   
   @Test
   public void testDocsAndPositionsEnum() throws Exception {
-    TermsEnum termsEnum = reader.terms(DOC_POSITIONS_FIELD).iterator(null);
+    TermsEnum termsEnum = sortedReader.terms(DOC_POSITIONS_FIELD).iterator(null);
     assertEquals(SeekStatus.FOUND, termsEnum.seekCeil(new BytesRef(DOC_POSITIONS_TERM)));
     DocsAndPositionsEnum sortedPositions = termsEnum.docsAndPositions(null, null);
     int doc;
@@ -264,10 +263,8 @@ public abstract class SorterTestBase extends LuceneTestCase {
       assertEquals("incorrect freq for doc=" + doc, sortedValues[doc].intValue() / 10 + 1, freq);
       for (int i = 0; i < freq; i++) {
         assertEquals("incorrect position for doc=" + doc, i, sortedPositions.nextPosition());
-        if (!doesntSupportOffsets.contains(_TestUtil.getPostingsFormat(DOC_POSITIONS_FIELD))) {
-          assertEquals("incorrect startOffset for doc=" + doc, i, sortedPositions.startOffset());
-          assertEquals("incorrect endOffset for doc=" + doc, i, sortedPositions.endOffset());
-        }
+        assertEquals("incorrect startOffset for doc=" + doc, i, sortedPositions.startOffset());
+        assertEquals("incorrect endOffset for doc=" + doc, i, sortedPositions.endOffset());
         assertEquals("incorrect payload for doc=" + doc, freq - i, Integer.parseInt(sortedPositions.getPayload().utf8ToString()));
       }
     }
@@ -279,15 +276,13 @@ public abstract class SorterTestBase extends LuceneTestCase {
       assertTrue(((SortingDocsAndPositionsEnum) sortedPositions).reused(reuse)); // make sure reuse worked
     }
     doc = 0;
-    while ((doc = sortedPositions.advance(doc + _TestUtil.nextInt(random(), 1, 5))) != DocIdSetIterator.NO_MORE_DOCS) {
+    while ((doc = sortedPositions.advance(doc + TestUtil.nextInt(random(), 1, 5))) != DocIdSetIterator.NO_MORE_DOCS) {
       int freq = sortedPositions.freq();
       assertEquals("incorrect freq for doc=" + doc, sortedValues[doc].intValue() / 10 + 1, freq);
       for (int i = 0; i < freq; i++) {
         assertEquals("incorrect position for doc=" + doc, i, sortedPositions.nextPosition());
-        if (!doesntSupportOffsets.contains(_TestUtil.getPostingsFormat(DOC_POSITIONS_FIELD))) {
-          assertEquals("incorrect startOffset for doc=" + doc, i, sortedPositions.startOffset());
-          assertEquals("incorrect endOffset for doc=" + doc, i, sortedPositions.endOffset());
-        }
+        assertEquals("incorrect startOffset for doc=" + doc, i, sortedPositions.startOffset());
+        assertEquals("incorrect endOffset for doc=" + doc, i, sortedPositions.endOffset());
         assertEquals("incorrect payload for doc=" + doc, freq - i, Integer.parseInt(sortedPositions.getPayload().utf8ToString()));
       }
     }
@@ -302,7 +297,7 @@ public abstract class SorterTestBase extends LuceneTestCase {
       }
     }
     final FixedBitSet bits = new FixedBitSet(maxDoc);
-    final int bitsSet = _TestUtil.nextInt(random(), 1, maxDoc - 1);
+    final int bitsSet = TestUtil.nextInt(random(), 1, maxDoc - 1);
     for (int i = 0; i < bitsSet; ++i) {
       while (true) {
         final int index = random().nextInt(maxDoc);
@@ -317,8 +312,8 @@ public abstract class SorterTestBase extends LuceneTestCase {
 
   @Test
   public void testDocsEnum() throws Exception {
-    Bits mappedLiveDocs = randomLiveDocs(reader.maxDoc());
-    TermsEnum termsEnum = reader.terms(DOCS_ENUM_FIELD).iterator(null);
+    Bits mappedLiveDocs = randomLiveDocs(sortedReader.maxDoc());
+    TermsEnum termsEnum = sortedReader.terms(DOCS_ENUM_FIELD).iterator(null);
     assertEquals(SeekStatus.FOUND, termsEnum.seekCeil(new BytesRef(DOCS_ENUM_TERM)));
     DocsEnum docs = termsEnum.docs(mappedLiveDocs, null);
 
@@ -326,12 +321,12 @@ public abstract class SorterTestBase extends LuceneTestCase {
     int prev = -1;
     while ((doc = docs.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
       assertTrue("document " + doc + " marked as deleted", mappedLiveDocs == null || mappedLiveDocs.get(doc));
-      assertEquals("incorrect value; doc " + doc, sortedValues[doc].intValue(), Integer.parseInt(reader.document(doc).get(ID_FIELD)));
+      assertEquals("incorrect value; doc " + doc, sortedValues[doc].intValue(), Integer.parseInt(sortedReader.document(doc).get(ID_FIELD)));
       while (++prev < doc) {
         assertFalse("document " + prev + " not marked as deleted", mappedLiveDocs == null || mappedLiveDocs.get(prev));
       }
     }
-    while (++prev < reader.maxDoc()) {
+    while (++prev < sortedReader.maxDoc()) {
       assertFalse("document " + prev + " not marked as deleted", mappedLiveDocs == null || mappedLiveDocs.get(prev));
     }
 
@@ -344,20 +339,20 @@ public abstract class SorterTestBase extends LuceneTestCase {
     prev = -1;
     while ((doc = docs.advance(doc + 1)) != DocIdSetIterator.NO_MORE_DOCS) {
       assertTrue("document " + doc + " marked as deleted", mappedLiveDocs == null || mappedLiveDocs.get(doc));
-      assertEquals("incorrect value; doc " + doc, sortedValues[doc].intValue(), Integer.parseInt(reader.document(doc).get(ID_FIELD)));
+      assertEquals("incorrect value; doc " + doc, sortedValues[doc].intValue(), Integer.parseInt(sortedReader.document(doc).get(ID_FIELD)));
       while (++prev < doc) {
         assertFalse("document " + prev + " not marked as deleted", mappedLiveDocs == null || mappedLiveDocs.get(prev));
       }
     }
-    while (++prev < reader.maxDoc()) {
+    while (++prev < sortedReader.maxDoc()) {
       assertFalse("document " + prev + " not marked as deleted", mappedLiveDocs == null || mappedLiveDocs.get(prev));
     }
   }
   
   @Test
   public void testNormValues() throws Exception {
-    NumericDocValues dv = reader.getNormValues(NORMS_FIELD);
-    int maxDoc = reader.maxDoc();
+    NumericDocValues dv = sortedReader.getNormValues(NORMS_FIELD);
+    int maxDoc = sortedReader.maxDoc();
     for (int i = 0; i < maxDoc; i++) {
       assertEquals("incorrect norm value for doc " + i, sortedValues[i].intValue(), dv.get(i));
     }
@@ -365,8 +360,8 @@ public abstract class SorterTestBase extends LuceneTestCase {
   
   @Test
   public void testNumericDocValuesField() throws Exception {
-    NumericDocValues dv = reader.getNumericDocValues(NUMERIC_DV_FIELD);
-    int maxDoc = reader.maxDoc();
+    NumericDocValues dv = sortedReader.getNumericDocValues(NUMERIC_DV_FIELD);
+    int maxDoc = sortedReader.maxDoc();
     for (int i = 0; i < maxDoc; i++) {
       assertEquals("incorrect numeric DocValues for doc " + i, sortedValues[i].intValue(), dv.get(i));
     }
@@ -374,37 +369,47 @@ public abstract class SorterTestBase extends LuceneTestCase {
   
   @Test
   public void testSortedDocValuesField() throws Exception {
-    SortedDocValues dv = reader.getSortedDocValues(SORTED_DV_FIELD);
-    int maxDoc = reader.maxDoc();
-    BytesRef bytes = new BytesRef();
+    SortedDocValues dv = sortedReader.getSortedDocValues(SORTED_DV_FIELD);
+    int maxDoc = sortedReader.maxDoc();
     for (int i = 0; i < maxDoc; i++) {
-      dv.get(i, bytes);
+      final BytesRef bytes = dv.get(i);
       assertEquals("incorrect sorted DocValues for doc " + i, sortedValues[i].toString(), bytes.utf8ToString());
     }
   }
   
   @Test
   public void testSortedSetDocValuesField() throws Exception {
-    assumeTrue("default codec does not support SORTED_SET", defaultCodecSupportsSortedSet());
-    SortedSetDocValues dv = reader.getSortedSetDocValues(SORTED_SET_DV_FIELD);
-    int maxDoc = reader.maxDoc();
-    BytesRef bytes = new BytesRef();
+    SortedSetDocValues dv = sortedReader.getSortedSetDocValues(SORTED_SET_DV_FIELD);
+    int maxDoc = sortedReader.maxDoc();
     for (int i = 0; i < maxDoc; i++) {
       dv.setDocument(i);
-      dv.lookupOrd(dv.nextOrd(), bytes);
+      BytesRef bytes = dv.lookupOrd(dv.nextOrd());
       int value = sortedValues[i].intValue();
       assertEquals("incorrect sorted-set DocValues for doc " + i, Integer.valueOf(value).toString(), bytes.utf8ToString());
-      dv.lookupOrd(dv.nextOrd(), bytes);
+      bytes = dv.lookupOrd(dv.nextOrd());
       assertEquals("incorrect sorted-set DocValues for doc " + i, Integer.valueOf(value + 1).toString(), bytes.utf8ToString());
       assertEquals(SortedSetDocValues.NO_MORE_ORDS, dv.nextOrd());
     }
   }
   
   @Test
-  public void testTermVectors() throws Exception {
-    int maxDoc = reader.maxDoc();
+  public void testSortedNumericDocValuesField() throws Exception {
+    SortedNumericDocValues dv = sortedReader.getSortedNumericDocValues(SORTED_NUMERIC_DV_FIELD);
+    int maxDoc = sortedReader.maxDoc();
     for (int i = 0; i < maxDoc; i++) {
-      Terms terms = reader.getTermVector(i, TERM_VECTORS_FIELD);
+      dv.setDocument(i);
+      assertEquals(2, dv.count());
+      int value = sortedValues[i].intValue();
+      assertEquals("incorrect sorted-numeric DocValues for doc " + i, value, dv.valueAt(0));
+      assertEquals("incorrect sorted-numeric DocValues for doc " + i, value + 1, dv.valueAt(1));
+    }
+  }
+  
+  @Test
+  public void testTermVectors() throws Exception {
+    int maxDoc = sortedReader.maxDoc();
+    for (int i = 0; i < maxDoc; i++) {
+      Terms terms = sortedReader.getTermVector(i, TERM_VECTORS_FIELD);
       assertNotNull("term vectors not found for doc " + i + " field [" + TERM_VECTORS_FIELD + "]", terms);
       assertEquals("incorrect term vector for doc " + i, sortedValues[i].toString(), terms.iterator(null).next().utf8ToString());
     }

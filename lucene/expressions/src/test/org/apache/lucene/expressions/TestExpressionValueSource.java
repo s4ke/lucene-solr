@@ -24,7 +24,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.expressions.js.JavascriptCompiler;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.RandomIndexWriter;
@@ -35,9 +35,7 @@ import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 
-@SuppressCodecs("Lucene3x")
 public class TestExpressionValueSource extends LuceneTestCase {
   DirectoryReader reader;
   Directory dir;
@@ -46,7 +44,7 @@ public class TestExpressionValueSource extends LuceneTestCase {
   public void setUp() throws Exception {
     super.setUp();
     dir = newDirectory();
-    IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()));
     iwc.setMergePolicy(newLogMergePolicy());
     RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwc);
     
@@ -87,7 +85,7 @@ public class TestExpressionValueSource extends LuceneTestCase {
     ValueSource vs = expr.getValueSource(bindings);
     
     assertEquals(1, reader.leaves().size());
-    AtomicReaderContext leaf = reader.leaves().get(0);
+    LeafReaderContext leaf = reader.leaves().get(0);
     FunctionValues values = vs.getValues(new HashMap<String,Object>(), leaf);
     
     assertEquals(10, values.doubleVal(0), 0);
@@ -125,7 +123,7 @@ public class TestExpressionValueSource extends LuceneTestCase {
     ValueSource vs = expr.getValueSource(bindings);
     
     assertEquals(1, reader.leaves().size());
-    AtomicReaderContext leaf = reader.leaves().get(0);
+    LeafReaderContext leaf = reader.leaves().get(0);
     FunctionValues values = vs.getValues(new HashMap<String,Object>(), leaf);
     
     // everything

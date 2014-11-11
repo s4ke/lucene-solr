@@ -19,20 +19,20 @@ package org.apache.lucene.codecs;
 import java.io.Closeable;
 import java.io.IOException;
 
+import org.apache.lucene.document.DocumentStoredFieldVisitor;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.MergeState;
 import org.apache.lucene.index.StorableField;
 import org.apache.lucene.index.StoredDocument;
 import org.apache.lucene.util.Bits;
-import org.apache.lucene.index.AtomicReader;
 
 /**
  * Codec API for writing stored fields:
  * <p>
  * <ol>
- *   <li>For every document, {@link #startDocument(int)} is called,
- *       informing the Codec how many fields will be written.
+ *   <li>For every document, {@link #startDocument()} is called,
+ *       informing the Codec that a new document has started.
  *   <li>{@link #writeField(FieldInfo, StorableField)} is called for 
  *       each field in the document.
  *   <li>After all documents have been written, {@link #finish(FieldInfos, int)} 
@@ -51,10 +51,9 @@ public abstract class StoredFieldsWriter implements Closeable {
 
   /** Called before writing the stored fields of the document.
    *  {@link #writeField(FieldInfo, StorableField)} will be called
-   *  <code>numStoredFields</code> times. Note that this is
-   *  called even if the document has no stored fields, in
-   *  this case <code>numStoredFields</code> will be zero. */
-  public abstract void startDocument(int numStoredFields) throws IOException;
+   *  for each stored field. Note that this is
+   *  called even if the document has no stored fields. */
+  public abstract void startDocument() throws IOException;
 
   /** Called when a document and all its fields have been added. */
   public void finishDocument() throws IOException {}
@@ -69,25 +68,27 @@ public abstract class StoredFieldsWriter implements Closeable {
   /** Called before {@link #close()}, passing in the number
    *  of documents that were written. Note that this is 
    *  intentionally redundant (equivalent to the number of
-   *  calls to {@link #startDocument(int)}, but a Codec should
+   *  calls to {@link #startDocument()}, but a Codec should
    *  check that this is the case to detect the JRE bug described 
    *  in LUCENE-1282. */
   public abstract void finish(FieldInfos fis, int numDocs) throws IOException;
   
   /** Merges in the stored fields from the readers in 
    *  <code>mergeState</code>. The default implementation skips
-   *  over deleted documents, and uses {@link #startDocument(int)},
+   *  over deleted documents, and uses {@link #startDocument()},
    *  {@link #writeField(FieldInfo, StorableField)}, and {@link #finish(FieldInfos, int)},
    *  returning the number of documents that were written.
    *  Implementations can override this method for more sophisticated
    *  merging (bulk-byte copying, etc). */
   public int merge(MergeState mergeState) throws IOException {
     int docCount = 0;
-    for (AtomicReader reader : mergeState.readers) {
-      final int maxDoc = reader.maxDoc();
-      final Bits liveDocs = reader.getLiveDocs();
-      for (int i = 0; i < maxDoc; i++) {
-        if (liveDocs != null && !liveDocs.get(i)) {
+    for (int i=0;i<mergeState.storedFieldsReaders.length;i++) {
+      StoredFieldsReader storedFieldsReader = mergeState.storedFieldsReaders[i];
+      storedFieldsReader.checkIntegrity();
+      int maxDoc = mergeState.maxDocs[i];
+      Bits liveDocs = mergeState.liveDocs[i];
+      for (int docID=0;docID<maxDoc;docID++) {
+        if (liveDocs != null && !liveDocs.get(docID)) {
           // skip deleted docs
           continue;
         }
@@ -97,24 +98,21 @@ public abstract class StoredFieldsWriter implements Closeable {
         // on the fly?
         // NOTE: it's very important to first assign to doc then pass it to
         // fieldsWriter.addDocument; see LUCENE-1282
-        StoredDocument doc = reader.document(i);
-        addDocument(doc, mergeState.fieldInfos);
+        DocumentStoredFieldVisitor visitor = new DocumentStoredFieldVisitor();
+        storedFieldsReader.visitDocument(docID, visitor);
+        StoredDocument doc = visitor.getDocument();
+        addDocument(doc, mergeState.mergeFieldInfos);
         docCount++;
         mergeState.checkAbort.work(300);
       }
     }
-    finish(mergeState.fieldInfos, docCount);
+    finish(mergeState.mergeFieldInfos, docCount);
     return docCount;
   }
   
   /** sugar method for startDocument() + writeField() for every stored field in the document */
   protected final void addDocument(Iterable<? extends StorableField> doc, FieldInfos fieldInfos) throws IOException {
-    int storedCount = 0;
-    for (StorableField field : doc) {
-      storedCount++;
-    }
-    
-    startDocument(storedCount);
+    startDocument();
 
     for (StorableField field : doc) {
       writeField(fieldInfos.fieldInfo(field.name()), field);

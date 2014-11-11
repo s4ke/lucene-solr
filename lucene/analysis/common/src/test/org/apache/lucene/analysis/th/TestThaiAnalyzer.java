@@ -40,42 +40,32 @@ public class TestThaiAnalyzer extends BaseTokenStreamTestCase {
   @Override
   public void setUp() throws Exception {
     super.setUp();
-    assumeTrue("JRE does not support Thai dictionary-based BreakIterator", ThaiWordFilter.DBBI_AVAILABLE);
+    assumeTrue("JRE does not support Thai dictionary-based BreakIterator", ThaiTokenizer.DBBI_AVAILABLE);
   }
   /* 
    * testcase for offsets
    */
   public void testOffsets() throws Exception {
-    assertAnalyzesTo(new ThaiAnalyzer(TEST_VERSION_CURRENT, CharArraySet.EMPTY_SET), "การที่ได้ต้องแสดงว่างานดี", 
+    assertAnalyzesTo(new ThaiAnalyzer(CharArraySet.EMPTY_SET), "การที่ได้ต้องแสดงว่างานดี",
         new String[] { "การ", "ที่", "ได้", "ต้อง", "แสดง", "ว่า", "งาน", "ดี" },
         new int[] { 0, 3, 6, 9, 13, 17, 20, 23 },
         new int[] { 3, 6, 9, 13, 17, 20, 23, 25 });
   }
   
   public void testStopWords() throws Exception {
-    assertAnalyzesTo(new ThaiAnalyzer(TEST_VERSION_CURRENT), "การที่ได้ต้องแสดงว่างานดี", 
+    assertAnalyzesTo(new ThaiAnalyzer(), "การที่ได้ต้องแสดงว่างานดี",
         new String[] { "แสดง", "งาน", "ดี" },
         new int[] { 13, 20, 23 },
         new int[] { 17, 23, 25 },
         new int[] { 5, 2, 1 });
   }
   
-  public void testTokenType() throws Exception {
-      assertAnalyzesTo(new ThaiAnalyzer(TEST_VERSION_CURRENT, CharArraySet.EMPTY_SET), "การที่ได้ต้องแสดงว่างานดี ๑๒๓", 
-                       new String[] { "การ", "ที่", "ได้", "ต้อง", "แสดง", "ว่า", "งาน", "ดี", "๑๒๓" },
-                       new String[] { "<SOUTHEAST_ASIAN>", "<SOUTHEAST_ASIAN>", 
-                                      "<SOUTHEAST_ASIAN>", "<SOUTHEAST_ASIAN>", 
-                                      "<SOUTHEAST_ASIAN>", "<SOUTHEAST_ASIAN>",
-                                      "<SOUTHEAST_ASIAN>", "<SOUTHEAST_ASIAN>",
-                                      "<NUM>" });
-  }
-
   /*
    * Test that position increments are adjusted correctly for stopwords.
    */
   // note this test uses stopfilter's stopset
   public void testPositionIncrements() throws Exception {
-    final ThaiAnalyzer analyzer = new ThaiAnalyzer(TEST_VERSION_CURRENT, StopAnalyzer.ENGLISH_STOP_WORDS_SET);
+    final ThaiAnalyzer analyzer = new ThaiAnalyzer(StopAnalyzer.ENGLISH_STOP_WORDS_SET);
     assertAnalyzesTo(analyzer, "การที่ได้ต้อง the แสดงว่างานดี", 
         new String[] { "การ", "ที่", "ได้", "ต้อง", "แสดง", "ว่า", "งาน", "ดี" },
         new int[] { 0, 3, 6, 9, 18, 22, 25, 28 },
@@ -91,7 +81,7 @@ public class TestThaiAnalyzer extends BaseTokenStreamTestCase {
   }
   
   public void testReusableTokenStream() throws Exception {
-    ThaiAnalyzer analyzer = new ThaiAnalyzer(TEST_VERSION_CURRENT, CharArraySet.EMPTY_SET);
+    ThaiAnalyzer analyzer = new ThaiAnalyzer(CharArraySet.EMPTY_SET);
     assertAnalyzesTo(analyzer, "", new String[] {});
 
       assertAnalyzesTo(
@@ -107,18 +97,18 @@ public class TestThaiAnalyzer extends BaseTokenStreamTestCase {
   
   /** blast some random strings through the analyzer */
   public void testRandomStrings() throws Exception {
-    checkRandomData(random(), new ThaiAnalyzer(TEST_VERSION_CURRENT), 1000*RANDOM_MULTIPLIER);
+    checkRandomData(random(), new ThaiAnalyzer(), 1000*RANDOM_MULTIPLIER);
   }
   
   /** blast some random large strings through the analyzer */
   public void testRandomHugeStrings() throws Exception {
     Random random = random();
-    checkRandomData(random, new ThaiAnalyzer(TEST_VERSION_CURRENT), 100*RANDOM_MULTIPLIER, 8192);
+    checkRandomData(random, new ThaiAnalyzer(), 100*RANDOM_MULTIPLIER, 8192);
   }
   
   // LUCENE-3044
   public void testAttributeReuse() throws Exception {
-    ThaiAnalyzer analyzer = new ThaiAnalyzer(TEST_VERSION_CURRENT);
+    ThaiAnalyzer analyzer = new ThaiAnalyzer();
     // just consume
     TokenStream ts = analyzer.tokenStream("dummy", "ภาษาไทย");
     assertTokenStreamContents(ts, new String[] { "ภาษา", "ไทย" });
@@ -128,14 +118,10 @@ public class TestThaiAnalyzer extends BaseTokenStreamTestCase {
     assertTokenStreamContents(ts, new String[] { "ภาษา", "ไทย" });
   }
   
-  public void testEmptyTerm() throws IOException {
-    Analyzer a = new Analyzer() {
-      @Override
-      protected TokenStreamComponents createComponents(String fieldName) {
-        Tokenizer tokenizer = new KeywordTokenizer();
-        return new TokenStreamComponents(tokenizer, new ThaiWordFilter(TEST_VERSION_CURRENT, tokenizer));
-      }
-    };
-    checkOneTerm(a, "", "");
+  public void testTwoSentences() throws Exception {
+    assertAnalyzesTo(new ThaiAnalyzer(CharArraySet.EMPTY_SET), "This is a test. การที่ได้ต้องแสดงว่างานดี",
+          new String[] { "this", "is", "a", "test", "การ", "ที่", "ได้", "ต้อง", "แสดง", "ว่า", "งาน", "ดี" },
+          new int[] { 0, 5, 8, 10, 16, 19, 22, 25, 29, 33, 36, 39 },
+          new int[] { 4, 7, 9, 14, 19, 22, 25, 29, 33, 36, 39, 41 });
   }
 }

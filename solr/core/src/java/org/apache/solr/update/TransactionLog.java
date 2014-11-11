@@ -24,6 +24,7 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -77,8 +78,8 @@ public class TransactionLog {
   protected volatile boolean deleteOnClose = true;  // we can delete old tlogs since they are currently only used for real-time-get (and in the future, recovery)
 
   AtomicInteger refcount = new AtomicInteger(1);
-  Map<String,Integer> globalStringMap = new HashMap<String, Integer>();
-  List<String> globalStringList = new ArrayList<String>();
+  Map<String,Integer> globalStringMap = new HashMap<>();
+  List<String> globalStringList = new ArrayList<>();
 
   long snapshot_size;
   int snapshot_numRecords;
@@ -271,7 +272,7 @@ public class TransactionLog {
 
     synchronized (this) {
       globalStringList = (List<String>)header.get("strings");
-      globalStringMap = new HashMap<String, Integer>(globalStringList.size());
+      globalStringMap = new HashMap<>(globalStringList.size());
       for (int i=0; i<globalStringList.size(); i++) {
         globalStringMap.put( globalStringList.get(i), i+1);
       }
@@ -295,7 +296,7 @@ public class TransactionLog {
 
   Collection<String> getGlobalStrings() {
     synchronized (this) {
-      return new ArrayList<String>(globalStringList);
+      return new ArrayList<>(globalStringList);
     }
   }
 
@@ -543,7 +544,12 @@ public class TransactionLog {
       }
 
       if (deleteOnClose) {
-        tlogFile.delete();
+        try {
+          Files.deleteIfExists(tlogFile.toPath());
+        } catch (IOException e) {
+          // TODO: should this class care if a file couldnt be deleted?
+          // this just emulates previous behavior, where only SecurityException would be handled.
+        }
       }
     } catch (IOException e) {
       throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, e);
@@ -645,6 +651,18 @@ public class TransactionLog {
       synchronized (TransactionLog.this) {
         return "LogReader{" + "file=" + tlogFile + ", position=" + fis.position() + ", end=" + fos.size() + "}";
       }
+    }
+
+    // returns best effort current position
+    // for info purposes
+    public long currentPos() {
+      return fis.position();
+    }
+    
+    // returns best effort current size
+    // for info purposes
+    public long currentSize() throws IOException {
+      return channel.size();
     }
 
   }

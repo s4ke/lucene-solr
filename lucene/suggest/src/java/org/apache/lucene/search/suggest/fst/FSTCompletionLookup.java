@@ -17,24 +17,33 @@ package org.apache.lucene.search.suggest.fst;
  * limitations under the License.
  */
 
-import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.lucene.search.suggest.InputIterator;
 import org.apache.lucene.search.suggest.Lookup;
-import org.apache.lucene.search.suggest.Sort.SortInfo;
-import org.apache.lucene.search.suggest.Sort;
 import org.apache.lucene.search.suggest.fst.FSTCompletion.Completion;
 import org.apache.lucene.search.suggest.tst.TSTLookup;
 import org.apache.lucene.store.ByteArrayDataInput;
 import org.apache.lucene.store.ByteArrayDataOutput;
-import org.apache.lucene.store.InputStreamDataInput;
-import org.apache.lucene.store.OutputStreamDataOutput;
-import org.apache.lucene.util.*;
+import org.apache.lucene.store.DataInput;
+import org.apache.lucene.store.DataOutput;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
+import org.apache.lucene.util.ArrayUtil;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
+import org.apache.lucene.util.CharsRef;
+import org.apache.lucene.util.CharsRefBuilder;
+import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.OfflineSorter;
+import org.apache.lucene.util.OfflineSorter.SortInfo;
+import org.apache.lucene.util.RamUsageEstimator;
+import org.apache.lucene.util.UnicodeUtil;
 import org.apache.lucene.util.fst.FST;
 import org.apache.lucene.util.fst.NoOutputs;
 
@@ -62,7 +71,7 @@ import org.apache.lucene.util.fst.NoOutputs;
  * @see FSTCompletion
  * @lucene.experimental
  */
-public class FSTCompletionLookup extends Lookup {
+public class FSTCompletionLookup extends Lookup implements Accountable {
   /** 
    * An invalid bucket count if we're creating an object
    * of this class from an existing FST.
@@ -92,6 +101,9 @@ public class FSTCompletionLookup extends Lookup {
    * Automaton used for normal completions.
    */
   private FSTCompletion normalCompletion;
+
+  /** Number of entries the lookup was built with */
+  private long count = 0;
 
   /**
    * This constructor prepares for creating a suggested FST using the
@@ -140,33 +152,37 @@ public class FSTCompletionLookup extends Lookup {
   }
 
   @Override
-  public void build(InputIterator tfit) throws IOException {
-    if (tfit.hasPayloads()) {
+  public void build(InputIterator iterator) throws IOException {
+    if (iterator.hasPayloads()) {
       throw new IllegalArgumentException("this suggester doesn't support payloads");
     }
-    File tempInput = File.createTempFile(
-        FSTCompletionLookup.class.getSimpleName(), ".input", Sort.defaultTempDir());
-    File tempSorted = File.createTempFile(
-        FSTCompletionLookup.class.getSimpleName(), ".sorted", Sort.defaultTempDir());
+    if (iterator.hasContexts()) {
+      throw new IllegalArgumentException("this suggester doesn't support contexts");
+    }
+    Path tempInput = Files.createTempFile(
+        OfflineSorter.defaultTempDir(), FSTCompletionLookup.class.getSimpleName(), ".input");
+    Path tempSorted = Files.createTempFile(
+        OfflineSorter.defaultTempDir(), FSTCompletionLookup.class.getSimpleName(), ".sorted");
 
-    Sort.ByteSequencesWriter writer = new Sort.ByteSequencesWriter(tempInput);
-    Sort.ByteSequencesReader reader = null;
+    OfflineSorter.ByteSequencesWriter writer = new OfflineSorter.ByteSequencesWriter(tempInput);
+    OfflineSorter.ByteSequencesReader reader = null;
     ExternalRefSorter sorter = null;
 
     // Push floats up front before sequences to sort them. For now, assume they are non-negative.
     // If negative floats are allowed some trickery needs to be done to find their byte order.
     boolean success = false;
+    count = 0;
     try {
       byte [] buffer = new byte [0];
       ByteArrayDataOutput output = new ByteArrayDataOutput(buffer);
       BytesRef spare;
-      while ((spare = tfit.next()) != null) {
+      while ((spare = iterator.next()) != null) {
         if (spare.length + 4 >= buffer.length) {
           buffer = ArrayUtil.grow(buffer, spare.length + 4);
         }
 
         output.reset(buffer);
-        output.writeInt(encodeWeight(tfit.weight()));
+        output.writeInt(encodeWeight(iterator.weight()));
         output.writeBytes(spare.bytes, spare.offset, spare.length);
         writer.write(buffer, 0, output.getPosition());
       }
@@ -174,21 +190,21 @@ public class FSTCompletionLookup extends Lookup {
 
       // We don't know the distribution of scores and we need to bucket them, so we'll sort
       // and divide into equal buckets.
-      SortInfo info = new Sort().sort(tempInput, tempSorted);
-      tempInput.delete();
+      SortInfo info = new OfflineSorter().sort(tempInput, tempSorted);
+      Files.delete(tempInput);
       FSTCompletionBuilder builder = new FSTCompletionBuilder(
-          buckets, sorter = new ExternalRefSorter(new Sort()), sharedTailLength);
+          buckets, sorter = new ExternalRefSorter(new OfflineSorter()), sharedTailLength);
 
       final int inputLines = info.lines;
-      reader = new Sort.ByteSequencesReader(tempSorted);
+      reader = new OfflineSorter.ByteSequencesReader(tempSorted);
       long line = 0;
       int previousBucket = 0;
       int previousScore = 0;
       ByteArrayDataInput input = new ByteArrayDataInput();
-      BytesRef tmp1 = new BytesRef();
+      BytesRefBuilder tmp1 = new BytesRefBuilder();
       BytesRef tmp2 = new BytesRef();
       while (reader.read(tmp1)) {
-        input.reset(tmp1.bytes);
+        input.reset(tmp1.bytes());
         int currentScore = input.readInt();
 
         int bucket;
@@ -201,12 +217,13 @@ public class FSTCompletionLookup extends Lookup {
         previousBucket = bucket;
 
         // Only append the input, discard the weight.
-        tmp2.bytes = tmp1.bytes;
+        tmp2.bytes = tmp1.bytes();
         tmp2.offset = input.getPosition();
-        tmp2.length = tmp1.length - input.getPosition();
+        tmp2.length = tmp1.length() - input.getPosition();
         builder.add(tmp2, bucket);
 
         line++;
+        count++;
       }
 
       // The two FSTCompletions share the same automaton.
@@ -216,13 +233,13 @@ public class FSTCompletionLookup extends Lookup {
       
       success = true;
     } finally {
-      if (success) 
-        IOUtils.close(reader, writer, sorter);
-      else 
-        IOUtils.closeWhileHandlingException(reader, writer, sorter);
+      IOUtils.closeWhileHandlingException(reader, writer, sorter);
 
-      tempInput.delete();
-      tempSorted.delete();
+      if (success) {
+        Files.delete(tempSorted);
+      } else {
+        IOUtils.deleteFilesIgnoringExceptions(tempInput, tempSorted);
+      }
     }
   }
   
@@ -235,7 +252,10 @@ public class FSTCompletionLookup extends Lookup {
   }
 
   @Override
-  public List<LookupResult> lookup(CharSequence key, boolean higherWeightsFirst, int num) {
+  public List<LookupResult> lookup(CharSequence key, Set<BytesRef> contexts, boolean higherWeightsFirst, int num) {
+    if (contexts != null) {
+      throw new IllegalArgumentException("this suggester doesn't support contexts");
+    }
     final List<Completion> completions;
     if (higherWeightsFirst) {
       completions = higherWeightsCompletion.lookup(key, num);
@@ -243,11 +263,10 @@ public class FSTCompletionLookup extends Lookup {
       completions = normalCompletion.lookup(key, num);
     }
     
-    final ArrayList<LookupResult> results = new ArrayList<LookupResult>(completions.size());
-    CharsRef spare = new CharsRef();
+    final ArrayList<LookupResult> results = new ArrayList<>(completions.size());
+    CharsRefBuilder spare = new CharsRefBuilder();
     for (Completion c : completions) {
-      spare.grow(c.utf8.length);
-      UnicodeUtil.UTF8toUTF16(c.utf8, spare);
+      spare.copyUTF8Bytes(c.utf8);
       results.add(new LookupResult(spare.toString(), c.bucket));
     }
     return results;
@@ -264,33 +283,51 @@ public class FSTCompletionLookup extends Lookup {
 
 
   @Override
-  public synchronized boolean store(OutputStream output) throws IOException {
-
-    try {
-      if (this.normalCompletion == null || normalCompletion.getFST() == null) 
-        return false;
-      normalCompletion.getFST().save(new OutputStreamDataOutput(output));
-    } finally {
-      IOUtils.close(output);
-    }
+  public synchronized boolean store(DataOutput output) throws IOException {
+    output.writeVLong(count);
+    if (this.normalCompletion == null || normalCompletion.getFST() == null) 
+      return false;
+    normalCompletion.getFST().save(output);
     return true;
   }
 
   @Override
-  public synchronized boolean load(InputStream input) throws IOException {
-    try {
-      this.higherWeightsCompletion = new FSTCompletion(new FST<Object>(
-          new InputStreamDataInput(input), NoOutputs.getSingleton()));
-      this.normalCompletion = new FSTCompletion(
-          higherWeightsCompletion.getFST(), false, exactMatchFirst);
-    } finally {
-      IOUtils.close(input);
-    }
+  public synchronized boolean load(DataInput input) throws IOException {
+    count = input.readVLong();
+    this.higherWeightsCompletion = new FSTCompletion(new FST<>(
+        input, NoOutputs.getSingleton()));
+    this.normalCompletion = new FSTCompletion(
+        higherWeightsCompletion.getFST(), false, exactMatchFirst);
     return true;
   }
 
   @Override
-  public long sizeInBytes() {
-    return RamUsageEstimator.sizeOf(this);
+  public long ramBytesUsed() {
+    long mem = RamUsageEstimator.shallowSizeOf(this) + RamUsageEstimator.shallowSizeOf(normalCompletion) + RamUsageEstimator.shallowSizeOf(higherWeightsCompletion);
+    if (normalCompletion != null) {
+      mem += normalCompletion.getFST().ramBytesUsed();
+    }
+    if (higherWeightsCompletion != null && (normalCompletion == null || normalCompletion.getFST() != higherWeightsCompletion.getFST())) {
+      // the fst should be shared between the 2 completion instances, don't count it twice
+      mem += higherWeightsCompletion.getFST().ramBytesUsed();
+    }
+    return mem;
+  }
+
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    List<Accountable> resources = new ArrayList<>();
+    if (normalCompletion != null) {
+      resources.add(Accountables.namedAccountable("fst", normalCompletion.getFST()));
+    }
+    if (higherWeightsCompletion != null && (normalCompletion == null || normalCompletion.getFST() != higherWeightsCompletion.getFST())) {
+      resources.add(Accountables.namedAccountable("higher weights fst", higherWeightsCompletion.getFST()));
+    }
+    return resources;
+  }
+
+  @Override
+  public long getCount() {
+    return count;
   }
 }

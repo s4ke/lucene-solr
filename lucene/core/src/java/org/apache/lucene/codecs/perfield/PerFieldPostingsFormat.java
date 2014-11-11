@@ -17,10 +17,14 @@ package org.apache.lucene.codecs.perfield;
  * limitations under the License.
  */
 
+import java.io.Closeable;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader; // javadocs
 import java.util.Set;
@@ -32,13 +36,16 @@ import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.codecs.PostingsFormat;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.Fields;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.Terms;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
 
-import static org.apache.lucene.index.FilterAtomicReader.FilterFields;
+import static org.apache.lucene.index.FilterLeafReader.FilterFields;
 
 /**
  * Enables per field postings support.
@@ -75,7 +82,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
 
   /** Group of fields written by one PostingsFormat */
   static class FieldsGroup {
-    final Set<String> fields = new TreeSet<String>();
+    final Set<String> fields = new TreeSet<>();
     int suffix;
 
     /** Custom SegmentWriteState for this group of fields,
@@ -101,6 +108,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
   
   private class FieldsWriter extends FieldsConsumer {
     final SegmentWriteState writeState;
+    final List<Closeable> toClose = new ArrayList<Closeable>();
 
     public FieldsWriter(SegmentWriteState writeState) {
       this.writeState = writeState;
@@ -111,10 +119,10 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
 
       // Maps a PostingsFormat instance to the suffix it
       // should use
-      Map<PostingsFormat,FieldsGroup> formatToGroups = new HashMap<PostingsFormat,FieldsGroup>();
+      Map<PostingsFormat,FieldsGroup> formatToGroups = new HashMap<>();
 
       // Holds last suffix of each PostingFormat name
-      Map<String,Integer> suffixes = new HashMap<String,Integer>();
+      Map<String,Integer> suffixes = new HashMap<>();
 
       // First pass: assign field -> PostingsFormat
       for(String field : fields) {
@@ -150,40 +158,83 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
           formatToGroups.put(format, group);
         } else {
           // we've already seen this format, so just grab its suffix
-          assert suffixes.containsKey(formatName);
+          if (!suffixes.containsKey(formatName)) {
+            throw new IllegalStateException("no suffix for format name: " + formatName + ", expected: " + group.suffix);
+          }
         }
 
         group.fields.add(field);
 
         String previousValue = fieldInfo.putAttribute(PER_FIELD_FORMAT_KEY, formatName);
-        assert previousValue == null;
+        if (previousValue != null) {
+          throw new IllegalStateException("found existing value for " + PER_FIELD_FORMAT_KEY + 
+                                          ", field=" + fieldInfo.name + ", old=" + previousValue + ", new=" + formatName);
+        }
 
         previousValue = fieldInfo.putAttribute(PER_FIELD_SUFFIX_KEY, Integer.toString(group.suffix));
-        assert previousValue == null;
+        if (previousValue != null) {
+          throw new IllegalStateException("found existing value for " + PER_FIELD_SUFFIX_KEY + 
+                                          ", field=" + fieldInfo.name + ", old=" + previousValue + ", new=" + group.suffix);
+        }
       }
 
       // Second pass: write postings
-      for(Map.Entry<PostingsFormat,FieldsGroup> ent : formatToGroups.entrySet()) {
-        PostingsFormat format = ent.getKey();
-        final FieldsGroup group = ent.getValue();
+      boolean success = false;
+      try {
+        for(Map.Entry<PostingsFormat,FieldsGroup> ent : formatToGroups.entrySet()) {
+          PostingsFormat format = ent.getKey();
+          final FieldsGroup group = ent.getValue();
 
-        // Exposes only the fields from this group:
-        Fields maskedFields = new FilterFields(fields) {
-            @Override
-            public Iterator<String> iterator() {
-              return group.fields.iterator();
-            }
-          };
+          // Exposes only the fields from this group:
+          Fields maskedFields = new FilterFields(fields) {
+              @Override
+              public Iterator<String> iterator() {
+                return group.fields.iterator();
+              }
+            };
 
-        format.fieldsConsumer(group.state).write(maskedFields);
+          FieldsConsumer consumer = format.fieldsConsumer(group.state);
+          toClose.add(consumer);
+          consumer.write(maskedFields);
+        }
+        success = true;
+      } finally {
+        if (success == false) {
+          IOUtils.closeWhileHandlingException(toClose);
+        }
       }
+    }
+
+    @Override
+    public void close() throws IOException {
+      IOUtils.close(toClose);
     }
   }
 
-  private class FieldsReader extends FieldsProducer {
+  private static class FieldsReader extends FieldsProducer {
 
-    private final Map<String,FieldsProducer> fields = new TreeMap<String,FieldsProducer>();
-    private final Map<String,FieldsProducer> formats = new HashMap<String,FieldsProducer>();
+    private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(FieldsReader.class);
+
+    private final Map<String,FieldsProducer> fields = new TreeMap<>();
+    private final Map<String,FieldsProducer> formats = new HashMap<>();
+    
+    // clone for merge
+    FieldsReader(FieldsReader other) throws IOException {
+      Map<FieldsProducer,FieldsProducer> oldToNew = new IdentityHashMap<>();
+      // First clone all formats
+      for(Map.Entry<String,FieldsProducer> ent : other.formats.entrySet()) {
+        FieldsProducer values = ent.getValue().getMergeInstance();
+        formats.put(ent.getKey(), values);
+        oldToNew.put(ent.getValue(), values);
+      }
+
+      // Then rebuild fields:
+      for(Map.Entry<String,FieldsProducer> ent : other.fields.entrySet()) {
+        FieldsProducer producer = oldToNew.get(ent.getValue());
+        assert producer != null;
+        fields.put(ent.getKey(), producer);
+      }
+    }
 
     public FieldsReader(final SegmentReadState readState) throws IOException {
 
@@ -192,13 +243,15 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
       try {
         // Read field name -> format name
         for (FieldInfo fi : readState.fieldInfos) {
-          if (fi.isIndexed()) {
+          if (fi.getIndexOptions() != IndexOptions.NONE) {
             final String fieldName = fi.name;
             final String formatName = fi.getAttribute(PER_FIELD_FORMAT_KEY);
             if (formatName != null) {
               // null formatName means the field is in fieldInfos, but has no postings!
               final String suffix = fi.getAttribute(PER_FIELD_SUFFIX_KEY);
-              assert suffix != null;
+              if (suffix == null) {
+                throw new IllegalStateException("missing attribute: " + PER_FIELD_SUFFIX_KEY + " for field: " + fieldName);
+              }
               PostingsFormat format = PostingsFormat.forName(formatName);
               String segmentSuffix = getSuffix(formatName, suffix);
               if (!formats.containsKey(segmentSuffix)) {
@@ -239,12 +292,35 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
 
     @Override
     public long ramBytesUsed() {
-      long sizeInBytes = 0;
+      long ramBytesUsed = BASE_RAM_BYTES_USED;
+      ramBytesUsed += fields.size() * 2L * RamUsageEstimator.NUM_BYTES_OBJECT_REF;
+      ramBytesUsed += formats.size() * 2L * RamUsageEstimator.NUM_BYTES_OBJECT_REF;
       for(Map.Entry<String,FieldsProducer> entry: formats.entrySet()) {
-        sizeInBytes += entry.getKey().length() * RamUsageEstimator.NUM_BYTES_CHAR;
-        sizeInBytes += entry.getValue().ramBytesUsed();
+        ramBytesUsed += entry.getValue().ramBytesUsed();
       }
-      return sizeInBytes;
+      return ramBytesUsed;
+    }
+    
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Accountables.namedAccountables("format", formats);
+    }
+
+    @Override
+    public void checkIntegrity() throws IOException {
+      for (FieldsProducer producer : formats.values()) {
+        producer.checkIntegrity();
+      }
+    }
+
+    @Override
+    public FieldsProducer getMergeInstance() throws IOException {
+      return new FieldsReader(this);
+    }
+
+    @Override
+    public String toString() {
+      return "PerFieldPostings(formats=" + formats.size() + ")";
     }
   }
 

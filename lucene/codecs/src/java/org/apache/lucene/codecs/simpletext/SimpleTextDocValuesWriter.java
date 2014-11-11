@@ -30,9 +30,10 @@ import org.apache.lucene.codecs.DocValuesConsumer;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.SegmentWriteState;
-import org.apache.lucene.index.FieldInfo.DocValuesType;
+import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.IOUtils;
 
 class SimpleTextDocValuesWriter extends DocValuesConsumer {
@@ -49,10 +50,10 @@ class SimpleTextDocValuesWriter extends DocValuesConsumer {
   final static BytesRef NUMVALUES = new BytesRef("  numvalues ");
   final static BytesRef ORDPATTERN = new BytesRef("  ordpattern ");
   
-  final IndexOutput data;
-  final BytesRef scratch = new BytesRef();
+  IndexOutput data;
+  final BytesRefBuilder scratch = new BytesRefBuilder();
   final int numDocs;
-  private final Set<String> fieldsSeen = new HashSet<String>(); // for asserting
+  private final Set<String> fieldsSeen = new HashSet<>(); // for asserting
   
   public SimpleTextDocValuesWriter(SegmentWriteState state, String ext) throws IOException {
     // System.out.println("WRITE: " + IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, ext) + " " + state.segmentInfo.getDocCount() + " docs");
@@ -70,9 +71,8 @@ class SimpleTextDocValuesWriter extends DocValuesConsumer {
   @Override
   public void addNumericField(FieldInfo field, Iterable<Number> values) throws IOException {
     assert fieldSeen(field.name);
-    assert (field.getDocValuesType() == FieldInfo.DocValuesType.NUMERIC ||
-            field.getNormType() == FieldInfo.DocValuesType.NUMERIC);
-    writeFieldEntry(field, FieldInfo.DocValuesType.NUMERIC);
+    assert field.getDocValuesType() == DocValuesType.NUMERIC || field.hasNorms();
+    writeFieldEntry(field, DocValuesType.NUMERIC);
 
     // first pass to find min/max
     long minValue = Long.MAX_VALUE;
@@ -136,12 +136,16 @@ class SimpleTextDocValuesWriter extends DocValuesConsumer {
   public void addBinaryField(FieldInfo field, Iterable<BytesRef> values) throws IOException {
     assert fieldSeen(field.name);
     assert field.getDocValuesType() == DocValuesType.BINARY;
+    doAddBinary(field, values);
+  }
+    
+  private void doAddBinary(FieldInfo field, Iterable<BytesRef> values) throws IOException {
     int maxLength = 0;
     for(BytesRef value : values) {
       final int length = value == null ? 0 : value.length;
       maxLength = Math.max(maxLength, length);
     }
-    writeFieldEntry(field, FieldInfo.DocValuesType.BINARY);
+    writeFieldEntry(field, DocValuesType.BINARY);
 
     // write maxLength
     SimpleTextUtil.write(data, MAXLENGTH);
@@ -194,7 +198,7 @@ class SimpleTextDocValuesWriter extends DocValuesConsumer {
   public void addSortedField(FieldInfo field, Iterable<BytesRef> values, Iterable<Number> docToOrd) throws IOException {
     assert fieldSeen(field.name);
     assert field.getDocValuesType() == DocValuesType.SORTED;
-    writeFieldEntry(field, FieldInfo.DocValuesType.SORTED);
+    writeFieldEntry(field, DocValuesType.SORTED);
 
     int valueCount = 0;
     int maxLength = -1;
@@ -268,10 +272,52 @@ class SimpleTextDocValuesWriter extends DocValuesConsumer {
   }
 
   @Override
+  public void addSortedNumericField(FieldInfo field, final Iterable<Number> docToValueCount, final Iterable<Number> values) throws IOException {
+    assert fieldSeen(field.name);
+    assert field.getDocValuesType() == DocValuesType.SORTED_NUMERIC;
+    doAddBinary(field, new Iterable<BytesRef>() {     
+      @Override
+      public Iterator<BytesRef> iterator() {
+        final StringBuilder builder = new StringBuilder();
+        final BytesRefBuilder scratch = new BytesRefBuilder();
+        final Iterator<Number> counts = docToValueCount.iterator();
+        final Iterator<Number> numbers = values.iterator();
+        
+        return new Iterator<BytesRef>() {
+
+          @Override
+          public boolean hasNext() {
+            return counts.hasNext();
+          }
+
+          @Override
+          public BytesRef next() {
+            builder.setLength(0);
+            long count = counts.next().longValue();
+            for (int i = 0; i < count; i++) {
+              if (i > 0) {
+                builder.append(',');
+              }
+              builder.append(Long.toString(numbers.next().longValue()));
+            }
+            scratch.copyChars(builder);
+            return scratch.get();
+          }
+
+          @Override
+          public void remove() {
+            throw new UnsupportedOperationException();
+          }
+        };
+      }
+    });
+  }
+
+  @Override
   public void addSortedSetField(FieldInfo field, Iterable<BytesRef> values, Iterable<Number> docToOrdCount, Iterable<Number> ords) throws IOException {
     assert fieldSeen(field.name);
     assert field.getDocValuesType() == DocValuesType.SORTED_SET;
-    writeFieldEntry(field, FieldInfo.DocValuesType.SORTED_SET);
+    writeFieldEntry(field, DocValuesType.SORTED_SET);
 
     long valueCount = 0;
     int maxLength = 0;
@@ -377,7 +423,7 @@ class SimpleTextDocValuesWriter extends DocValuesConsumer {
   }
 
   /** write the header for this field */
-  private void writeFieldEntry(FieldInfo field, FieldInfo.DocValuesType type) throws IOException {
+  private void writeFieldEntry(FieldInfo field, DocValuesType type) throws IOException {
     SimpleTextUtil.write(data, FIELD);
     SimpleTextUtil.write(data, field.name, scratch);
     SimpleTextUtil.writeNewline(data);
@@ -389,18 +435,22 @@ class SimpleTextDocValuesWriter extends DocValuesConsumer {
   
   @Override
   public void close() throws IOException {
-    boolean success = false;
-    try {
-      assert !fieldsSeen.isEmpty();
-      // TODO: sheisty to do this here?
-      SimpleTextUtil.write(data, END);
-      SimpleTextUtil.writeNewline(data);
-      success = true;
-    } finally {
-      if (success) {
-        IOUtils.close(data);
-      } else {
-        IOUtils.closeWhileHandlingException(data);
+    if (data != null) {
+      boolean success = false;
+      try {
+        assert !fieldsSeen.isEmpty();
+        // TODO: sheisty to do this here?
+        SimpleTextUtil.write(data, END);
+        SimpleTextUtil.writeNewline(data);
+        SimpleTextUtil.writeChecksum(data, scratch);
+        success = true;
+      } finally {
+        if (success) {
+          IOUtils.close(data);
+        } else {
+          IOUtils.closeWhileHandlingException(data);
+        }
+        data = null;
       }
     }
   }

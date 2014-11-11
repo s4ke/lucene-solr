@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.*;
+import java.util.Map.Entry;
 import java.nio.ByteBuffer;
 
 /**
@@ -65,6 +66,7 @@ public class JavaBinCodec {
           SOLRINPUTDOC = 16,
           SOLRINPUTDOC_CHILDS = 17,
           ENUM_FIELD_VALUE = 18,
+          MAP_ENTRY = 19,
           // types that combine tag + length (or other info) in a single byte
           TAG_AND_LEN = (byte) (1 << 5),
           STR = (byte) (1 << 5),
@@ -117,7 +119,7 @@ public class JavaBinCodec {
 
   public SimpleOrderedMap<Object> readOrderedMap(DataInputInputStream dis) throws IOException {
     int sz = readSize(dis);
-    SimpleOrderedMap<Object> nl = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> nl = new SimpleOrderedMap<>();
     for (int i = 0; i < sz; i++) {
       String name = (String) readVal(dis);
       Object val = readVal(dis);
@@ -128,7 +130,7 @@ public class JavaBinCodec {
 
   public NamedList<Object> readNamedList(DataInputInputStream dis) throws IOException {
     int sz = readSize(dis);
-    NamedList<Object> nl = new NamedList<Object>();
+    NamedList<Object> nl = new NamedList<>();
     for (int i = 0; i < sz; i++) {
       String name = (String) readVal(dis);
       Object val = readVal(dis);
@@ -227,6 +229,8 @@ public class JavaBinCodec {
         return readSolrInputDocument(dis);
       case ENUM_FIELD_VALUE:
         return readEnumFieldValue(dis);
+      case MAP_ENTRY:
+        return readMapEntry(dis);
     }
 
     throw new RuntimeException("Unknown type " + tagByte);
@@ -286,6 +290,10 @@ public class JavaBinCodec {
       writeEnumFieldValue((EnumFieldValue) val);
       return true;
     }
+    if (val instanceof Map.Entry) {
+      writeMapEntry((Map.Entry)val);
+      return true;
+    }
     return false;
   }
 
@@ -319,23 +327,38 @@ public class JavaBinCodec {
   }
 
   public void writeSolrDocument(SolrDocument doc) throws IOException {
+    List<SolrDocument> children = doc.getChildDocuments();
+    int sz = doc.size() + (children==null ? 0 : children.size());
     writeTag(SOLRDOC);
-    writeTag(ORDERED_MAP, doc.size());
+    writeTag(ORDERED_MAP, sz);
     for (Map.Entry<String, Object> entry : doc) {
       String name = entry.getKey();
       writeExternString(name);
       Object val = entry.getValue();
       writeVal(val);
     }
+    if (children != null) {
+      for (SolrDocument child : children) {
+        writeSolrDocument(child);
+      }
+    }
   }
 
   public SolrDocument readSolrDocument(DataInputInputStream dis) throws IOException {
-    NamedList nl = (NamedList) readVal(dis);
+    tagByte = dis.readByte();
+    int size = readSize(dis);
     SolrDocument doc = new SolrDocument();
-    for (int i = 0; i < nl.size(); i++) {
-      String name = nl.getName(i);
-      Object val = nl.getVal(i);
-      doc.setField(name, val);
+    for (int i = 0; i < size; i++) {
+      String fieldName;
+      Object obj = readVal(dis); // could be a field name, or a child document
+      if (obj instanceof SolrDocument) {
+        doc.addChildDocument((SolrDocument)obj);
+        continue;
+      } else {
+        fieldName = (String)obj;
+      }
+      Object fieldVal = readVal(dis);
+      doc.setField(fieldName, fieldVal);
     }
     return doc;
   }
@@ -356,7 +379,7 @@ public class JavaBinCodec {
   public void writeSolrDocumentList(SolrDocumentList docs)
           throws IOException {
     writeTag(SOLRDOCLST);
-    List<Number> l = new ArrayList<Number>(3);
+    List<Number> l = new ArrayList<>(3);
     l.add(docs.getNumFound());
     l.add(docs.getStart());
     l.add(docs.getMaxScore());
@@ -401,7 +424,7 @@ public class JavaBinCodec {
       writeVal(inputField.getValue());
     }
     if (children != null) {
-      for (SolrInputDocument child : sdoc.getChildDocuments()) {
+      for (SolrInputDocument child : children) {
         writeSolrInputDocument(child);
       }
     }
@@ -411,7 +434,7 @@ public class JavaBinCodec {
   public Map<Object,Object> readMap(DataInputInputStream dis)
           throws IOException {
     int sz = readVInt(dis);
-    Map<Object,Object> m = new LinkedHashMap<Object,Object>();
+    Map<Object,Object> m = new LinkedHashMap<>();
     for (int i = 0; i < sz; i++) {
       Object key = readVal(dis);
       Object val = readVal(dis);
@@ -430,7 +453,7 @@ public class JavaBinCodec {
   }
 
   public List<Object> readIterator(DataInputInputStream fis) throws IOException {
-    ArrayList<Object> l = new ArrayList<Object>();
+    ArrayList<Object> l = new ArrayList<>();
     while (true) {
       Object o = readVal(fis);
       if (o == END_OBJ) break;
@@ -464,7 +487,7 @@ public class JavaBinCodec {
 
   public List<Object> readArray(DataInputInputStream dis) throws IOException {
     int sz = readSize(dis);
-    ArrayList<Object> l = new ArrayList<Object>(sz);
+    ArrayList<Object> l = new ArrayList<>(sz);
     for (int i = 0; i < sz; i++) {
       l.add(readVal(dis));
     }
@@ -480,6 +503,12 @@ public class JavaBinCodec {
     writeInt(enumFieldValue.toInt());
     writeStr(enumFieldValue.toString());
   }
+  
+  public void writeMapEntry(Entry<Object,Object> val) throws IOException {
+    writeTag(MAP_ENTRY);
+    writeVal(val.getKey());
+    writeVal(val.getValue());
+  }
 
   /**
    * read {@link EnumFieldValue} (int+string) from input stream
@@ -490,6 +519,54 @@ public class JavaBinCodec {
     Integer intValue = (Integer) readVal(dis);
     String stringValue = (String) readVal(dis);
     return new EnumFieldValue(intValue, stringValue);
+  }
+  
+
+  public Map.Entry<Object,Object> readMapEntry(DataInputInputStream dis) throws IOException {
+    final Object key = readVal(dis);
+    final Object value = readVal(dis);
+    return new Map.Entry<Object,Object>() {
+
+      @Override
+      public Object getKey() {
+        return key;
+      }
+
+      @Override
+      public Object getValue() {
+        return value;
+      }
+
+      @Override
+      public String toString() {
+        return "MapEntry[" + key.toString() + ":" + value.toString() + "]";
+      }
+
+      @Override
+      public Object setValue(Object value) {
+        throw new UnsupportedOperationException();
+      }
+
+      @Override
+      public int hashCode() {
+        int result = 31;
+        result *=31 + getKey().hashCode();
+        result *=31 + getValue().hashCode();
+        return result;
+      }
+
+      @Override
+      public boolean equals(Object obj) {
+        if(this == obj) {
+          return true;
+        }
+        if(!(obj instanceof Entry)) {
+          return false;
+        }
+        Map.Entry<Object, Object> entry = (Entry<Object, Object>) obj;
+        return (this.getKey().equals(entry.getKey()) && this.getValue().equals(entry.getValue()));
+      }
+    };
   }
 
   /**
@@ -716,7 +793,7 @@ public class JavaBinCodec {
     writeTag(EXTERN_STRING, idx);
     if (idx == 0) {
       writeStr(s);
-      if (stringsMap == null) stringsMap = new HashMap<String, Integer>();
+      if (stringsMap == null) stringsMap = new HashMap<>();
       stringsMap.put(s, ++stringsCount);
     }
 
@@ -728,7 +805,7 @@ public class JavaBinCodec {
       return stringsList.get(idx - 1);
     } else {// idx == 0 means it has a string value
       String s = (String) readVal(fis);
-      if (stringsList == null) stringsList = new ArrayList<String>();
+      if (stringsList == null) stringsList = new ArrayList<>();
       stringsList.add(s);
       return s;
     }

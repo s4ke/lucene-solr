@@ -39,14 +39,22 @@ public class TestRollingUpdates extends LuceneTestCase {
   public void testRollingUpdates() throws Exception {
     Random random = new Random(random().nextLong());
     final BaseDirectoryWrapper dir = newDirectory();
+    // test checks for no unref'ed files with the IW helper method, which isn't aware of "tried to delete files"
+    if (dir instanceof MockDirectoryWrapper) {
+      ((MockDirectoryWrapper)dir).setEnableVirusScanner(false);
+    }
+    
     final LineFileDocs docs = new LineFileDocs(random, true);
 
     //provider.register(new MemoryCodec());
     if (random().nextBoolean()) {
-      Codec.setDefault(_TestUtil.alwaysPostingsFormat(new MemoryPostingsFormat(random().nextBoolean(), random.nextFloat())));
+      Codec.setDefault(TestUtil.alwaysPostingsFormat(new MemoryPostingsFormat(random().nextBoolean(), random.nextFloat())));
     }
 
-    final IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    MockAnalyzer analyzer = new MockAnalyzer(random());
+    analyzer.setMaxTokenLength(TestUtil.nextInt(random(), 1, IndexWriter.MAX_TERM_LENGTH));
+
+    final IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(analyzer));
     final int SIZE = atLeast(20);
     int id = 0;
     IndexReader r = null;
@@ -135,8 +143,7 @@ public class TestRollingUpdates extends LuceneTestCase {
     docs.close();
     
     // LUCENE-4455:
-    SegmentInfos infos = new SegmentInfos();
-    infos.read(dir);
+    SegmentInfos infos = SegmentInfos.readLatestCommit(dir);
     long totalBytes = 0;
     for(SegmentCommitInfo sipc : infos) {
       totalBytes += sipc.sizeInBytes();
@@ -157,10 +164,10 @@ public class TestRollingUpdates extends LuceneTestCase {
 
     final LineFileDocs docs = new LineFileDocs(random());
     for (int r = 0; r < 3; r++) {
-      final IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(
-          TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMaxBufferedDocs(2));
+      final IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                   .setMaxBufferedDocs(2));
       final int numUpdates = atLeast(20);
-      int numThreads = _TestUtil.nextInt(random(), 2, 6);
+      int numThreads = TestUtil.nextInt(random(), 2, 6);
       IndexingThread[] threads = new IndexingThread[numThreads];
       for (int i = 0; i < numThreads; i++) {
         threads[i] = new IndexingThread(docs, w, numUpdates);

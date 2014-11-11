@@ -33,10 +33,10 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.automaton.AutomatonTestUtil;
 import org.apache.lucene.util.automaton.RegExp;
 import org.apache.lucene.util.UnicodeUtil;
-import org.apache.lucene.util._TestUtil;
 
 /**
  * Tests the DocTermOrdsRewriteMethod
@@ -54,21 +54,18 @@ public class TestDocTermOrdsRewriteMethod extends LuceneTestCase {
     dir = newDirectory();
     fieldName = random().nextBoolean() ? "field" : ""; // sometimes use an empty string as field name
     RandomIndexWriter writer = new RandomIndexWriter(random(), dir, 
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random(), MockTokenizer.KEYWORD, false))
-        .setMaxBufferedDocs(_TestUtil.nextInt(random(), 50, 1000)));
-    List<String> terms = new ArrayList<String>();
+        newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.KEYWORD, false))
+        .setMaxBufferedDocs(TestUtil.nextInt(random(), 50, 1000)));
+    List<String> terms = new ArrayList<>();
     int num = atLeast(200);
     for (int i = 0; i < num; i++) {
       Document doc = new Document();
       doc.add(newStringField("id", Integer.toString(i), Field.Store.NO));
       int numTerms = random().nextInt(4);
       for (int j = 0; j < numTerms; j++) {
-        String s = _TestUtil.randomUnicodeString(random());
+        String s = TestUtil.randomUnicodeString(random());
         doc.add(newStringField(fieldName, s, Field.Store.NO));
-        // if the default codec doesn't support sortedset, we will uninvert at search time
-        if (defaultCodecSupportsSortedSet()) {
-          doc.add(new SortedSetDocValuesField(fieldName, new BytesRef(s)));
-        }
+        doc.add(new SortedSetDocValuesField(fieldName, new BytesRef(s)));
         terms.add(s);
       }
       writer.addDocument(doc);
@@ -79,7 +76,7 @@ public class TestDocTermOrdsRewriteMethod extends LuceneTestCase {
       Collections.sort(terms);
       System.out.println("UTF16 order:");
       for(String s : terms) {
-        System.out.println("  " + UnicodeUtil.toHexString(s));
+        System.out.println("  " + UnicodeUtil.toHexString(s) + " " + s);
       }
     }
     
@@ -116,7 +113,7 @@ public class TestDocTermOrdsRewriteMethod extends LuceneTestCase {
   /** check that the # of hits is the same as if the query
    * is run against the inverted index
    */
-  protected void assertSame(String regexp) throws IOException {   
+  protected void assertSame(String regexp) throws IOException {
     RegexpQuery docValues = new RegexpQuery(new Term(fieldName, regexp), RegExp.NONE);
     docValues.setRewriteMethod(new DocTermOrdsRewriteMethod());
     RegexpQuery inverted = new RegexpQuery(new Term(fieldName, regexp), RegExp.NONE);

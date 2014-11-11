@@ -21,10 +21,9 @@ import java.io.IOException;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.PostingsFormat;
-import org.apache.lucene.codecs.lucene41.Lucene41PostingsFormat;
-import org.apache.lucene.codecs.lucene46.Lucene46Codec;
-import org.apache.lucene.codecs.mocksep.MockSepPostingsFormat;
-import org.apache.lucene.codecs.pulsing.Pulsing41PostingsFormat;
+import org.apache.lucene.codecs.asserting.AssertingCodec;
+import org.apache.lucene.codecs.blockterms.LuceneVarGapFixedInterval;
+import org.apache.lucene.codecs.memory.MemoryPostingsFormat;
 import org.apache.lucene.codecs.simpletext.SimpleTextPostingsFormat;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
@@ -43,7 +42,7 @@ import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 import org.junit.Test;
 
 /**
@@ -97,8 +96,8 @@ public class TestPerFieldPostingsFormat2 extends LuceneTestCase {
   @Test
   public void testMergeUnusedPerFieldCodec() throws IOException {
     Directory dir = newDirectory();
-    IndexWriterConfig iwconf = newIndexWriterConfig(TEST_VERSION_CURRENT,
-        new MockAnalyzer(random())).setOpenMode(OpenMode.CREATE).setCodec(new MockCodec());
+    IndexWriterConfig iwconf = newIndexWriterConfig(new MockAnalyzer(random()))
+                                 .setOpenMode(OpenMode.CREATE).setCodec(new MockCodec());
     IndexWriter writer = newWriter(dir, iwconf);
     addDocs(writer, 10);
     writer.commit();
@@ -107,7 +106,7 @@ public class TestPerFieldPostingsFormat2 extends LuceneTestCase {
     addDocs2(writer, 10);
     writer.commit();
     assertEquals(30, writer.maxDoc());
-    _TestUtil.checkIndex(dir);
+    TestUtil.checkIndex(dir);
     writer.forceMerge(1);
     assertEquals(30, writer.maxDoc());
     writer.close();
@@ -124,8 +123,8 @@ public class TestPerFieldPostingsFormat2 extends LuceneTestCase {
     if (VERBOSE) {
       System.out.println("TEST: make new index");
     }
-    IndexWriterConfig iwconf = newIndexWriterConfig(TEST_VERSION_CURRENT,
-             new MockAnalyzer(random())).setOpenMode(OpenMode.CREATE).setCodec(new MockCodec());
+    IndexWriterConfig iwconf = newIndexWriterConfig(new MockAnalyzer(random()))
+                                 .setOpenMode(OpenMode.CREATE).setCodec(new MockCodec());
     iwconf.setMaxBufferedDocs(IndexWriterConfig.DISABLE_AUTO_FLUSH);
     //((LogMergePolicy) iwconf.getMergePolicy()).setMergeFactor(10);
     IndexWriter writer = newWriter(dir, iwconf);
@@ -144,7 +143,7 @@ public class TestPerFieldPostingsFormat2 extends LuceneTestCase {
     assertQuery(new Term("content", "aaa"), dir, 10);
     Codec codec = iwconf.getCodec();
 
-    iwconf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()))
+    iwconf = newIndexWriterConfig(new MockAnalyzer(random()))
         .setOpenMode(OpenMode.APPEND).setCodec(codec);
     //((LogMergePolicy) iwconf.getMergePolicy()).setNoCFSRatio(0.0);
     //((LogMergePolicy) iwconf.getMergePolicy()).setMergeFactor(10);
@@ -200,25 +199,25 @@ public class TestPerFieldPostingsFormat2 extends LuceneTestCase {
 
   }
 
-  public static class MockCodec extends Lucene46Codec {
-    final PostingsFormat lucene40 = new Lucene41PostingsFormat();
+  public static class MockCodec extends AssertingCodec {
+    final PostingsFormat luceneDefault = TestUtil.getDefaultPostingsFormat();
     final PostingsFormat simpleText = new SimpleTextPostingsFormat();
-    final PostingsFormat mockSep = new MockSepPostingsFormat();
+    final PostingsFormat memory = new MemoryPostingsFormat();
     
     @Override
     public PostingsFormat getPostingsFormatForField(String field) {
       if (field.equals("id")) {
         return simpleText;
       } else if (field.equals("content")) {
-        return mockSep;
+        return memory;
       } else {
-        return lucene40;
+        return luceneDefault;
       }
     }
   }
 
-  public static class MockCodec2 extends Lucene46Codec {
-    final PostingsFormat lucene40 = new Lucene41PostingsFormat();
+  public static class MockCodec2 extends AssertingCodec {
+    final PostingsFormat luceneDefault = TestUtil.getDefaultPostingsFormat();
     final PostingsFormat simpleText = new SimpleTextPostingsFormat();
     
     @Override
@@ -226,7 +225,7 @@ public class TestPerFieldPostingsFormat2 extends LuceneTestCase {
       if (field.equals("id")) {
         return simpleText;
       } else {
-        return lucene40;
+        return luceneDefault;
       }
     }
   }
@@ -240,9 +239,9 @@ public class TestPerFieldPostingsFormat2 extends LuceneTestCase {
     final int docsPerRound = 97;
     int numRounds = atLeast(1);
     for (int i = 0; i < numRounds; i++) {
-      int num = _TestUtil.nextInt(random(), 30, 60);
+      int num = TestUtil.nextInt(random(), 30, 60);
       IndexWriterConfig config = newIndexWriterConfig(random(),
-          TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+          new MockAnalyzer(random()));
       config.setOpenMode(OpenMode.CREATE_OR_APPEND);
       IndexWriter writer = newWriter(dir, config);
       for (int j = 0; j < docsPerRound; j++) {
@@ -251,7 +250,7 @@ public class TestPerFieldPostingsFormat2 extends LuceneTestCase {
           FieldType customType = new FieldType(TextField.TYPE_NOT_STORED);
           customType.setTokenized(random().nextBoolean());
           customType.setOmitNorms(random().nextBoolean());
-          Field field = newField("" + k, _TestUtil
+          Field field = newField("" + k, TestUtil
               .randomRealisticUnicodeString(random(), 128), customType);
           doc.add(field);
         }
@@ -268,13 +267,13 @@ public class TestPerFieldPostingsFormat2 extends LuceneTestCase {
   }
   
   public void testSameCodecDifferentInstance() throws Exception {
-    Codec codec = new Lucene46Codec() {
+    Codec codec = new AssertingCodec() {
       @Override
       public PostingsFormat getPostingsFormatForField(String field) {
         if ("id".equals(field)) {
-          return new Pulsing41PostingsFormat(1);
+          return new MemoryPostingsFormat();
         } else if ("date".equals(field)) {
-          return new Pulsing41PostingsFormat(1);
+          return new MemoryPostingsFormat();
         } else {
           return super.getPostingsFormatForField(field);
         }
@@ -284,13 +283,13 @@ public class TestPerFieldPostingsFormat2 extends LuceneTestCase {
   }
   
   public void testSameCodecDifferentParams() throws Exception {
-    Codec codec = new Lucene46Codec() {
+    Codec codec = new AssertingCodec() {
       @Override
       public PostingsFormat getPostingsFormatForField(String field) {
         if ("id".equals(field)) {
-          return new Pulsing41PostingsFormat(1);
+          return new LuceneVarGapFixedInterval(1);
         } else if ("date".equals(field)) {
-          return new Pulsing41PostingsFormat(2);
+          return new LuceneVarGapFixedInterval(2);
         } else {
           return super.getPostingsFormatForField(field);
         }
@@ -301,7 +300,7 @@ public class TestPerFieldPostingsFormat2 extends LuceneTestCase {
   
   private void doTestMixedPostings(Codec codec) throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()));
     iwc.setCodec(codec);
     RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwc);
     Document doc = new Document();

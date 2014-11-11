@@ -46,7 +46,7 @@ import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TermRangeQuery;
 import org.apache.lucene.search.WildcardQuery;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.automaton.BasicAutomata;
+import org.apache.lucene.util.automaton.Automata;
 import org.apache.lucene.util.automaton.CharacterRunAutomaton;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -431,7 +431,7 @@ public class TestPrecedenceQueryParser extends LuceneTestCase {
     final String hourField = "hour";
     PrecedenceQueryParser qp = new PrecedenceQueryParser(new MockAnalyzer(random()));
 
-    Map<CharSequence, DateTools.Resolution> fieldMap = new HashMap<CharSequence,DateTools.Resolution>();
+    Map<CharSequence, DateTools.Resolution> fieldMap = new HashMap<>();
     // set a field specific date resolution
     fieldMap.put(monthField, DateTools.Resolution.MONTH);
     qp.setDateResolution(fieldMap);
@@ -557,7 +557,7 @@ public class TestPrecedenceQueryParser extends LuceneTestCase {
   }
 
   public void testBoost() throws Exception {
-    CharacterRunAutomaton stopSet = new CharacterRunAutomaton(BasicAutomata.makeString("on"));
+    CharacterRunAutomaton stopSet = new CharacterRunAutomaton(Automata.makeString("on"));
     Analyzer oneStopAnalyzer = new MockAnalyzer(random(), MockTokenizer.SIMPLE, true, stopSet);
 
     PrecedenceQueryParser qp = new PrecedenceQueryParser();

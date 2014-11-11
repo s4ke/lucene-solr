@@ -22,7 +22,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Set;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.search.SolrIndexSearcher;
@@ -30,8 +30,12 @@ import org.apache.solr.util.RefCounted;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class TestNonNRTOpen extends SolrTestCaseJ4 {
-  
+  private static final Logger log = LoggerFactory.getLogger(TestNonNRTOpen.class);
+
   @BeforeClass
   public static void beforeClass() throws Exception {
     // use a filesystem, because we need to create an index, then "start up solr"
@@ -47,10 +51,10 @@ public class TestNonNRTOpen extends SolrTestCaseJ4 {
     // add a doc
     assertU(adoc("foo", "bar"));
     assertU(commit());
-    File myDir = dataDir;
+    File myDir = initCoreDataDir;
     deleteCore();
     // boot up again over the same index
-    dataDir = myDir;
+    initCoreDataDir = myDir;
     initCore("solrconfig-basic.xml", "schema-minimal.xml");
     // startup
     assertNotNRT(1);
@@ -80,6 +84,7 @@ public class TestNonNRTOpen extends SolrTestCaseJ4 {
     
     // core reload
     String core = h.getCore().getName();
+    log.info("Reloading core: " + h.getCore().toString());
     h.getCoreContainer().reload(core);
     assertNotNRT(1);
     
@@ -90,6 +95,7 @@ public class TestNonNRTOpen extends SolrTestCaseJ4 {
     
     // add a doc and core reload
     assertU(adoc("bazz", "doc2"));
+    log.info("Reloading core: " + h.getCore().toString());
     h.getCoreContainer().reload(core);
     assertNotNRT(3);
   }
@@ -127,11 +133,15 @@ public class TestNonNRTOpen extends SolrTestCaseJ4 {
   }
   
   static void assertNotNRT(int maxDoc) {
-    RefCounted<SolrIndexSearcher> searcher = h.getCore().getSearcher();
+    SolrCore core = h.getCore();
+    log.info("Checking notNRT & maxDoc=" + maxDoc + " of core=" + core.toString());
+    RefCounted<SolrIndexSearcher> searcher = core.getSearcher();
     try {
-      DirectoryReader ir = searcher.get().getIndexReader();
-      assertEquals(maxDoc, ir.maxDoc());
-      assertFalse("expected non-NRT reader, got: " + ir, ir.toString().contains(":nrt"));
+      SolrIndexSearcher s = searcher.get();
+      DirectoryReader ir = s.getRawReader();
+      assertEquals("SOLR-5815? : wrong maxDoc: core=" + core.toString() +" searcher=" + s.toString(),
+                   maxDoc, ir.maxDoc());
+      assertFalse("SOLR-5815? : expected non-NRT reader, got: " + ir, ir.toString().contains(":nrt"));
     } finally {
       searcher.decref();
     }
@@ -141,8 +151,8 @@ public class TestNonNRTOpen extends SolrTestCaseJ4 {
     RefCounted<SolrIndexSearcher> searcher = h.getCore().getSearcher();
     Set<Object> set = Collections.newSetFromMap(new IdentityHashMap<Object,Boolean>());
     try {
-      DirectoryReader ir = searcher.get().getIndexReader();
-      for (AtomicReaderContext context : ir.leaves()) {
+      DirectoryReader ir = searcher.get().getRawReader();
+      for (LeafReaderContext context : ir.leaves()) {
         set.add(context.reader().getCoreCacheKey());
       }
     } finally {

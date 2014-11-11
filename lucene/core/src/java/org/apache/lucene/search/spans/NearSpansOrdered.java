@@ -17,7 +17,7 @@ package org.apache.lucene.search.spans;
  * limitations under the License.
  */
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.TermContext;
 import org.apache.lucene.util.ArrayUtil;
@@ -26,7 +26,6 @@ import org.apache.lucene.util.InPlaceMergeSorter;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -89,11 +88,11 @@ public class NearSpansOrdered extends Spans {
   private SpanNearQuery query;
   private boolean collectPayloads = true;
   
-  public NearSpansOrdered(SpanNearQuery spanNearQuery, AtomicReaderContext context, Bits acceptDocs, Map<Term,TermContext> termContexts) throws IOException {
+  public NearSpansOrdered(SpanNearQuery spanNearQuery, LeafReaderContext context, Bits acceptDocs, Map<Term,TermContext> termContexts) throws IOException {
     this(spanNearQuery, context, acceptDocs, termContexts, true);
   }
 
-  public NearSpansOrdered(SpanNearQuery spanNearQuery, AtomicReaderContext context, Bits acceptDocs, Map<Term,TermContext> termContexts, boolean collectPayloads)
+  public NearSpansOrdered(SpanNearQuery spanNearQuery, LeafReaderContext context, Bits acceptDocs, Map<Term,TermContext> termContexts, boolean collectPayloads)
   throws IOException {
     if (spanNearQuery.getClauses().length < 2) {
       throw new IllegalArgumentException("Less than 2 clauses: "
@@ -103,7 +102,7 @@ public class NearSpansOrdered extends Spans {
     allowedSlop = spanNearQuery.getSlop();
     SpanQuery[] clauses = spanNearQuery.getClauses();
     subSpans = new Spans[clauses.length];
-    matchPayload = new LinkedList<byte[]>();
+    matchPayload = new LinkedList<>();
     subSpansByDoc = new Spans[clauses.length];
     for (int i = 0; i < clauses.length; i++) {
       subSpans[i] = clauses[i].getSpans(context, acceptDocs, termContexts);
@@ -282,7 +281,7 @@ public class NearSpansOrdered extends Spans {
   private boolean shrinkToAfterShortestMatch() throws IOException {
     matchStart = subSpans[subSpans.length - 1].start();
     matchEnd = subSpans[subSpans.length - 1].end();
-    Set<byte[]> possibleMatchPayloads = new HashSet<byte[]>();
+    Set<byte[]> possibleMatchPayloads = new HashSet<>();
     if (subSpans[subSpans.length - 1].isPayloadAvailable()) {
       possibleMatchPayloads.addAll(subSpans[subSpans.length - 1].getPayload());
     }
@@ -296,7 +295,7 @@ public class NearSpansOrdered extends Spans {
       Spans prevSpans = subSpans[i];
       if (collectPayloads && prevSpans.isPayloadAvailable()) {
         Collection<byte[]> payload = prevSpans.getPayload();
-        possiblePayload = new ArrayList<byte[]>(payload.size());
+        possiblePayload = new ArrayList<>(payload.size());
         possiblePayload.addAll(payload);
       }
       
@@ -320,7 +319,7 @@ public class NearSpansOrdered extends Spans {
             prevEnd = ppEnd;
             if (collectPayloads && prevSpans.isPayloadAvailable()) {
               Collection<byte[]> payload = prevSpans.getPayload();
-              possiblePayload = new ArrayList<byte[]>(payload.size());
+              possiblePayload = new ArrayList<>(payload.size());
               possiblePayload.addAll(payload);
             }
           }

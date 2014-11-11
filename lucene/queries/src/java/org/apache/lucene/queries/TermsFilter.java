@@ -17,21 +17,26 @@ package org.apache.lucene.queries;
  * limitations under the License.
  */
 
-import org.apache.lucene.index.*;
-import org.apache.lucene.search.DocIdSet;
-import org.apache.lucene.search.DocIdSetIterator;
-import org.apache.lucene.search.Filter;
-import org.apache.lucene.util.ArrayUtil;
-import org.apache.lucene.util.Bits;
-import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.FixedBitSet;
-
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+
+import org.apache.lucene.index.DocsEnum;
+import org.apache.lucene.index.Fields;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.search.DocIdSet;
+import org.apache.lucene.search.Filter;
+import org.apache.lucene.util.ArrayUtil;
+import org.apache.lucene.util.BitDocIdSet;
+import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.BytesRef;
 
 /**
  * Constructs a filter for docs matching any of the terms added to this class.
@@ -129,7 +134,7 @@ public final class TermsFilter extends Filter {
     this.offsets = new int[length+1];
     int lastEndOffset = 0;
     int index = 0;
-    ArrayList<TermsAndField> termsAndFields = new ArrayList<TermsAndField>();
+    ArrayList<TermsAndField> termsAndFields = new ArrayList<>();
     TermsAndField lastTermsAndField = null;
     BytesRef previousTerm = null;
     String previousField = null;
@@ -176,13 +181,13 @@ public final class TermsFilter extends Filter {
   
   
   @Override
-  public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs) throws IOException {
-    final AtomicReader reader = context.reader();
-    FixedBitSet result = null;  // lazy init if needed - no need to create a big bitset ahead of time
+  public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs) throws IOException {
+    final LeafReader reader = context.reader();
+    BitDocIdSet.Builder builder = new BitDocIdSet.Builder(reader.maxDoc());
     final Fields fields = reader.fields();
     final BytesRef spare = new BytesRef(this.termsBytes);
     if (fields == null) {
-      return result;
+      return builder.build();
     }
     Terms terms = null;
     TermsEnum termsEnum = null;
@@ -195,21 +200,12 @@ public final class TermsFilter extends Filter {
           spare.length = offsets[i+1] - offsets[i];
           if (termsEnum.seekExact(spare)) {
             docs = termsEnum.docs(acceptDocs, docs, DocsEnum.FLAG_NONE); // no freq since we don't need them
-            if (result == null) {
-              if (docs.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
-                result = new FixedBitSet(reader.maxDoc());
-                // lazy init but don't do it in the hot loop since we could read many docs
-                result.set(docs.docID());
-              }
-            }
-            while (docs.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
-              result.set(docs.docID());
-            }
+            builder.or(docs);
           }
         }
       }
     }
-    return result;
+    return builder.build();
   }
 
   @Override
@@ -222,24 +218,14 @@ public final class TermsFilter extends Filter {
     }
     
     TermsFilter test = (TermsFilter) obj;
-    if (test.hashCode == hashCode && this.termsAndFields.length == test.termsAndFields.length) {
-      // first check the fields before even comparing the bytes
-      for (int i = 0; i < termsAndFields.length; i++) {
-        TermsAndField current = termsAndFields[i];
-        if (!current.equals(test.termsAndFields[i])) {
-          return false;
-        }
+    // first check the fields before even comparing the bytes
+    if (test.hashCode == hashCode && Arrays.equals(termsAndFields, test.termsAndFields)) {
+      int lastOffset = termsAndFields[termsAndFields.length - 1].end;
+      // compare offsets since we sort they must be identical
+      if (ArrayUtil.equals(offsets, 0, test.offsets, 0, lastOffset + 1)) {
+        // straight byte comparison since we sort they must be identical
+        return  ArrayUtil.equals(termsBytes, 0, test.termsBytes, 0, offsets[lastOffset]);
       }
-      // straight byte comparison since we sort they must be identical
-      int end = offsets[termsAndFields.length];
-      byte[] left = this.termsBytes;
-      byte[] right = test.termsBytes;
-      for(int i=0;i < end;i++) {
-        if (left[i] != right[i]) {
-          return false;
-        }
-      }
-      return true;
     }
     return false;
   }

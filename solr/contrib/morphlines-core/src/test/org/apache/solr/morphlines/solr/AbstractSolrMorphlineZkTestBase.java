@@ -20,6 +20,7 @@ package org.apache.solr.morphlines.solr;
 import java.io.File;
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.Locale;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.solr.client.solrj.SolrServerException;
@@ -28,28 +29,27 @@ import org.apache.solr.cloud.AbstractFullDistribZkTestBase;
 import org.apache.solr.cloud.AbstractZkTestCase;
 import org.apache.solr.common.SolrDocument;
 import org.apache.solr.common.cloud.SolrZkClient;
-import org.apache.solr.util.ExternalPaths;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
-
-import org.kitesdk.morphline.api.Command;
 import org.kitesdk.morphline.api.Collector;
+import org.kitesdk.morphline.api.Command;
 import org.kitesdk.morphline.api.MorphlineContext;
 import org.kitesdk.morphline.api.Record;
 import org.kitesdk.morphline.base.Compiler;
 import org.kitesdk.morphline.base.FaultTolerance;
 import org.kitesdk.morphline.base.Notifications;
 import org.kitesdk.morphline.stdlib.PipeBuilder;
+
 import com.codahale.metrics.MetricRegistry;
 import com.google.common.collect.ListMultimap;
 import com.typesafe.config.Config;
 
 public abstract class AbstractSolrMorphlineZkTestBase extends AbstractFullDistribZkTestBase {
-  private static final File solrHomeDirectory = new File(TEMP_DIR, AbstractSolrMorphlineZkTestBase.class.getName());
+  private static File solrHomeDirectory;
   
-  protected static final String RESOURCES_DIR = ExternalPaths.SOURCE_HOME + "/contrib/map-reduce/src/test-files";  
+  protected static final String RESOURCES_DIR = getFile("morphlines-core.marker").getParent();  
   private static final File SOLR_INSTANCE_DIR = new File(RESOURCES_DIR + "/solr");
   private static final File SOLR_CONF_DIR = new File(RESOURCES_DIR + "/solr/collection1");
 
@@ -69,9 +69,11 @@ public abstract class AbstractSolrMorphlineZkTestBase extends AbstractFullDistri
   
   @BeforeClass
   public static void setupClass() throws Exception {
+    assumeFalse("This test fails on UNIX with Turkish default locale (https://issues.apache.org/jira/browse/SOLR-6387)",
+        new Locale("tr").getLanguage().equals(Locale.getDefault().getLanguage()));
+    solrHomeDirectory = createTempDir().toFile();
     AbstractZkTestCase.SOLRHOME = solrHomeDirectory;
     FileUtils.copyDirectory(SOLR_INSTANCE_DIR, solrHomeDirectory);
-    createTempDir();
   }
   
   @Override
@@ -155,7 +157,7 @@ public abstract class AbstractSolrMorphlineZkTestBase extends AbstractFullDistri
       throws Exception {
     
     JettySolrRunner jetty = new JettySolrRunner(solrHome.getAbsolutePath(),
-        context, 0, solrConfigOverride, schemaOverride);
+        context, 0, solrConfigOverride, schemaOverride, true, null, sslConfig);
 
     jetty.setShards(shardList);
     
@@ -170,79 +172,32 @@ public abstract class AbstractSolrMorphlineZkTestBase extends AbstractFullDistri
     return jetty;
   }
   
-  private static void putConfig(SolrZkClient zkClient, File solrhome, String name) throws Exception {
-    putConfig(zkClient, solrhome, name, name);
+  private void putConfig(SolrZkClient zkClient, String name) throws Exception {
+    File file = new File(new File(SOLR_CONF_DIR, "conf"), name);    
+    String destPath = "/configs/conf1/" + name;
+    System.out.println("put " + file.getAbsolutePath() + " to " + destPath);
+    zkClient.makePath(destPath, file, false, true);
   }
   
-  private static void putConfig(SolrZkClient zkClient, File solrhome, String srcName, String destName)
-      throws Exception {
-    
-    File file = new File(solrhome, "conf" + File.separator + srcName);
-    if (!file.exists()) {
-      // LOG.info("skipping " + file.getAbsolutePath() +
-      // " because it doesn't exist");
-      return;
+  private void uploadConfFiles(SolrZkClient zkClient, File dir, String prefix) throws Exception {
+    boolean found = false;
+    for (File f : dir.listFiles()) {
+      String name = f.getName();
+      if (name.startsWith(".")) continue;
+      if (f.isFile()) {
+        putConfig(zkClient, prefix + name);
+        found = true;
+      } else if (f.isDirectory()) {
+        uploadConfFiles(zkClient, new File(dir, name), prefix + name + "/");
+      }
     }
-    
-    String destPath = "/configs/conf1/" + destName;
-    // LOG.info("put " + file.getAbsolutePath() + " to " + destPath);
-    zkClient.makePath(destPath, file, false, true);
+    assertTrue("Config folder '" + dir + "' with files to upload to zookeeper was empty.", found);
   }
   
   private void uploadConfFiles() throws Exception {
     // upload our own config files
     SolrZkClient zkClient = new SolrZkClient(zkServer.getZkAddress(), 10000);
-    putConfig(zkClient, SOLR_CONF_DIR, "solrconfig.xml");
-    putConfig(zkClient, SOLR_CONF_DIR, "schema.xml");
-    putConfig(zkClient, SOLR_CONF_DIR, "elevate.xml");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_en.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_ar.txt");
-    
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_bg.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_ca.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_cz.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_da.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_el.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_es.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_eu.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_de.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_fa.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_fi.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_fr.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_ga.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_gl.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_hi.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_hu.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_hy.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_id.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_it.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_ja.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_lv.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_nl.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_no.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_pt.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_ro.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_ru.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_sv.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_th.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stopwords_tr.txt");
-    
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/contractions_ca.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/contractions_fr.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/contractions_ga.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/contractions_it.txt");
-    
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/stemdict_nl.txt");
-    
-    putConfig(zkClient, SOLR_CONF_DIR, "lang/hyphenations_ga.txt");
-    
-    putConfig(zkClient, SOLR_CONF_DIR, "stopwords.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "protwords.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "currency.xml");
-    putConfig(zkClient, SOLR_CONF_DIR, "open-exchange-rates.json");
-    putConfig(zkClient, SOLR_CONF_DIR, "mapping-ISOLatin1Accent.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "old_synonyms.txt");
-    putConfig(zkClient, SOLR_CONF_DIR, "synonyms.txt");
+    uploadConfFiles(zkClient, new File(SOLR_CONF_DIR, "conf"), "");
     zkClient.close();
   }
   

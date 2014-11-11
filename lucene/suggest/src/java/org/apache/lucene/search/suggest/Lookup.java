@@ -22,19 +22,28 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.lucene.search.spell.Dictionary;
+import org.apache.lucene.store.DataInput;
+import org.apache.lucene.store.DataOutput;
+import org.apache.lucene.store.InputStreamDataInput;
+import org.apache.lucene.store.OutputStreamDataOutput;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.BytesRefIterator;
+import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.PriorityQueue;
 
 /**
  * Simple Lookup interface for {@link CharSequence} suggestions.
  * @lucene.experimental
  */
-public abstract class Lookup {
+public abstract class Lookup implements Accountable {
+
   /**
    * Result of a lookup.
+   * @lucene.experimental
    */
   public static final class LookupResult implements Comparable<LookupResult> {
     /** the key's text */
@@ -50,31 +59,53 @@ public abstract class Lookup {
     /** the key's payload (null if not present) */
     public final BytesRef payload;
     
+    /** the key's contexts (null if not present) */
+    public final Set<BytesRef> contexts;
+    
     /**
      * Create a new result from a key+weight pair.
      */
     public LookupResult(CharSequence key, long value) {
-      this(key, value, null);
+      this(key, null, value, null, null);
     }
 
     /**
      * Create a new result from a key+weight+payload triple.
      */
     public LookupResult(CharSequence key, long value, BytesRef payload) {
-      this.key = key;
-      this.highlightKey = null;
-      this.value = value;
-      this.payload = payload;
+      this(key, null, value, payload, null);
     }
-
+    
     /**
      * Create a new result from a key+highlightKey+weight+payload triple.
      */
     public LookupResult(CharSequence key, Object highlightKey, long value, BytesRef payload) {
+      this(key, highlightKey, value, payload, null);
+    }
+    
+    /**
+     * Create a new result from a key+weight+payload+contexts triple.
+     */
+    public LookupResult(CharSequence key, long value, BytesRef payload, Set<BytesRef> contexts) {
+      this(key, null, value, payload, contexts);
+    }
+
+    /**
+     * Create a new result from a key+weight+contexts triple.
+     */
+    public LookupResult(CharSequence key, long value, Set<BytesRef> contexts) {
+      this(key, null, value, null, contexts);
+    }
+    
+    /**
+     * Create a new result from a key+highlightKey+weight+payload+contexts triple.
+     */
+    public LookupResult(CharSequence key, Object highlightKey, long value, BytesRef payload, Set<BytesRef> contexts) {
       this.key = key;
       this.highlightKey = highlightKey;
       this.value = value;
       this.payload = payload;
+      this.contexts = contexts;
     }
 
     @Override
@@ -157,21 +188,46 @@ public abstract class Lookup {
    * {@link UnsortedInputIterator} in such case.
    */
   public void build(Dictionary dict) throws IOException {
-    BytesRefIterator it = dict.getWordsIterator();
-    InputIterator tfit;
-    if (it instanceof InputIterator) {
-      tfit = (InputIterator)it;
-    } else {
-      tfit = new InputIterator.InputIteratorWrapper(it);
-    }
-    build(tfit);
+    build(dict.getEntryIterator());
   }
+  
+  /**
+   * Calls {@link #load(DataInput)} after converting
+   * {@link InputStream} to {@link DataInput}
+   */
+  public boolean load(InputStream input) throws IOException {
+    DataInput dataIn = new InputStreamDataInput(input);
+    try {
+      return load(dataIn);
+    } finally {
+      IOUtils.close(input);
+    }
+  }
+  
+  /**
+   * Calls {@link #store(DataOutput)} after converting
+   * {@link OutputStream} to {@link DataOutput}
+   */
+  public boolean store(OutputStream output) throws IOException {
+    DataOutput dataOut = new OutputStreamDataOutput(output);
+    try {
+      return store(dataOut);
+    } finally {
+      IOUtils.close(output);
+    }
+  }
+  
+  /**
+   * Get the number of entries the lookup was built with
+   * @return total number of suggester entries
+   */
+  public abstract long getCount() throws IOException;
   
   /**
    * Builds up a new internal {@link Lookup} representation based on the given {@link InputIterator}.
    * The implementation might re-sort the data internally.
    */
-  public abstract void build(InputIterator tfit) throws IOException;
+  public abstract void build(InputIterator inputIterator) throws IOException;
   
   /**
    * Look up a key and return possible completion for this key.
@@ -181,29 +237,45 @@ public abstract class Lookup {
    * @param num maximum number of results to return
    * @return a list of possible completions, with their relative weight (e.g. popularity)
    */
-  public abstract List<LookupResult> lookup(CharSequence key, boolean onlyMorePopular, int num);
+  public List<LookupResult> lookup(CharSequence key, boolean onlyMorePopular, int num) throws IOException {
+    return lookup(key, null, onlyMorePopular, num);
+  }
 
-  
+  /**
+   * Look up a key and return possible completion for this key.
+   * @param key lookup key. Depending on the implementation this may be
+   * a prefix, misspelling, or even infix.
+   * @param contexts contexts to filter the lookup by, or null if all contexts are allowed; if the suggestion contains any of the contexts, it's a match
+   * @param onlyMorePopular return only more popular results
+   * @param num maximum number of results to return
+   * @return a list of possible completions, with their relative weight (e.g. popularity)
+   */
+  public abstract List<LookupResult> lookup(CharSequence key, Set<BytesRef> contexts, boolean onlyMorePopular, int num) throws IOException;
+
   /**
    * Persist the constructed lookup data to a directory. Optional operation.
-   * @param output {@link OutputStream} to write the data to.
+   * @param output {@link DataOutput} to write the data to.
    * @return true if successful, false if unsuccessful or not supported.
    * @throws IOException when fatal IO error occurs.
    */
-  public abstract boolean store(OutputStream output) throws IOException;
+  public abstract boolean store(DataOutput output) throws IOException;
 
   /**
    * Discard current lookup data and load it from a previously saved copy.
    * Optional operation.
-   * @param input the {@link InputStream} to load the lookup data.
+   * @param input the {@link DataInput} to load the lookup data.
    * @return true if completed successfully, false if unsuccessful or not supported.
    * @throws IOException when fatal IO error occurs.
    */
-  public abstract boolean load(InputStream input) throws IOException;
-  
+  public abstract boolean load(DataInput input) throws IOException;
+
   /**
-   * Get the size of the underlying lookup implementation in memory
-   * @return ram size of the lookup implementation in bytes
+   * Returns nested resources of this class. 
+   * The result should be a point-in-time snapshot (to avoid race conditions).
+   * @see Accountables
    */
-  public abstract long sizeInBytes();
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return null;
+  }
 }

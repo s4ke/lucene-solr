@@ -16,17 +16,19 @@ package org.apache.solr.search;
  * limitations under the License.
  */
 
-import java.util.HashSet;
-import java.util.Set;
-
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.QueryUtils;
 import org.apache.solr.SolrTestCaseJ4;
+import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.request.SolrRequestInfo;
 import org.apache.solr.response.SolrQueryResponse;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
+
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
 
 
@@ -70,9 +72,9 @@ public class QueryEqualityTest extends SolrTestCaseJ4 {
   /** @see #testParserCoverage */
   private static boolean doAssertParserCoverage = false;
   /** @see #testParserCoverage */
-  private static final Set<String> qParsersTested = new HashSet<String>();
+  private static final Set<String> qParsersTested = new HashSet<>();
   /** @see #testParserCoverage */
-  private static final Set<String> valParsersTested = new HashSet<String>();
+  private static final Set<String> valParsersTested = new HashSet<>();
 
 
   public void testDateMathParsingEquality() throws Exception {
@@ -121,6 +123,48 @@ public class QueryEqualityTest extends SolrTestCaseJ4 {
                         "{!boost b=$myBoost}asdf", 
                         "{!boost b=$myBoost v=asdf}", 
                         "{!boost b=sum(3,foo_i)}foo_s:asdf");
+    } finally {
+      req.close();
+    }
+  }
+
+  public void testReRankQuery() throws Exception {
+    SolrQueryRequest req = req("q", "*:*",
+                               "rqq", "{!edismax}hello",
+                               "rdocs", "20",
+                               "rweight", "2",
+                               "rows", "10",
+                               "start", "0");
+    try {
+      assertQueryEquals("rerank", req,
+          "{!rerank reRankQuery=$rqq reRankDocs=$rdocs reRankWeight=$rweight}",
+          "{!rerank reRankQuery=$rqq reRankDocs=20 reRankWeight=2}");
+
+    } finally {
+      req.close();
+    }
+
+
+    req = req("qq", "*:*",
+        "rqq", "{!edismax}hello",
+        "rdocs", "20",
+        "rweight", "2",
+        "rows", "100",
+        "start", "50");
+    try {
+      assertQueryEquals("rerank", req,
+          "{!rerank mainQuery=$qq reRankQuery=$rqq reRankDocs=$rdocs reRankWeight=$rweight}",
+          "{!rerank mainQuery=$qq reRankQuery=$rqq reRankDocs=20 reRankWeight=2}");
+
+    } finally {
+      req.close();
+    }
+  }
+
+  public void testExportQuery() throws Exception {
+    SolrQueryRequest req = req("q", "*:*");
+    try {
+      assertQueryEquals("xport", req, "{!xport}");
     } finally {
       req.close();
     }
@@ -197,9 +241,32 @@ public class QueryEqualityTest extends SolrTestCaseJ4 {
 
   public void testQueryCollapse() throws Exception {
     SolrQueryRequest req = req("myField","foo_s");
+
     try {
       assertQueryEquals("collapse", req,
           "{!collapse field=$myField}");
+
+      assertQueryEquals("collapse", req,
+          "{!collapse field=$myField max=a}");
+
+      assertQueryEquals("collapse", req,
+          "{!collapse field=$myField min=a}");
+
+      assertQueryEquals("collapse", req,
+          "{!collapse field=$myField max=a nullPolicy=expand}");
+
+      //Add boosted documents to the request context.
+      Map context = req.getContext();
+      Set boosted = new HashSet();
+      boosted.add("doc1");
+      boosted.add("doc2");
+      context.put("BOOSTED", boosted);
+
+      assertQueryEquals("collapse", req,
+          "{!collapse field=$myField min=a}",
+          "{!collapse field=$myField min=a nullPolicy=ignore}");
+
+
     } finally {
       req.close();
     }
@@ -308,6 +375,10 @@ public class QueryEqualityTest extends SolrTestCaseJ4 {
     }
   }
 
+  public void testTerms() throws Exception {
+    assertQueryEquals("terms", "{!terms f=foo_i}10,20,30,-10,-20,-30", "{!terms f=foo_i}10,20,30,-10,-20,-30");
+  }
+
   public void testBlockJoin() throws Exception {
     assertQueryEquals("parent", "{!parent which=foo_s:parent}dude",
         "{!parent which=foo_s:parent}dude");
@@ -318,6 +389,13 @@ public class QueryEqualityTest extends SolrTestCaseJ4 {
   public void testQuerySurround() throws Exception {
     assertQueryEquals("surround", "{!surround}and(apache,solr)", 
                       "and(apache,solr)", "apache AND solr");
+  }
+
+  public void testQueryComplexPhrase() throws Exception {
+    assertQueryEquals("complexphrase", "{!complexphrase df=text}\"jo* smith\"",
+        "text:\"jo* smith\"");
+    assertQueryEquals("complexphrase", "{!complexphrase df=title}\"jo* smith\"",
+        "title:\"jo* smith\"");
   }
 
   public void testFuncTestfunc() throws Exception {
@@ -760,6 +838,19 @@ public class QueryEqualityTest extends SolrTestCaseJ4 {
       req.close();
     }
   }
+
+  public void testQueryMLT() throws Exception {
+    assertU(adoc("id", "1", "lowerfilt", "sample data"));
+    assertU(commit());
+    try {
+      assertQueryEquals("mlt", "{!mlt qf=lowerfilt}1",
+          "{!mlt qf=lowerfilt v=1}");
+    } finally {
+      delQ("*:*");
+      assertU(commit());
+    }
+  }
+
 
   /**
    * NOTE: defType is not only used to pick the parser, but also to record 

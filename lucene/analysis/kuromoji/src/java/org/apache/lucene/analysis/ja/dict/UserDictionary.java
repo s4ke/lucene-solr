@@ -29,6 +29,7 @@ import java.util.TreeMap;
 
 import org.apache.lucene.analysis.ja.util.CSVUtil;
 import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.util.IntsRefBuilder;
 import org.apache.lucene.util.fst.Builder;
 import org.apache.lucene.util.fst.FST;
 import org.apache.lucene.util.fst.PositiveIntOutputs;
@@ -60,7 +61,7 @@ public final class UserDictionary implements Dictionary {
     BufferedReader br = new BufferedReader(reader);
     String line = null;
     int wordId = CUSTOM_DICTIONARY_WORD_ID_OFFSET;
-    List<String[]> featureEntries = new ArrayList<String[]>();
+    List<String[]> featureEntries = new ArrayList<>();
  
     // text, segmentation, readings, POS
     while ((line = br.readLine()) != null) {
@@ -85,12 +86,12 @@ public final class UserDictionary implements Dictionary {
      }
     });
     
-    List<String> data = new ArrayList<String>(featureEntries.size());
-    List<int[]> segmentations = new ArrayList<int[]>(featureEntries.size());
+    List<String> data = new ArrayList<>(featureEntries.size());
+    List<int[]> segmentations = new ArrayList<>(featureEntries.size());
     
     PositiveIntOutputs fstOutput = PositiveIntOutputs.getSingleton();
-    Builder<Long> fstBuilder = new Builder<Long>(FST.INPUT_TYPE.BYTE2, fstOutput);
-    IntsRef scratch = new IntsRef();
+    Builder<Long> fstBuilder = new Builder<>(FST.INPUT_TYPE.BYTE2, fstOutput);
+    IntsRefBuilder scratch = new IntsRefBuilder();
     long ord = 0;
     
     for (String[] values : featureEntries) {
@@ -114,11 +115,11 @@ public final class UserDictionary implements Dictionary {
       // add mapping to FST
       String token = values[0];
       scratch.grow(token.length());
-      scratch.length = token.length();
+      scratch.setLength(token.length());
       for (int i = 0; i < token.length(); i++) {
-        scratch.ints[i] = (int) token.charAt(i);
+        scratch.setIntAt(i, (int) token.charAt(i));
       }
-      fstBuilder.add(scratch, ord);
+      fstBuilder.add(scratch.get(), ord);
       segmentations.add(wordIdAndLength);
       ord++;
     }
@@ -136,12 +137,12 @@ public final class UserDictionary implements Dictionary {
    */
   public int[][] lookup(char[] chars, int off, int len) throws IOException {
     // TODO: can we avoid this treemap/toIndexArray?
-    TreeMap<Integer, int[]> result = new TreeMap<Integer, int[]>(); // index, [length, length...]
+    TreeMap<Integer, int[]> result = new TreeMap<>(); // index, [length, length...]
     boolean found = false; // true if we found any results
 
     final FST.BytesReader fstReader = fst.getBytesReader();
 
-    FST.Arc<Long> arc = new FST.Arc<Long>();
+    FST.Arc<Long> arc = new FST.Arc<>();
     int end = off + len;
     for (int startOffset = off; startOffset < end; startOffset++) {
       arc = fst.getFirstArc(arc);
@@ -175,7 +176,7 @@ public final class UserDictionary implements Dictionary {
    * @return array of {wordId, index, length}
    */
   private int[][] toIndexArray(Map<Integer, int[]> input) {
-    ArrayList<int[]> result = new ArrayList<int[]>();
+    ArrayList<int[]> result = new ArrayList<>();
     for (int i : input.keySet()) {
       int[] wordIdAndLength = input.get(i);
       int wordId = wordIdAndLength[0];

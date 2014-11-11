@@ -87,12 +87,6 @@ public class TestWildcard
       assertTrue(q instanceof ConstantScoreQuery);
       assertEquals(q.getBoost(), wq.getBoost(), 0.1);
       
-      wq.setRewriteMethod(MultiTermQuery.CONSTANT_SCORE_AUTO_REWRITE_DEFAULT);
-      wq.setBoost(0.3F);
-      q = searcher.rewrite(wq);
-      assertTrue(q instanceof ConstantScoreQuery);
-      assertEquals(q.getBoost(), wq.getBoost(), 0.1);
-      
       wq.setRewriteMethod(MultiTermQuery.CONSTANT_SCORE_BOOLEAN_QUERY_REWRITE);
       wq.setBoost(0.4F);
       q = searcher.rewrite(wq);
@@ -268,7 +262,7 @@ public class TestWildcard
    * Test that wild card queries are parsed to the correct type and are searched correctly.
    * This test looks at both parsing and execution of wildcard queries.
    * Although placed here, it also tests prefix queries, verifying that
-   * prefix queries are not parsed into wild card queries, and viceversa.
+   * prefix queries are not parsed into wild card queries, and vice-versa.
    */
   public void testParsingAndSearching() throws Exception {
     String field = "content";
@@ -345,7 +339,7 @@ public class TestWildcard
     // prepare the index
     Directory dir = newDirectory();
     RandomIndexWriter iw = new RandomIndexWriter(random(), dir, 
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()))
+        newIndexWriterConfig(new MockAnalyzer(random()))
         .setMergePolicy(newLogMergePolicy()));
     for (int i = 0; i < docs.length; i++) {
       Document doc = new Document();

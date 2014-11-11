@@ -18,6 +18,39 @@
 package org.apache.solr.client.solrj;
 
 
+import com.google.common.collect.Maps;
+import junit.framework.Assert;
+import org.apache.lucene.util.TestUtil;
+import org.apache.solr.SolrTestCaseJ4.SuppressSSL;
+import org.apache.solr.client.solrj.embedded.EmbeddedSolrServer;
+import org.apache.solr.client.solrj.impl.BinaryResponseParser;
+import org.apache.solr.client.solrj.impl.ConcurrentUpdateSolrServer;
+import org.apache.solr.client.solrj.impl.HttpSolrServer;
+import org.apache.solr.client.solrj.impl.XMLResponseParser;
+import org.apache.solr.client.solrj.request.AbstractUpdateRequest;
+import org.apache.solr.client.solrj.request.AbstractUpdateRequest.ACTION;
+import org.apache.solr.client.solrj.request.ContentStreamUpdateRequest;
+import org.apache.solr.client.solrj.request.LukeRequest;
+import org.apache.solr.client.solrj.request.QueryRequest;
+import org.apache.solr.client.solrj.request.UpdateRequest;
+import org.apache.solr.client.solrj.response.FacetField;
+import org.apache.solr.client.solrj.response.FieldStatsInfo;
+import org.apache.solr.client.solrj.response.LukeResponse;
+import org.apache.solr.client.solrj.response.PivotField;
+import org.apache.solr.client.solrj.response.QueryResponse;
+import org.apache.solr.client.solrj.response.UpdateResponse;
+import org.apache.solr.common.SolrDocument;
+import org.apache.solr.common.SolrDocumentList;
+import org.apache.solr.common.SolrException;
+import org.apache.solr.common.SolrInputDocument;
+import org.apache.solr.common.params.AnalysisParams;
+import org.apache.solr.common.params.CommonParams;
+import org.apache.solr.common.params.FacetParams;
+import org.apache.solr.common.util.NamedList;
+import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -27,43 +60,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
-import java.util.concurrent.atomic.AtomicInteger;
-
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-
-import junit.framework.Assert;
-
-import org.apache.lucene.util._TestUtil;
-import org.apache.solr.SolrJettyTestBase;
-import org.apache.solr.client.solrj.impl.BinaryResponseParser;
-import org.apache.solr.client.solrj.impl.ConcurrentUpdateSolrServer;
-import org.apache.solr.client.solrj.impl.HttpSolrServer;
-import org.apache.solr.client.solrj.impl.XMLResponseParser;
-import org.apache.solr.client.solrj.request.LukeRequest;
-import org.apache.solr.client.solrj.request.QueryRequest;
-import org.apache.solr.client.solrj.response.FieldStatsInfo;
-import org.apache.solr.client.solrj.request.UpdateRequest;
-import org.apache.solr.client.solrj.request.ContentStreamUpdateRequest;
-import org.apache.solr.client.solrj.request.AbstractUpdateRequest;
-import org.apache.solr.client.solrj.request.AbstractUpdateRequest.ACTION;
-import org.apache.solr.client.solrj.response.LukeResponse;
-import org.apache.solr.client.solrj.response.PivotField;
-import org.apache.solr.client.solrj.response.QueryResponse;
-import org.apache.solr.client.solrj.response.FacetField;
-import org.apache.solr.client.solrj.response.UpdateResponse;
-import org.apache.solr.client.solrj.util.ClientUtils;
-import org.apache.solr.common.SolrDocument;
-import org.apache.solr.common.SolrDocumentList;
-import org.apache.solr.common.SolrException;
-import org.apache.solr.common.SolrInputDocument;
-import org.apache.solr.common.util.NamedList;
-import org.apache.solr.common.params.AnalysisParams;
-import org.apache.solr.common.params.CommonParams;
-import org.apache.solr.common.params.FacetParams;
-import org.junit.Test;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * This should include tests against the example solr config
@@ -73,6 +69,7 @@ import org.slf4j.LoggerFactory;
  *
  * @since solr 1.3
  */
+@SuppressSSL
 abstract public class SolrExampleTests extends SolrExampleTestsBase
 {
   private static Logger log = LoggerFactory.getLogger(SolrExampleTests.class);
@@ -119,7 +116,7 @@ abstract public class SolrExampleTests extends SolrExampleTestsBase
     Assert.assertEquals(docID, response.getResults().get(0).getFieldValue("id") );
     
     // Now add a few docs for facet testing...
-    List<SolrInputDocument> docs = new ArrayList<SolrInputDocument>();
+    List<SolrInputDocument> docs = new ArrayList<>();
     SolrInputDocument doc2 = new SolrInputDocument();
     doc2.addField( "id", "2", 1.0f );
     doc2.addField( "inStock", true, 1.0f );
@@ -220,6 +217,7 @@ abstract public class SolrExampleTests extends SolrExampleTestsBase
       QueryResponse rsp = client.query(q);
       assertNotNull(rsp.getResponse().get("mode"));
       assertNotNull(rsp.getResponse().get("lucene"));
+      client.shutdown();
     }
   }
 
@@ -246,7 +244,7 @@ abstract public class SolrExampleTests extends SolrExampleTestsBase
     doc2.addField( "name", "h\uD866\uDF05llo", 1.0f );
     doc2.addField( "price", 20 );
     
-    Collection<SolrInputDocument> docs = new ArrayList<SolrInputDocument>();
+    Collection<SolrInputDocument> docs = new ArrayList<>();
     docs.add( doc1 );
     docs.add( doc2 );
     
@@ -358,12 +356,12 @@ abstract public class SolrExampleTests extends SolrExampleTestsBase
           }
         }
 
-        int numDocs = _TestUtil.nextInt(random(), 1, 10*RANDOM_MULTIPLIER);
+        int numDocs = TestUtil.nextInt(random(), 1, 10 * RANDOM_MULTIPLIER);
         
         // Empty the database...
         server.deleteByQuery("*:*");// delete everything!
         
-        List<SolrInputDocument> docs = new ArrayList<SolrInputDocument>();
+        List<SolrInputDocument> docs = new ArrayList<>();
         for (int i = 0; i < numDocs; i++) {
           // Now add something...
           SolrInputDocument doc = new SolrInputDocument();
@@ -544,6 +542,11 @@ abstract public class SolrExampleTests extends SolrExampleTestsBase
     
     SolrDocumentList out = rsp.getResults();
     assertEquals(2, out.getNumFound());
+    if (!(server1 instanceof EmbeddedSolrServer)) {
+      /* Do not close in case of using EmbeddedSolrServer,
+       * as that would close the CoreContainer */
+      server1.shutdown();
+    }
   }
   
  @Test
@@ -622,7 +625,7 @@ abstract public class SolrExampleTests extends SolrExampleTestsBase
     server.commit();
     assertNumFound( "*:*", 0 ); // make sure it got in
 
-    String f = "val_pi";
+    String f = "val_i";
     
     int i=0;               // 0   1   2   3   4   5   6   7   8   9 
     int[] nums = new int[] { 23, 26, 38, 46, 55, 63, 77, 84, 92, 94 };
@@ -744,7 +747,7 @@ abstract public class SolrExampleTests extends SolrExampleTestsBase
     server.commit();
     assertNumFound( "*:*", 0 ); // make sure it got in
     
-    ArrayList<SolrInputDocument> docs = new ArrayList<SolrInputDocument>(10);
+    ArrayList<SolrInputDocument> docs = new ArrayList<>(10);
     for( int i=1; i<=10; i++ ) {
       SolrInputDocument doc = new SolrInputDocument();
       doc.setField( "id", i+"", 1.0f );
@@ -808,6 +811,197 @@ abstract public class SolrExampleTests extends SolrExampleTestsBase
     doPivotFacetTest(false);
   }
     
+  @Test
+  public void testPivotFacetsStats() throws Exception {
+    SolrServer server = getSolrServer();
+
+    // Empty the database...
+    server.deleteByQuery("*:*");// delete everything!
+    server.commit();
+    assertNumFound("*:*", 0); // make sure it got in
+
+    int id = 1;
+    ArrayList<SolrInputDocument> docs = new ArrayList<>();
+    docs.add(makeTestDoc("id", id++, "features", "aaa", "manu", "apple", "cat", "a", "inStock", true, "popularity", 12, "price", .017));
+    docs.add(makeTestDoc("id", id++, "features", "aaa", "manu", "lg", "cat", "a", "inStock", false, "popularity", 13, "price", 16.04));
+    docs.add(makeTestDoc("id", id++, "features", "aaa", "manu", "samsung", "cat", "a", "inStock", true, "popularity", 14, "price", 12.34));
+    docs.add(makeTestDoc("id", id++, "features", "aaa", "manu", "lg", "cat", "b", "inStock", false, "popularity", 24, "price", 51.39));
+    docs.add(makeTestDoc("id", id++, "features", "aaa", "manu", "nokia", "cat", "b", "inStock", true, "popularity", 28, "price", 131.39));
+    docs.add(makeTestDoc("id", id++, "features", "bbb", "manu", "ztc", "cat", "a", "inStock", false, "popularity", 32));
+    docs.add(makeTestDoc("id", id++, "features", "bbb", "manu", "htc", "cat", "a", "inStock", true, "popularity", 31, "price", 131.39));
+    docs.add(makeTestDoc("id", id++, "features", "bbb", "manu", "apple", "cat", "b", "inStock", false, "popularity", 36));
+    docs.add(makeTestDoc("id", id++, "features", "bbb", "manu", "lg", "cat", "b", "inStock", true, "popularity", 37, "price", 1.39));
+    docs.add(makeTestDoc("id", id++, "features", "bbb", "manu", "ztc", "cat", "b", "inStock", false, "popularity", 38, "price", 47.98));
+    docs.add(makeTestDoc("id", id++, "features", "bbb", "manu", "ztc", "cat", "b", "inStock", true, "popularity", -38));
+    docs.add(makeTestDoc("id", id++, "cat", "b")); // something not matching all fields
+    server.add(docs);
+    server.commit();
+
+    for (String pivot : new String[] { "{!key=pivot_key stats=s1}features,manu",
+                                       "{!key=pivot_key stats=s1}features,manu,cat",
+                                       "{!key=pivot_key stats=s1}features,manu,cat,inStock"
+      }) {
+
+      // for any of these pivot params, the assertions we check should be teh same
+      // (we stop asserting at the "manu" level)
+      
+      SolrQuery query = new SolrQuery("*:*");
+      query.addFacetPivotField(pivot);
+      query.setFacetLimit(1);
+      query.addGetFieldStatistics("{!key=foo_price tag=s1}price", "{!tag=s1}popularity");
+      query.setFacetMinCount(0);
+      query.setRows(0);
+
+      QueryResponse rsp = server.query(query);
+
+      // check top (ie: non-pivot) stats
+      Map<String, FieldStatsInfo> map = rsp.getFieldStatsInfo();
+      FieldStatsInfo intValueStatsInfo = map.get("popularity");
+      assertEquals(-38.0d, intValueStatsInfo.getMin());
+      assertEquals(38.0d, intValueStatsInfo.getMax());
+      assertEquals(11l, intValueStatsInfo.getCount().longValue());
+      assertEquals(1l, intValueStatsInfo.getMissing().longValue());
+      assertEquals(227.0d, intValueStatsInfo.getSum());
+      assertEquals(20.636363636363637d, intValueStatsInfo.getMean());
+      
+      FieldStatsInfo doubleValueStatsInfo = map.get("foo_price");
+      assertEquals(.017d, (double) doubleValueStatsInfo.getMin(), .01d);
+      assertEquals(131.39d, (double) doubleValueStatsInfo.getMax(), .01d);
+      assertEquals(8l, doubleValueStatsInfo.getCount().longValue());
+      assertEquals(4l, doubleValueStatsInfo.getMissing().longValue());
+      assertEquals(391.93d, (double) doubleValueStatsInfo.getSum(), .01d);
+      assertEquals(48.99d, (double) doubleValueStatsInfo.getMean(), .01d);
+
+      // now get deeper and look at the pivots...
+
+      NamedList<List<PivotField>> pivots = rsp.getFacetPivot();
+      assertTrue( ! pivots.get("pivot_key").isEmpty() );
+
+      List<PivotField> list = pivots.get("pivot_key");
+      PivotField featuresBBBPivot = list.get(0);
+      assertEquals("features", featuresBBBPivot.getField());
+      assertEquals("bbb", featuresBBBPivot.getValue());
+      assertNotNull(featuresBBBPivot.getFieldStatsInfo());
+      assertEquals(2, featuresBBBPivot.getFieldStatsInfo().size());
+      
+      FieldStatsInfo featuresBBBPivotStats1 = featuresBBBPivot.getFieldStatsInfo().get("foo_price");
+      assertEquals("foo_price", featuresBBBPivotStats1.getName());
+      assertEquals(131.39d, (double) featuresBBBPivotStats1.getMax(), .01d);
+      assertEquals(1.38d, (double) featuresBBBPivotStats1.getMin(), .01d);
+      assertEquals(180.75d, (double) featuresBBBPivotStats1.getSum(), .01d);
+      assertEquals(3, (long) featuresBBBPivotStats1.getCount());
+      assertEquals(3, (long) featuresBBBPivotStats1.getMissing());
+      assertEquals(60.25d, (double) featuresBBBPivotStats1.getMean(), .01d);
+      assertEquals(65.86d, featuresBBBPivotStats1.getStddev(), .01d);
+      assertEquals(19567.34d, featuresBBBPivotStats1.getSumOfSquares(), .01d);
+      
+      FieldStatsInfo featuresBBBPivotStats2 = featuresBBBPivot.getFieldStatsInfo().get("popularity");
+      assertEquals("popularity", featuresBBBPivotStats2.getName());
+      assertEquals(38.0d, (double) featuresBBBPivotStats2.getMax(), .01d);
+      assertEquals(-38.0d, (double) featuresBBBPivotStats2.getMin(), .01d);
+      assertEquals(136.0d, (double) featuresBBBPivotStats2.getSum(), .01d);
+      assertEquals(6, (long) featuresBBBPivotStats2.getCount());
+      assertEquals(0, (long) featuresBBBPivotStats2.getMissing());
+      assertEquals(22.66d, (double) featuresBBBPivotStats2.getMean(), .01d);
+      assertEquals(29.85d, featuresBBBPivotStats2.getStddev(), .01d);
+      assertEquals(7538.0d, featuresBBBPivotStats2.getSumOfSquares(), .01d);
+      
+      List<PivotField> nestedPivotList = featuresBBBPivot.getPivot();
+      PivotField featuresBBBPivotPivot = nestedPivotList.get(0);
+      assertEquals("manu", featuresBBBPivotPivot.getField());
+      assertEquals("ztc", featuresBBBPivotPivot.getValue());
+      assertNotNull(featuresBBBPivotPivot.getFieldStatsInfo());
+      assertEquals(2, featuresBBBPivotPivot.getFieldStatsInfo().size());
+      
+      FieldStatsInfo featuresBBBManuZtcPivotStats1 = featuresBBBPivotPivot.getFieldStatsInfo().get("foo_price");
+      assertEquals("foo_price", featuresBBBManuZtcPivotStats1.getName());
+      assertEquals(47.97d, (double) featuresBBBManuZtcPivotStats1.getMax(), .01d);
+      assertEquals(47.97d, (double) featuresBBBManuZtcPivotStats1.getMin(), .01d);
+      assertEquals(47.97d, (double) featuresBBBManuZtcPivotStats1.getSum(), .01d);
+      assertEquals(1, (long) featuresBBBManuZtcPivotStats1.getCount());
+      assertEquals(2, (long) featuresBBBManuZtcPivotStats1.getMissing());
+      assertEquals(47.97d, (double) featuresBBBManuZtcPivotStats1.getMean(), .01d);
+      assertEquals(0.0d, featuresBBBManuZtcPivotStats1.getStddev(), .01d);
+      assertEquals(2302.08d, featuresBBBManuZtcPivotStats1.getSumOfSquares(), .01d);
+      
+      
+      FieldStatsInfo featuresBBBManuZtcPivotStats2 = featuresBBBPivotPivot.getFieldStatsInfo().get("popularity");
+      assertEquals("popularity", featuresBBBManuZtcPivotStats2.getName());
+      assertEquals(38.0d, (double) featuresBBBManuZtcPivotStats2.getMax(), .01d);
+      assertEquals(-38.0d, (double) featuresBBBManuZtcPivotStats2.getMin(), .01d);
+      assertEquals(32.0, (double) featuresBBBManuZtcPivotStats2.getSum(), .01d);
+      assertEquals(3, (long) featuresBBBManuZtcPivotStats2.getCount());
+      assertEquals(0, (long) featuresBBBManuZtcPivotStats2.getMissing());
+      assertEquals(10.66d, (double) featuresBBBManuZtcPivotStats2.getMean(), .01d);
+      assertEquals(42.25d, featuresBBBManuZtcPivotStats2.getStddev(), .01d);
+      assertEquals(3912.0d, featuresBBBManuZtcPivotStats2.getSumOfSquares(), .01d);
+    }
+  }
+
+  @Test
+  public void testPivotFacetsStatsNotSupported() throws Exception {
+    SolrServer server = getSolrServer();
+
+    // Empty the database...
+    server.deleteByQuery("*:*");// delete everything!
+    server.commit();
+    assertNumFound("*:*", 0); // make sure it got in
+
+    // results of this test should be the same regardless of wether any docs in index
+    if (random().nextBoolean()) {
+      server.add(makeTestDoc("id", 1, "features", "aaa", "cat", "a", "inStock", true, "popularity", 12, "price", .017));
+      server.commit();
+    }
+
+    ignoreException("is not currently supported");
+
+    // boolean field
+    SolrQuery query = new SolrQuery("*:*");
+    query.addFacetPivotField("{!stats=s1}features,manu");
+    query.addGetFieldStatistics("{!key=inStock_val tag=s1}inStock");
+    try {
+      server.query(query);
+      fail("SolrException should be thrown on query");
+    } catch (SolrException e) {
+      assertEquals("Pivot facet on boolean is not currently supported, bad request returned", 400, e.code());
+      assertTrue(e.getMessage().contains("is not currently supported"));
+      assertTrue(e.getMessage().contains("boolean"));
+    }
+
+    // asking for multiple stat tags -- see SOLR-6663
+    query = new SolrQuery("*:*");
+    query.addFacetPivotField("{!stats=tag1,tag2}features,manu");
+    query.addGetFieldStatistics("{!tag=tag1}price", "{!tag=tag2}popularity");
+    query.setFacetMinCount(0);
+    query.setRows(0);
+    try {
+      server.query(query);
+      fail("SolrException should be thrown on query");
+    } catch (SolrException e) {
+      assertEquals(400, e.code());
+      assertTrue(e.getMessage().contains("stats"));
+      assertTrue(e.getMessage().contains("comma"));
+      assertTrue(e.getMessage().contains("tag"));
+    }
+
+    // text field
+    query = new SolrQuery("*:*");
+    query.addFacetPivotField("{!stats=s1}features,manu");
+    query.addGetFieldStatistics("{!tag=s1}features");
+    query.setFacetMinCount(0);
+    query.setRows(0);
+    try {
+      server.query(query);
+      fail("SolrException should be thrown on query");
+    } catch (SolrException e) {
+      assertEquals("Pivot facet on string is not currently supported, bad request returned", 400, e.code());
+      assertTrue(e.getMessage().contains("is not currently supported"));
+      assertTrue(e.getMessage().contains("text_general"));
+    }
+    
+
+  }
+
   public void testPivotFacetsMissing() throws Exception {
     doPivotFacetTest(true);
   }
@@ -821,7 +1015,7 @@ abstract public class SolrExampleTests extends SolrExampleTestsBase
     assertNumFound( "*:*", 0 ); // make sure it got in
     
     int id = 1;
-    ArrayList<SolrInputDocument> docs = new ArrayList<SolrInputDocument>();
+    ArrayList<SolrInputDocument> docs = new ArrayList<>();
     docs.add( makeTestDoc( "id", id++, "features", "aaa",  "cat", "a", "inStock", true  ) );
     docs.add( makeTestDoc( "id", id++, "features", "aaa",  "cat", "a", "inStock", false ) );
     docs.add( makeTestDoc( "id", id++, "features", "aaa",  "cat", "a", "inStock", true ) );
@@ -1125,7 +1319,7 @@ abstract public class SolrExampleTests extends SolrExampleTestsBase
     assertEquals(1.0f, resp.getResults().get(0).getFirstValue("price_f"));
 
     //update "price" with incorrect version (optimistic locking)
-    HashMap<String, Object> oper = new HashMap<String, Object>();  //need better api for this???
+    HashMap<String, Object> oper = new HashMap<>();  //need better api for this???
     oper.put("set",100);
 
     doc = new SolrInputDocument();
@@ -1179,7 +1373,7 @@ abstract public class SolrExampleTests extends SolrExampleTestsBase
     QueryResponse response = solrServer.query(new SolrQuery("id:123"));
     assertEquals("Failed to add doc to cloud server", 1, response.getResults().getNumFound());
 
-    Map<String, List<String>> operation = new HashMap<String, List<String>>();
+    Map<String, List<String>> operation = new HashMap<>();
     operation.put("set", Arrays.asList("first", "second", "third"));
     doc.addField("multi_ss", operation);
     solrServer.add(doc);
@@ -1255,5 +1449,247 @@ abstract public class SolrExampleTests extends SolrExampleTestsBase
         "true",
         ((NamedList) resp.getResponseHeader().get("params")).get("debug"));
   }
-  
+
+
+  @Test
+  public void testChildDoctransformer() throws IOException, SolrServerException {
+    SolrServer server = getSolrServer();
+    server.deleteByQuery("*:*");
+    server.commit();
+
+    int numRootDocs = TestUtil.nextInt(random(), 10, 100);
+    int maxDepth = TestUtil.nextInt(random(), 2, 5);
+
+    Map<String,SolrInputDocument> allDocs = new HashMap<>();
+
+    for (int i =0; i < numRootDocs; i++) {
+      server.add(genNestedDocuments(allDocs, 0, maxDepth));
+    }
+
+    server.commit();
+
+    // sanity check
+    SolrQuery q = new SolrQuery("*:*");
+    QueryResponse resp = server.query(q);
+    assertEquals("Doc count does not match", 
+                 allDocs.size(), resp.getResults().getNumFound());
+
+
+    // base check - we know there is an exact number of these root docs
+    q = new SolrQuery("level_i:0");
+    q.setFields("*", "[child parentFilter=\"level_i:0\"]");
+    resp = server.query(q);
+    assertEquals("topLevel count does not match", numRootDocs,
+                 resp.getResults().getNumFound());
+    for (SolrDocument outDoc : resp.getResults()) {
+      String docId = (String)outDoc.getFieldValue("id");
+      SolrInputDocument origDoc = allDocs.get(docId);
+      assertNotNull("docId not found: " + docId, origDoc);
+      assertEquals("kids mismatch", 
+                   origDoc.hasChildDocuments(), outDoc.hasChildDocuments());
+      if (outDoc.hasChildDocuments()) {
+        for (SolrDocument kid : outDoc.getChildDocuments()) {
+          String kidId = (String)kid.getFieldValue("id");
+          SolrInputDocument origChild = findDecendent(origDoc, kidId);
+          assertNotNull(docId + " doesn't have decendent " + kidId,
+                        origChild);
+        }
+      }
+    }
+
+    // simple check: direct verification of direct children on random docs
+    {
+      int parentLevel = TestUtil.nextInt(random(), 0, maxDepth);
+      int kidLevel = parentLevel+1;
+      String parentFilter = "level_i:" + parentLevel;
+      String childFilter = "level_i:" + kidLevel;
+      int maxKidCount = TestUtil.nextInt(random(), 1, 37);
+      
+      q = new SolrQuery("*:*");
+      q.setFilterQueries(parentFilter);
+      q.setFields("id,[child parentFilter=\"" + parentFilter +
+                  "\" childFilter=\"" + childFilter + 
+                  "\" limit=\"" + maxKidCount + "\"]");
+      resp = server.query(q);
+      for (SolrDocument outDoc : resp.getResults()) {
+        String docId = (String)outDoc.getFieldValue("id");
+        SolrInputDocument origDoc = allDocs.get(docId);
+        assertNotNull("docId not found: " + docId, origDoc);
+        assertEquals("kids mismatch", 
+                     origDoc.hasChildDocuments(), outDoc.hasChildDocuments());
+        if (outDoc.hasChildDocuments()) {
+          // since we know we are looking at our direct children
+          // we can verify the count
+          int numOrigKids = origDoc.getChildDocuments().size();
+          int numOutKids = outDoc.getChildDocuments().size();
+          assertEquals("Num kids mismatch: " + numOrigKids + "/" + maxKidCount,
+                       (maxKidCount < numOrigKids ? maxKidCount : numOrigKids),
+                       numOutKids);
+          
+          for (SolrDocument kid : outDoc.getChildDocuments()) {
+            String kidId = (String)kid.getFieldValue("id");
+            assertEquals("kid is the wrong level",
+                         kidLevel, (int)kid.getFieldValue("level_i"));
+            SolrInputDocument origChild = findDecendent(origDoc, kidId);
+            assertNotNull(docId + " doesn't have decendent " + kidId,
+                          origChild);
+          }
+        }
+      }
+    }
+
+    // fully randomized
+    // verifications are driven only by the results
+    {
+      int parentLevel = TestUtil.nextInt(random(), 0, maxDepth-1);
+      int kidLevelMin = TestUtil.nextInt(random(), parentLevel + 1, maxDepth);
+      int kidLevelMax = TestUtil.nextInt(random(), kidLevelMin, maxDepth);
+
+      String parentFilter = "level_i:" + parentLevel;
+      String childFilter = "level_i:[" + kidLevelMin + " TO " + kidLevelMax + "]";
+      int maxKidCount = TestUtil.nextInt(random(), 1, 7);
+      
+      q = new SolrQuery("*:*");
+      if (random().nextBoolean()) {
+        String name = names[TestUtil.nextInt(random(), 0, names.length-1)];
+        q = new SolrQuery("name:" + name);
+      }
+      q.setFilterQueries(parentFilter);
+      q.setFields("id,[child parentFilter=\"" + parentFilter +
+                  "\" childFilter=\"" + childFilter + 
+                  "\" limit=\"" + maxKidCount + "\"]");
+      resp = server.query(q);
+      for (SolrDocument outDoc : resp.getResults()) {
+        String docId = (String)outDoc.getFieldValue("id");
+        SolrInputDocument origDoc = allDocs.get(docId);
+        assertNotNull("docId not found: " + docId, origDoc);
+        // we can't always assert origHasKids==outHasKids, original kids
+        // might not go deep enough for childFilter...
+        if (outDoc.hasChildDocuments()) {
+          // ...however if there are out kids, there *have* to be orig kids
+          assertTrue("orig doc had no kids at all", origDoc.hasChildDocuments());
+          for (SolrDocument kid : outDoc.getChildDocuments()) {
+            String kidId = (String)kid.getFieldValue("id");
+            int kidLevel = (int)kid.getFieldValue("level_i");
+            assertTrue("kid level to high: " + kidLevelMax + "<" + kidLevel,
+                       kidLevel <= kidLevelMax);
+            assertTrue("kid level to low: " + kidLevelMin + ">" + kidLevel,
+                       kidLevelMin <= kidLevel);
+            SolrInputDocument origChild = findDecendent(origDoc, kidId);
+            assertNotNull(docId + " doesn't have decendent " + kidId,
+                          origChild);
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  public void testFieldGlobbing() throws Exception  {
+    SolrServer server = getSolrServer();
+
+    SolrInputDocument doc = new SolrInputDocument();
+    doc.addField("id", "testFieldGlobbing");
+    doc.addField("x_s", "x");
+    doc.addField("y_s", "y");
+    doc.addField("z_s", "z");
+    server.add(doc);
+    server.commit();
+
+    // id and glob
+    QueryResponse response = server.query(new SolrQuery("id:testFieldGlobbing").addField("id").addField("*_s"));
+    assertEquals("Document not found", 1, response.getResults().getNumFound());
+    assertEquals("All requested fields were not returned", 4, response.getResults().get(0).getFieldNames().size());
+
+    // just globs
+    response = server.query(new SolrQuery("id:testFieldGlobbing").addField("*_s"));
+    assertEquals("Document not found", 1, response.getResults().getNumFound());
+    assertEquals("All requested fields were not returned", 3, response.getResults().get(0).getFieldNames().size());
+
+    // just id
+    response = server.query(new SolrQuery("id:testFieldGlobbing").addField("id"));
+    assertEquals("Document not found", 1, response.getResults().getNumFound());
+    assertEquals("All requested fields were not returned", 1, response.getResults().get(0).getFieldNames().size());
+
+    // id and pseudo field and glob
+    response = server.query(new SolrQuery("id:testFieldGlobbing").addField("id").addField("[docid]").addField("*_s"));
+    assertEquals("Document not found", 1, response.getResults().getNumFound());
+    assertEquals("All requested fields were not returned", 5, response.getResults().get(0).getFieldNames().size());
+
+    // pseudo field and glob
+    response = server.query(new SolrQuery("id:testFieldGlobbing").addField("[docid]").addField("*_s"));
+    assertEquals("Document not found", 1, response.getResults().getNumFound());
+    assertEquals("All requested fields were not returned", 4, response.getResults().get(0).getFieldNames().size());
+
+    // just a pseudo field
+    response = server.query(new SolrQuery("id:testFieldGlobbing").addField("[docid]"));
+    assertEquals("Document not found", 1, response.getResults().getNumFound());
+    assertEquals("All requested fields were not returned", 1, response.getResults().get(0).getFieldNames().size());
+
+    // only score
+    response = server.query(new SolrQuery("id:testFieldGlobbing").addField("score"));
+    assertEquals("Document not found", 1, response.getResults().getNumFound());
+    assertEquals("All requested fields were not returned", 1, response.getResults().get(0).getFieldNames().size());
+
+    // pseudo field and score
+    response = server.query(new SolrQuery("id:testFieldGlobbing").addField("score").addField("[docid]"));
+    assertEquals("Document not found", 1, response.getResults().getNumFound());
+    assertEquals("All requested fields were not returned", 2, response.getResults().get(0).getFieldNames().size());
+
+    // score and globs
+    response = server.query(new SolrQuery("id:testFieldGlobbing").addField("score").addField("*_s"));
+    assertEquals("Document not found", 1, response.getResults().getNumFound());
+    assertEquals("All requested fields were not returned", 4, response.getResults().get(0).getFieldNames().size());
+  }
+
+  /** 
+   * Depth first search of a SolrInputDocument looking for a decendent by id, 
+   * returns null if it's not a decendent 
+   */
+  private SolrInputDocument findDecendent(SolrInputDocument parent, String childId) {
+    if (childId.equals(parent.getFieldValue("id"))) {
+      return parent;
+    }
+    if (! parent.hasChildDocuments() ) {
+      return null;
+    }
+    for (SolrInputDocument kid : parent.getChildDocuments()) {
+      SolrInputDocument result = findDecendent(kid, childId);
+      if (null != result) {
+        return result;
+      }
+    }
+    return null;
+  }
+
+  /** used by genNestedDocuments */
+  private int idCounter = 0;
+  /** used by genNestedDocuments */
+  private static final String[] names 
+    = new String[] { "java","python","scala","ruby","clojure" };
+
+  /**
+   * recursive method for generating a document, which may also have child documents;
+   * adds all documents constructed (including decendents) to allDocs via their id 
+   */
+  private SolrInputDocument genNestedDocuments(Map<String,SolrInputDocument> allDocs, 
+                                               int thisLevel,
+                                               int maxDepth) {
+    String id = "" + (idCounter++);
+    SolrInputDocument sdoc = new SolrInputDocument();
+    allDocs.put(id, sdoc);
+
+    sdoc.addField("id", id);
+    sdoc.addField("level_i", thisLevel);
+    sdoc.addField("name", names[TestUtil.nextInt(random(), 0, names.length-1)]);
+    
+    if (0 < maxDepth) {
+      // NOTE: range include negative to increase odds of no kids
+      int numKids = TestUtil.nextInt(random(), -2, 7);
+      for(int i=0; i<numKids; i++) {
+        sdoc.addChildDocument(genNestedDocuments(allDocs, thisLevel+1, maxDepth-1));
+      }
+    }
+    return sdoc;
+  }
 }

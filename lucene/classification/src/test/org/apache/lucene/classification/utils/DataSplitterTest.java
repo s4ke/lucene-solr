@@ -23,14 +23,14 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.SlowCompositeReaderWrapper;
 import org.apache.lucene.store.BaseDirectoryWrapper;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.LuceneTestCase;
 import org.junit.After;
 import org.junit.Before;
@@ -44,7 +44,7 @@ import java.util.Random;
  */
 public class DataSplitterTest extends LuceneTestCase {
 
-  private AtomicReader originalIndex;
+  private LeafReader originalIndex;
   private RandomIndexWriter indexWriter;
   private Directory dir;
 
@@ -71,8 +71,8 @@ public class DataSplitterTest extends LuceneTestCase {
     for (int i = 0; i < 100; i++) {
       doc = new Document();
       doc.add(new Field(idFieldName, Integer.toString(i), ft));
-      doc.add(new Field(textFieldName, _TestUtil.randomUnicodeString(rnd, 1024), ft));
-      doc.add(new Field(classFieldName, _TestUtil.randomUnicodeString(rnd, 10), ft));
+      doc.add(new Field(textFieldName, TestUtil.randomUnicodeString(rnd, 1024), ft));
+      doc.add(new Field(classFieldName, TestUtil.randomUnicodeString(rnd, 10), ft));
       indexWriter.addDocument(doc, analyzer);
     }
 
@@ -103,7 +103,7 @@ public class DataSplitterTest extends LuceneTestCase {
     assertSplit(originalIndex, 0.2, 0.35, idFieldName, textFieldName);
   }
 
-  public static void assertSplit(AtomicReader originalIndex, double testRatio, double crossValidationRatio, String... fieldNames) throws Exception {
+  public static void assertSplit(LeafReader originalIndex, double testRatio, double crossValidationRatio, String... fieldNames) throws Exception {
 
     BaseDirectoryWrapper trainingIndex = newDirectory();
     BaseDirectoryWrapper testIndex = newDirectory();

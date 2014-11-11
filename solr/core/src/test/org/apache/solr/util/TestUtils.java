@@ -17,6 +17,7 @@
 
 package org.apache.solr.util;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -31,6 +32,29 @@ import org.junit.Assert;
  *
  */
 public class TestUtils extends LuceneTestCase {
+  
+  public void testJoin() {
+    assertEquals("a|b|c",   StrUtils.join(Arrays.asList("a","b","c"), '|'));
+    assertEquals("a,b,c",   StrUtils.join(Arrays.asList("a","b","c"), ','));
+    assertEquals("a\\,b,c", StrUtils.join(Arrays.asList("a,b","c"), ','));
+    assertEquals("a,b|c",   StrUtils.join(Arrays.asList("a,b","c"), '|'));
+
+    assertEquals("a\\\\b|c",   StrUtils.join(Arrays.asList("a\\b","c"), '|'));
+  }
+
+  public void testEscapeTextWithSeparator() {
+    assertEquals("a",  StrUtils.escapeTextWithSeparator("a", '|'));
+    assertEquals("a",  StrUtils.escapeTextWithSeparator("a", ','));
+                              
+    assertEquals("a\\|b",  StrUtils.escapeTextWithSeparator("a|b", '|'));
+    assertEquals("a|b",    StrUtils.escapeTextWithSeparator("a|b", ','));
+    assertEquals("a,b",    StrUtils.escapeTextWithSeparator("a,b", '|'));
+    assertEquals("a\\,b",  StrUtils.escapeTextWithSeparator("a,b", ','));
+    assertEquals("a\\\\b", StrUtils.escapeTextWithSeparator("a\\b", ','));
+
+    assertEquals("a\\\\\\,b", StrUtils.escapeTextWithSeparator("a\\,b", ','));
+  }
+
   public void testSplitEscaping() {
     List<String> arr = StrUtils.splitSmart("\\r\\n:\\t\\f\\b", ":", true);
     assertEquals(2,arr.size());
@@ -74,20 +98,20 @@ public class TestUtils extends LuceneTestCase {
 
   public void testNamedLists()
   {
-    SimpleOrderedMap<Integer> map = new SimpleOrderedMap<Integer>();
+    SimpleOrderedMap<Integer> map = new SimpleOrderedMap<>();
     map.add( "test", 10 );
     SimpleOrderedMap<Integer> clone = map.clone();
     assertEquals( map.toString(), clone.toString() );
     assertEquals( new Integer(10), clone.get( "test" ) );
   
-    Map<String,Integer> realMap = new HashMap<String, Integer>();
+    Map<String,Integer> realMap = new HashMap<>();
     realMap.put( "one", 1 );
     realMap.put( "two", 2 );
     realMap.put( "three", 3 );
-    map = new SimpleOrderedMap<Integer>();
+    map = new SimpleOrderedMap<>();
     map.addAll( realMap );
     assertEquals( 3, map.size() );
-    map = new SimpleOrderedMap<Integer>();
+    map = new SimpleOrderedMap<>();
     map.add( "one", 1 );
     map.add( "two", 2 );
     map.add( "three", 3 );
@@ -101,7 +125,7 @@ public class TestUtils extends LuceneTestCase {
     assertEquals( 4, map.indexOf( null, 1 ) );
     assertEquals( null, map.get( null, 1 ) );
 
-    map = new SimpleOrderedMap<Integer>();
+    map = new SimpleOrderedMap<>();
     map.add( "one", 1 );
     map.add( "two", 2 );
     Iterator<Map.Entry<String, Integer>> iter = map.iterator();

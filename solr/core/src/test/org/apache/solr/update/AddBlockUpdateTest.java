@@ -1,10 +1,31 @@
 package org.apache.solr.update;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.StringReader;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
+
 import org.apache.commons.io.output.ByteArrayOutputStream;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TermRangeFilter;
 import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.join.BitDocIdSetCachingWrapperFilter;
 import org.apache.lucene.search.join.ScoreMode;
 import org.apache.lucene.search.join.ToParentBlockJoinQuery;
 import org.apache.solr.SolrTestCaseJ4;
@@ -25,33 +46,6 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.xml.sax.SAXException;
-
-import javax.xml.stream.XMLInputFactory;
-import javax.xml.stream.XMLStreamException;
-import javax.xml.stream.XMLStreamReader;
-
-
-
-
-
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.io.StringReader;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicInteger;
-
-import javax.xml.stream.XMLStreamException;
-import javax.xml.stream.XMLStreamReader;
 
 /**
  * Licensed to the Apache Software Foundation (ASF) under one or more
@@ -188,7 +182,7 @@ public class AddBlockUpdateTest extends SolrTestCaseJ4 {
   
   @Test
   public void testBasics() throws Exception {
-    List<Document> blocks = new ArrayList<Document>(Arrays.asList(
+    List<Document> blocks = new ArrayList<>(Arrays.asList(
         block("abcD"),
         block("efgH"),
         merge(block("ijkL"), block("mnoP")),
@@ -196,7 +190,7 @@ public class AddBlockUpdateTest extends SolrTestCaseJ4 {
         block("Y"),
         block("Z")));
     
-    Collections.shuffle(blocks);
+    Collections.shuffle(blocks, random());
     
     log.trace("{}", blocks);
     
@@ -268,7 +262,7 @@ public class AddBlockUpdateTest extends SolrTestCaseJ4 {
   public void testSolrJXML() throws IOException {
     UpdateRequest req = new UpdateRequest();
     
-    List<SolrInputDocument> docs = new ArrayList<SolrInputDocument>();
+    List<SolrInputDocument> docs = new ArrayList<>();
     
     SolrInputDocument document1 = new SolrInputDocument() {
       {
@@ -276,7 +270,7 @@ public class AddBlockUpdateTest extends SolrTestCaseJ4 {
         addField("id", id);
         addField("parent_s", "X");
         
-        ArrayList<SolrInputDocument> ch1 = new ArrayList<SolrInputDocument>(
+        ArrayList<SolrInputDocument> ch1 = new ArrayList<>(
             Arrays.asList(new SolrInputDocument() {
               {
                 addField("id", id());
@@ -336,7 +330,7 @@ public class AddBlockUpdateTest extends SolrTestCaseJ4 {
   public void testXML() throws IOException, XMLStreamException {
     UpdateRequest req = new UpdateRequest();
     
- List<SolrInputDocument> docs = new ArrayList<SolrInputDocument>();
+ List<SolrInputDocument> docs = new ArrayList<>();
     
  
     String xml_doc1 =
@@ -566,12 +560,12 @@ public class AddBlockUpdateTest extends SolrTestCaseJ4 {
   
   protected ToParentBlockJoinQuery join(final String childTerm) {
     return new ToParentBlockJoinQuery(
-        new TermQuery(new Term(child, childTerm)), new TermRangeFilter(parent,
-            null, null, false, false), ScoreMode.None);
+        new TermQuery(new Term(child, childTerm)), new BitDocIdSetCachingWrapperFilter(new TermRangeFilter(parent,
+            null, null, false, false)), ScoreMode.None);
   }
   
   private Collection<? extends Callable<Void>> callables(List<Document> blocks) {
-    final List<Callable<Void>> rez = new ArrayList<Callable<Void>>();
+    final List<Callable<Void>> rez = new ArrayList<>();
     for (Document block : blocks) {
       final String msg = block.asXML();
       if (msg.length() > 0) {

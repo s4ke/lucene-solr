@@ -137,7 +137,7 @@ public class TestParallelCompositeReader extends LuceneTestCase {
 
     assertEquals(3, pr.leaves().size());
 
-    for(AtomicReaderContext cxt : pr.leaves()) {
+    for(LeafReaderContext cxt : pr.leaves()) {
       cxt.reader().addReaderClosedListener(new ReaderClosedListener() {
           @Override
           public void onClose(IndexReader reader) {
@@ -165,7 +165,7 @@ public class TestParallelCompositeReader extends LuceneTestCase {
 
     assertEquals(3, pr.leaves().size());
 
-    for(AtomicReaderContext cxt : pr.leaves()) {
+    for(LeafReaderContext cxt : pr.leaves()) {
       cxt.reader().addReaderClosedListener(new ReaderClosedListener() {
           @Override
           public void onClose(IndexReader reader) {
@@ -220,7 +220,7 @@ public class TestParallelCompositeReader extends LuceneTestCase {
 
     // one document only:
     Directory dir2 = newDirectory();
-    IndexWriter w2 = new IndexWriter(dir2, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    IndexWriter w2 = new IndexWriter(dir2, newIndexWriterConfig(new MockAnalyzer(random())));
     Document d3 = new Document();
 
     d3.add(newTextField("f3", "v1", Field.Store.YES));
@@ -324,7 +324,7 @@ public class TestParallelCompositeReader extends LuceneTestCase {
     assertNull(pr.document(0).get("f3"));
     assertNull(pr.document(0).get("f4"));
     // check that fields are there
-    AtomicReader slow = SlowCompositeReaderWrapper.wrap(pr);
+    LeafReader slow = SlowCompositeReaderWrapper.wrap(pr);
     assertNotNull(slow.terms("f1"));
     assertNotNull(slow.terms("f2"));
     assertNotNull(slow.terms("f3"));
@@ -383,7 +383,7 @@ public class TestParallelCompositeReader extends LuceneTestCase {
     ParallelCompositeReader pr = new ParallelCompositeReader(new CompositeReader[] {ir1});
     
     final String s = pr.toString();
-    assertTrue("toString incorrect: " + s, s.startsWith("ParallelCompositeReader(ParallelAtomicReader("));
+    assertTrue("toString incorrect: " + s, s.startsWith("ParallelCompositeReader(ParallelLeafReader("));
 
     pr.close();
     dir1.close();
@@ -395,7 +395,7 @@ public class TestParallelCompositeReader extends LuceneTestCase {
     ParallelCompositeReader pr = new ParallelCompositeReader(new CompositeReader[] {new MultiReader(ir1)});
     
     final String s = pr.toString();
-    assertTrue("toString incorrect: " + s, s.startsWith("ParallelCompositeReader(ParallelCompositeReader(ParallelAtomicReader("));
+    assertTrue("toString incorrect: " + s, s.startsWith("ParallelCompositeReader(ParallelCompositeReader(ParallelLeafReader("));
 
     pr.close();
     dir1.close();
@@ -419,7 +419,7 @@ public class TestParallelCompositeReader extends LuceneTestCase {
   // Fields 1-4 indexed together:
   private IndexSearcher single(Random random, boolean compositeComposite) throws IOException {
     dir = newDirectory();
-    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random)));
+    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random)));
     Document d1 = new Document();
     d1.add(newTextField("f1", "v1", Field.Store.YES));
     d1.add(newTextField("f2", "v1", Field.Store.YES));
@@ -478,8 +478,8 @@ public class TestParallelCompositeReader extends LuceneTestCase {
   // subreader structure: (1,2,1) 
   private Directory getDir1(Random random) throws IOException {
     Directory dir1 = newDirectory();
-    IndexWriter w1 = new IndexWriter(dir1, newIndexWriterConfig(TEST_VERSION_CURRENT,
-        new MockAnalyzer(random)).setMergePolicy(NoMergePolicy.NO_COMPOUND_FILES));
+    IndexWriter w1 = new IndexWriter(dir1, newIndexWriterConfig(new MockAnalyzer(random))
+                                             .setMergePolicy(NoMergePolicy.INSTANCE));
     Document d1 = new Document();
     d1.add(newTextField("f1", "v1", Field.Store.YES));
     d1.add(newTextField("f2", "v1", Field.Store.YES));
@@ -505,8 +505,8 @@ public class TestParallelCompositeReader extends LuceneTestCase {
   // subreader structure: (1,2,1) 
   private Directory getDir2(Random random) throws IOException {
     Directory dir2 = newDirectory();
-    IndexWriter w2 = new IndexWriter(dir2, newIndexWriterConfig(TEST_VERSION_CURRENT,
-        new MockAnalyzer(random)).setMergePolicy(NoMergePolicy.NO_COMPOUND_FILES));
+    IndexWriter w2 = new IndexWriter(dir2, newIndexWriterConfig(new MockAnalyzer(random))
+                                             .setMergePolicy(NoMergePolicy.INSTANCE));
     Document d1 = new Document();
     d1.add(newTextField("f3", "v1", Field.Store.YES));
     d1.add(newTextField("f4", "v1", Field.Store.YES));
@@ -532,8 +532,8 @@ public class TestParallelCompositeReader extends LuceneTestCase {
   // this dir has a different subreader structure (1,1,2);
   private Directory getInvalidStructuredDir2(Random random) throws IOException {
     Directory dir2 = newDirectory();
-    IndexWriter w2 = new IndexWriter(dir2, newIndexWriterConfig(TEST_VERSION_CURRENT,
-        new MockAnalyzer(random)).setMergePolicy(NoMergePolicy.NO_COMPOUND_FILES));
+    IndexWriter w2 = new IndexWriter(dir2, newIndexWriterConfig(new MockAnalyzer(random))
+                                             .setMergePolicy(NoMergePolicy.INSTANCE));
     Document d1 = new Document();
     d1.add(newTextField("f3", "v1", Field.Store.YES));
     d1.add(newTextField("f4", "v1", Field.Store.YES));

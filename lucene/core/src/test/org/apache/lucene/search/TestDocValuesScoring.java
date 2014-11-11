@@ -22,9 +22,11 @@ import java.io.IOException;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FloatDocValuesField;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.FieldInvertState;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.similarities.PerFieldSimilarityWrapper;
@@ -156,14 +158,14 @@ public class TestDocValuesScoring extends LuceneTestCase {
     }
 
     @Override
-    public SimScorer simScorer(SimWeight stats, AtomicReaderContext context) throws IOException {
+    public SimScorer simScorer(SimWeight stats, LeafReaderContext context) throws IOException {
       final SimScorer sub = sim.simScorer(stats, context);
-      final FieldCache.Floats values = FieldCache.DEFAULT.getFloats(context.reader(), boostField, false);
+      final NumericDocValues values = DocValues.getNumeric(context.reader(), boostField);
       
       return new SimScorer() {
         @Override
         public float score(int doc, float freq) {
-          return values.get(doc) * sub.score(doc, freq);
+          return Float.intBitsToFloat((int)values.get(doc)) * sub.score(doc, freq);
         }
         
         @Override
@@ -178,7 +180,7 @@ public class TestDocValuesScoring extends LuceneTestCase {
 
         @Override
         public Explanation explain(int doc, Explanation freq) {
-          Explanation boostExplanation = new Explanation(values.get(doc), "indexDocValue(" + boostField + ")");
+          Explanation boostExplanation = new Explanation(Float.intBitsToFloat((int)values.get(doc)), "indexDocValue(" + boostField + ")");
           Explanation simExplanation = sub.explain(doc, freq);
           Explanation expl = new Explanation(boostExplanation.getValue() * simExplanation.getValue(), "product of:");
           expl.addDetail(boostExplanation);

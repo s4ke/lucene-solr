@@ -17,20 +17,25 @@
 
 package org.apache.solr.update;
 
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.lucene.index.FilterLeafReader;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.DocsEnum;
 import org.apache.lucene.index.Fields;
-import org.apache.lucene.index.FilterAtomicReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.CharsRef;
+import org.apache.lucene.util.CharsRefBuilder;
+import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IOUtils;
-import org.apache.lucene.util.OpenBitSet;
 import org.apache.solr.common.cloud.CompositeIdRouter;
 import org.apache.solr.common.cloud.DocRouter;
 import org.apache.solr.common.cloud.HashBasedRouter;
@@ -40,10 +45,6 @@ import org.apache.solr.search.SolrIndexSearcher;
 import org.apache.solr.util.RefCounted;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 
 public class SolrIndexSplitter {
   public static Logger log = LoggerFactory.getLogger(SolrIndexSplitter.class);
@@ -88,14 +89,14 @@ public class SolrIndexSplitter {
 
   public void split() throws IOException {
 
-    List<AtomicReaderContext> leaves = searcher.getTopReaderContext().leaves();
-    List<OpenBitSet[]> segmentDocSets = new ArrayList<OpenBitSet[]>(leaves.size());
+    List<LeafReaderContext> leaves = searcher.getRawReader().leaves();
+    List<FixedBitSet[]> segmentDocSets = new ArrayList<>(leaves.size());
 
     log.info("SolrIndexSplitter: partitions=" + numPieces + " segments="+leaves.size());
 
-    for (AtomicReaderContext readerContext : leaves) {
+    for (LeafReaderContext readerContext : leaves) {
       assert readerContext.ordInParent == segmentDocSets.size();  // make sure we're going in order
-      OpenBitSet[] docSets = split(readerContext);
+      FixedBitSet[] docSets = split(readerContext);
       segmentDocSets.add( docSets );
     }
 
@@ -137,7 +138,7 @@ public class SolrIndexSplitter {
           iwRef.decref();
         } else {
           if (success) {
-            IOUtils.close(iw);
+            iw.close();
           } else {
             IOUtils.closeWhileHandlingException(iw);
           }
@@ -150,11 +151,11 @@ public class SolrIndexSplitter {
 
 
 
-  OpenBitSet[] split(AtomicReaderContext readerContext) throws IOException {
-    AtomicReader reader = readerContext.reader();
-    OpenBitSet[] docSets = new OpenBitSet[numPieces];
+  FixedBitSet[] split(LeafReaderContext readerContext) throws IOException {
+    LeafReader reader = readerContext.reader();
+    FixedBitSet[] docSets = new FixedBitSet[numPieces];
     for (int i=0; i<docSets.length; i++) {
-      docSets[i] = new OpenBitSet(reader.maxDoc());
+      docSets[i] = new FixedBitSet(reader.maxDoc());
     }
     Bits liveDocs = reader.getLiveDocs();
 
@@ -166,7 +167,7 @@ public class SolrIndexSplitter {
     BytesRef term = null;
     DocsEnum docsEnum = null;
 
-    CharsRef idRef = new CharsRef(100);
+    CharsRefBuilder idRef = new CharsRefBuilder();
     for (;;) {
       term = termsEnum.next();
       if (term == null) break;
@@ -175,7 +176,7 @@ public class SolrIndexSplitter {
 
       // FUTURE: if conversion to strings costs too much, we could
       // specialize and use the hash function that can work over bytes.
-      idRef = field.getType().indexedToReadable(term, idRef);
+      field.getType().indexedToReadable(term, idRef);
       String idString = idRef.toString();
 
       if (splitKey != null) {
@@ -196,14 +197,14 @@ public class SolrIndexSplitter {
       docsEnum = termsEnum.docs(liveDocs, docsEnum, DocsEnum.FLAG_NONE);
       for (;;) {
         int doc = docsEnum.nextDoc();
-        if (doc == DocsEnum.NO_MORE_DOCS) break;
+        if (doc == DocIdSetIterator.NO_MORE_DOCS) break;
         if (ranges == null) {
-          docSets[currPartition].fastSet(doc);
+          docSets[currPartition].set(doc);
           currPartition = (currPartition + 1) % numPieces;
         } else  {
           for (int i=0; i<rangesArr.length; i++) {      // inner-loop: use array here for extra speed.
             if (rangesArr[i].includes(hash)) {
-              docSets[i].fastSet(doc);
+              docSets[i].set(doc);
             }
           }
         }
@@ -231,14 +232,14 @@ public class SolrIndexSplitter {
 
 
   // change livedocs on the reader to delete those docs we don't want
-  static class LiveDocsReader extends FilterAtomicReader {
-    final OpenBitSet liveDocs;
+  static class LiveDocsReader extends FilterLeafReader {
+    final FixedBitSet liveDocs;
     final int numDocs;
 
-    public LiveDocsReader(AtomicReaderContext context, OpenBitSet liveDocs) throws IOException {
+    public LiveDocsReader(LeafReaderContext context, FixedBitSet liveDocs) throws IOException {
       super(context.reader());
       this.liveDocs = liveDocs;
-      this.numDocs = (int)liveDocs.cardinality();
+      this.numDocs = liveDocs.cardinality();
     }
 
     @Override
@@ -253,6 +254,3 @@ public class SolrIndexSplitter {
   }
 
 }
-
-
-

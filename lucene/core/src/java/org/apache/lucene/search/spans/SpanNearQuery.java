@@ -27,7 +27,7 @@ import java.util.Map;
 import java.util.Set;
 
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.TermContext;
@@ -61,12 +61,12 @@ public class SpanNearQuery extends SpanQuery implements Cloneable {
   public SpanNearQuery(SpanQuery[] clauses, int slop, boolean inOrder, boolean collectPayloads) {
 
     // copy clauses array into an ArrayList
-    this.clauses = new ArrayList<SpanQuery>(clauses.length);
+    this.clauses = new ArrayList<>(clauses.length);
     for (int i = 0; i < clauses.length; i++) {
       SpanQuery clause = clauses[i];
-      if (i == 0) {                               // check field
+      if (field == null) {                               // check field
         field = clause.getField();
-      } else if (!clause.getField().equals(field)) {
+      } else if (clause.getField() != null && !clause.getField().equals(field)) {
         throw new IllegalArgumentException("Clauses must have same field.");
       }
       this.clauses.add(clause);
@@ -120,7 +120,7 @@ public class SpanNearQuery extends SpanQuery implements Cloneable {
   }
 
   @Override
-  public Spans getSpans(final AtomicReaderContext context, Bits acceptDocs, Map<Term,TermContext> termContexts) throws IOException {
+  public Spans getSpans(final LeafReaderContext context, Bits acceptDocs, Map<Term,TermContext> termContexts) throws IOException {
     if (clauses.size() == 0)                      // optimize 0-clause case
       return new SpanOrQuery(getClauses()).getSpans(context, acceptDocs, termContexts);
 

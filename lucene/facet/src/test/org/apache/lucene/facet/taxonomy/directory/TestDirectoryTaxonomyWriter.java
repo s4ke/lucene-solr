@@ -29,7 +29,7 @@ import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.IOUtils;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 import org.junit.Test;
 
 /*
@@ -92,7 +92,7 @@ public class TestDirectoryTaxonomyWriter extends FacetTestCase {
     DirectoryTaxonomyWriter taxoWriter = new DirectoryTaxonomyWriter(dir, OpenMode.CREATE_OR_APPEND, NO_OP_CACHE);
     taxoWriter.addCategory(new FacetLabel("a"));
     taxoWriter.addCategory(new FacetLabel("b"));
-    Map<String, String> userCommitData = new HashMap<String, String>();
+    Map<String, String> userCommitData = new HashMap<>();
     userCommitData.put("testing", "1 2 3");
     taxoWriter.setCommitData(userCommitData);
     taxoWriter.close();
@@ -224,7 +224,7 @@ public class TestDirectoryTaxonomyWriter extends FacetTestCase {
     Directory dir = newDirectory();
     
     // create an empty index first, so that DirTaxoWriter initializes indexEpoch to 1.
-    new IndexWriter(dir, new IndexWriterConfig(TEST_VERSION_CURRENT, null)).close();
+    new IndexWriter(dir, new IndexWriterConfig(null)).close();
     
     DirectoryTaxonomyWriter taxoWriter = new DirectoryTaxonomyWriter(dir, OpenMode.CREATE_OR_APPEND, NO_OP_CACHE);
     taxoWriter.close();
@@ -242,7 +242,7 @@ public class TestDirectoryTaxonomyWriter extends FacetTestCase {
     final int range = ncats * 3; // affects the categories selection
     final AtomicInteger numCats = new AtomicInteger(ncats);
     final Directory dir = newDirectory();
-    final ConcurrentHashMap<String,String> values = new ConcurrentHashMap<String,String>();
+    final ConcurrentHashMap<String,String> values = new ConcurrentHashMap<>();
     final double d = random().nextDouble();
     final TaxonomyWriterCache cache;
     if (d < 0.7) {
@@ -324,8 +324,7 @@ public class TestDirectoryTaxonomyWriter extends FacetTestCase {
   }
 
   private long getEpoch(Directory taxoDir) throws IOException {
-    SegmentInfos infos = new SegmentInfos();
-    infos.read(taxoDir);
+    SegmentInfos infos = SegmentInfos.readLatestCommit(taxoDir);
     return Long.parseLong(infos.getUserData().get(DirectoryTaxonomyWriter.INDEX_EPOCH));
   }
   
@@ -436,7 +435,7 @@ public class TestDirectoryTaxonomyWriter extends FacetTestCase {
   @Test
   public void testHugeLabel() throws Exception {
     Directory indexDir = newDirectory(), taxoDir = newDirectory();
-    IndexWriter indexWriter = new IndexWriter(indexDir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    IndexWriter indexWriter = new IndexWriter(indexDir, newIndexWriterConfig(new MockAnalyzer(random())));
     DirectoryTaxonomyWriter taxoWriter = new DirectoryTaxonomyWriter(taxoDir, OpenMode.CREATE, new Cl2oTaxonomyWriterCache(2, 1f, 1));
     FacetsConfig config = new FacetsConfig();
     
@@ -445,7 +444,7 @@ public class TestDirectoryTaxonomyWriter extends FacetTestCase {
     int ordinal = -1;
 
     int len = FacetLabel.MAX_CATEGORY_PATH_LENGTH - 4; // for the dimension and separator
-    bigs = _TestUtil.randomSimpleString(random(), len, len);
+    bigs = TestUtil.randomSimpleString(random(), len, len);
     FacetField ff = new FacetField("dim", bigs);
     FacetLabel cp = new FacetLabel("dim", bigs);
     ordinal = taxoWriter.addCategory(cp);
@@ -455,7 +454,7 @@ public class TestDirectoryTaxonomyWriter extends FacetTestCase {
 
     // Add tiny ones to cause a re-hash
     for (int i = 0; i < 3; i++) {
-      String s = _TestUtil.randomSimpleString(random(), 1, 10);
+      String s = TestUtil.randomSimpleString(random(), 1, 10);
       taxoWriter.addCategory(new FacetLabel("dim", s));
       doc = new Document();
       doc.add(new FacetField("dim", s));
@@ -464,8 +463,9 @@ public class TestDirectoryTaxonomyWriter extends FacetTestCase {
 
     // when too large components were allowed to be added, this resulted in a new added category
     assertEquals(ordinal, taxoWriter.addCategory(cp));
-    
-    IOUtils.close(indexWriter, taxoWriter);
+
+    indexWriter.close();
+    IOUtils.close(taxoWriter);
     
     DirectoryReader indexReader = DirectoryReader.open(indexDir);
     TaxonomyReader taxoReader = new DirectoryTaxonomyReader(taxoDir);

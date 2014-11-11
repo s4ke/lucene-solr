@@ -1,3 +1,5 @@
+package org.apache.lucene.util;
+
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -15,25 +17,23 @@
  * limitations under the License.
  */
 
-package org.apache.lucene.util;
-
 import java.io.IOException;
-import java.util.BitSet;
 
 import org.apache.lucene.search.DocIdSetIterator;
 
-public class TestFixedBitSet extends BaseDocIdSetTestCase<FixedBitSet> {
+public class TestFixedBitSet extends BaseBitSetTestCase<FixedBitSet> {
 
   @Override
   public FixedBitSet copyOf(BitSet bs, int length) throws IOException {
     final FixedBitSet set = new FixedBitSet(length);
-    for (int doc = bs.nextSetBit(0); doc != -1; doc = bs.nextSetBit(doc + 1)) {
+    for (int doc = bs.nextSetBit(0); doc != DocIdSetIterator.NO_MORE_DOCS; doc = doc + 1 >= length ? DocIdSetIterator.NO_MORE_DOCS : bs.nextSetBit(doc + 1)) {
       set.set(doc);
     }
     return set;
   }
 
-  void doGet(BitSet a, FixedBitSet b) {
+
+  void doGet(java.util.BitSet a, FixedBitSet b) {
     int max = b.length();
     for (int i=0; i<max; i++) {
       if (a.get(i) != b.get(i)) {
@@ -42,16 +42,19 @@ public class TestFixedBitSet extends BaseDocIdSetTestCase<FixedBitSet> {
     }
   }
 
-  void doNextSetBit(BitSet a, FixedBitSet b) {
+  void doNextSetBit(java.util.BitSet a, FixedBitSet b) {
     int aa=-1,bb=-1;
     do {
       aa = a.nextSetBit(aa+1);
-      bb = bb < b.length()-1 ? b.nextSetBit(bb+1) : -1;
+      if (aa == -1) {
+        aa = DocIdSetIterator.NO_MORE_DOCS;
+      }
+      bb = bb < b.length()-1 ? b.nextSetBit(bb+1) : DocIdSetIterator.NO_MORE_DOCS;
       assertEquals(aa,bb);
-    } while (aa>=0);
+    } while (aa != DocIdSetIterator.NO_MORE_DOCS);
   }
 
-  void doPrevSetBit(BitSet a, FixedBitSet b) {
+  void doPrevSetBit(java.util.BitSet a, FixedBitSet b) {
     int aa = a.size() + random().nextInt(100);
     int bb = aa;
     do {
@@ -74,14 +77,14 @@ public class TestFixedBitSet extends BaseDocIdSetTestCase<FixedBitSet> {
   }
 
   // test interleaving different FixedBitSetIterator.next()/skipTo()
-  void doIterate(BitSet a, FixedBitSet b, int mode) throws IOException {
+  void doIterate(java.util.BitSet a, FixedBitSet b, int mode) throws IOException {
     if (mode==1) doIterate1(a, b);
     if (mode==2) doIterate2(a, b);
   }
 
-  void doIterate1(BitSet a, FixedBitSet b) throws IOException {
+  void doIterate1(java.util.BitSet a, FixedBitSet b) throws IOException {
     int aa=-1,bb=-1;
-    DocIdSetIterator iterator = b.iterator();
+    DocIdSetIterator iterator = new BitSetIterator(b, 0);
     do {
       aa = a.nextSetBit(aa+1);
       bb = (bb < b.length() && random().nextBoolean()) ? iterator.nextDoc() : iterator.advance(bb + 1);
@@ -89,9 +92,9 @@ public class TestFixedBitSet extends BaseDocIdSetTestCase<FixedBitSet> {
     } while (aa>=0);
   }
 
-  void doIterate2(BitSet a, FixedBitSet b) throws IOException {
+  void doIterate2(java.util.BitSet a, FixedBitSet b) throws IOException {
     int aa=-1,bb=-1;
-    DocIdSetIterator iterator = b.iterator();
+    DocIdSetIterator iterator = new BitSetIterator(b, 0);
     do {
       aa = a.nextSetBit(aa+1);
       bb = random().nextBoolean() ? iterator.nextDoc() : iterator.advance(bb + 1);
@@ -100,12 +103,12 @@ public class TestFixedBitSet extends BaseDocIdSetTestCase<FixedBitSet> {
   }
 
   void doRandomSets(int maxSize, int iter, int mode) throws IOException {
-    BitSet a0=null;
+    java.util.BitSet a0=null;
     FixedBitSet b0=null;
 
     for (int i=0; i<iter; i++) {
-      int sz = _TestUtil.nextInt(random(), 2, maxSize);
-      BitSet a = new BitSet(sz);
+      int sz = TestUtil.nextInt(random(), 2, maxSize);
+      java.util.BitSet a = new java.util.BitSet(sz);
       FixedBitSet b = new FixedBitSet(sz);
 
       // test the various ways of setting bits
@@ -123,12 +126,12 @@ public class TestFixedBitSet extends BaseDocIdSetTestCase<FixedBitSet> {
           b.clear(idx);
           
           idx = random().nextInt(sz);
-          a.flip(idx);
+          a.flip(idx, idx+1);
           b.flip(idx, idx+1);
 
           idx = random().nextInt(sz);
           a.flip(idx);
-          b.flip(idx, idx+1);
+          b.flip(idx);
 
           boolean val2 = b.get(idx);
           boolean val = b.getAndSet(idx);
@@ -147,14 +150,14 @@ public class TestFixedBitSet extends BaseDocIdSetTestCase<FixedBitSet> {
       int fromIndex, toIndex;
       fromIndex = random().nextInt(sz/2);
       toIndex = fromIndex + random().nextInt(sz - fromIndex);
-      BitSet aa = (BitSet)a.clone(); aa.flip(fromIndex,toIndex);
+      java.util.BitSet aa = (java.util.BitSet)a.clone(); aa.flip(fromIndex,toIndex);
       FixedBitSet bb = b.clone(); bb.flip(fromIndex,toIndex);
 
       doIterate(aa,bb, mode);   // a problem here is from flip or doIterate
 
       fromIndex = random().nextInt(sz/2);
       toIndex = fromIndex + random().nextInt(sz - fromIndex);
-      aa = (BitSet)a.clone(); aa.clear(fromIndex,toIndex);
+      aa = (java.util.BitSet)a.clone(); aa.clear(fromIndex,toIndex);
       bb = b.clone(); bb.clear(fromIndex,toIndex);
 
       doNextSetBit(aa,bb); // a problem here is from clear() or nextSetBit
@@ -163,7 +166,7 @@ public class TestFixedBitSet extends BaseDocIdSetTestCase<FixedBitSet> {
 
       fromIndex = random().nextInt(sz/2);
       toIndex = fromIndex + random().nextInt(sz - fromIndex);
-      aa = (BitSet)a.clone(); aa.set(fromIndex,toIndex);
+      aa = (java.util.BitSet)a.clone(); aa.set(fromIndex,toIndex);
       bb = b.clone(); bb.set(fromIndex,toIndex);
 
       doNextSetBit(aa,bb); // a problem here is from set() or nextSetBit
@@ -173,12 +176,14 @@ public class TestFixedBitSet extends BaseDocIdSetTestCase<FixedBitSet> {
       if (b0 != null && b0.length() <= b.length()) {
         assertEquals(a.cardinality(), b.cardinality());
 
-        BitSet a_and = (BitSet)a.clone(); a_and.and(a0);
-        BitSet a_or = (BitSet)a.clone(); a_or.or(a0);
-        BitSet a_andn = (BitSet)a.clone(); a_andn.andNot(a0);
+        java.util.BitSet a_and = (java.util.BitSet)a.clone(); a_and.and(a0);
+        java.util.BitSet a_or = (java.util.BitSet)a.clone(); a_or.or(a0);
+        java.util.BitSet a_xor = (java.util.BitSet)a.clone(); a_xor.xor(a0);
+        java.util.BitSet a_andn = (java.util.BitSet)a.clone(); a_andn.andNot(a0);
 
         FixedBitSet b_and = b.clone(); assertEquals(b,b_and); b_and.and(b0);
         FixedBitSet b_or = b.clone(); b_or.or(b0);
+        FixedBitSet b_xor = b.clone(); b_xor.xor(b0);
         FixedBitSet b_andn = b.clone(); b_andn.andNot(b0);
 
         assertEquals(a0.cardinality(), b0.cardinality());
@@ -187,9 +192,11 @@ public class TestFixedBitSet extends BaseDocIdSetTestCase<FixedBitSet> {
         doIterate(a_and,b_and, mode);
         doIterate(a_or,b_or, mode);
         doIterate(a_andn,b_andn, mode);
-
+        doIterate(a_xor,b_xor, mode);
+        
         assertEquals(a_and.cardinality(), b_and.cardinality());
         assertEquals(a_or.cardinality(), b_or.cardinality());
+        assertEquals(a_xor.cardinality(), b_xor.cardinality());
         assertEquals(a_andn.cardinality(), b_andn.cardinality());
       }
 
@@ -197,7 +204,7 @@ public class TestFixedBitSet extends BaseDocIdSetTestCase<FixedBitSet> {
       b0=b;
     }
   }
-  
+
   // large enough to flush obvious bugs, small enough to run in <.5 sec as part of a
   // larger testsuite.
   public void testSmall() throws IOException {
@@ -292,8 +299,8 @@ public class TestFixedBitSet extends BaseDocIdSetTestCase<FixedBitSet> {
     return bs;
   }
 
-  private BitSet makeBitSet(int[] a) {
-    BitSet bs = new BitSet();
+  private java.util.BitSet makeBitSet(int[] a) {
+    java.util.BitSet bs = new java.util.BitSet();
     for (int e: a) {
       bs.set(e);
     }
@@ -302,7 +309,7 @@ public class TestFixedBitSet extends BaseDocIdSetTestCase<FixedBitSet> {
 
   private void checkPrevSetBitArray(int [] a, int numBits) {
     FixedBitSet obs = makeFixedBitSet(a, numBits);
-    BitSet bs = makeBitSet(a);
+    java.util.BitSet bs = makeBitSet(a);
     doPrevSetBit(bs, obs);
   }
 
@@ -315,7 +322,7 @@ public class TestFixedBitSet extends BaseDocIdSetTestCase<FixedBitSet> {
   
   private void checkNextSetBitArray(int [] a, int numBits) {
     FixedBitSet obs = makeFixedBitSet(a, numBits);
-    BitSet bs = makeBitSet(a);
+    java.util.BitSet bs = makeBitSet(a);
     doNextSetBit(bs, obs);
   }
   
@@ -329,49 +336,30 @@ public class TestFixedBitSet extends BaseDocIdSetTestCase<FixedBitSet> {
     checkNextSetBitArray(new int[0], setBits.length + random().nextInt(10));
   }
   
-  public void testGrow() {
+  public void testEnsureCapacity() {
     FixedBitSet bits = new FixedBitSet(5);
     bits.set(1);
     bits.set(4);
     
-    FixedBitSet newBits = new FixedBitSet(bits, 8); // grow within the word
+    FixedBitSet newBits = FixedBitSet.ensureCapacity(bits, 8); // grow within the word
     assertTrue(newBits.get(1));
     assertTrue(newBits.get(4));
+    newBits.clear(1);
+    // we align to 64-bits, so even though it shouldn't have, it re-allocated a long[1]
+    assertTrue(bits.get(1));
+    assertFalse(newBits.get(1));
 
-    newBits = new FixedBitSet(bits, 72); // grow beyond one word
+    newBits.set(1);
+    newBits = FixedBitSet.ensureCapacity(newBits, newBits.length() - 2); // reuse
     assertTrue(newBits.get(1));
-    assertTrue(newBits.get(4));
-  }
-  
-  public void testShrink() {
-    FixedBitSet bits = new FixedBitSet(72);
+
     bits.set(1);
-    bits.set(4);
-    bits.set(69);
-    
-    FixedBitSet newBits = new FixedBitSet(bits, 66); // shrink within the word
+    newBits = FixedBitSet.ensureCapacity(bits, 72); // grow beyond one word
     assertTrue(newBits.get(1));
     assertTrue(newBits.get(4));
-    boolean hitError = true;
-    try {
-      newBits.get(69);
-      hitError = false;
-    } catch (AssertionError e) {
-      hitError = true;
-    }
-    assertTrue(hitError);
-
-    newBits = new FixedBitSet(bits, 8); // shrink beyond one word
-    assertTrue(newBits.get(1));
-    assertTrue(newBits.get(4));
-    hitError = true;
-    try {
-      newBits.get(69);
-      hitError = false;
-    } catch (AssertionError e) {
-      hitError = true;
-    }
-    assertTrue(hitError);
+    newBits.clear(1);
+    // we grew the long[], so it's not shared
+    assertTrue(bits.get(1));
+    assertFalse(newBits.get(1));
   }
-  
 }

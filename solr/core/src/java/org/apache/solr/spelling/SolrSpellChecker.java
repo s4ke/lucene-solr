@@ -74,7 +74,7 @@ public abstract class SolrSpellChecker {
       analyzer = fieldType.getQueryAnalyzer();
     }
     if (analyzer == null)   {
-      analyzer = new WhitespaceAnalyzer(core.getSolrConfig().luceneMatchVersion);
+      analyzer = new WhitespaceAnalyzer();
     }
     return name;
   }
@@ -100,9 +100,11 @@ public abstract class SolrSpellChecker {
     for (Map.Entry<String, HashSet<String>> entry : mergeData.origVsSuggested.entrySet()) {
       String original = entry.getKey();
       
-      //Only use this suggestion if all shards reported it as misspelled.
+      //Only use this suggestion if all shards reported it as misspelled, 
+      //unless it was not a term original to the user's query
+      //(WordBreakSolrSpellChecker can add new terms to the response, and we want to keep these)
       Integer numShards = mergeData.origVsShards.get(original);
-      if(numShards<mergeData.totalNumberShardResponses) {
+      if(numShards<mergeData.totalNumberShardResponses && mergeData.isOriginalToQuery(original)) {
         continue;
       }
       
@@ -138,7 +140,7 @@ public abstract class SolrSpellChecker {
         for (SuggestWord word : suggestions)
           result.add(token, word.string, word.freq);
       } else {
-        List<String> words = new ArrayList<String>(sugQueue.size());
+        List<String> words = new ArrayList<>(sugQueue.size());
         for (SuggestWord word : suggestions) words.add(word.string);
         result.add(token, words);
       }

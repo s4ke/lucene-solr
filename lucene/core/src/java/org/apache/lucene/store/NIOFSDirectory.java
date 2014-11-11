@@ -17,13 +17,12 @@ package org.apache.lucene.store;
  * the License.
  */
 
-import java.io.File;
 import java.io.EOFException;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException; // javadoc @link
 import java.nio.channels.FileChannel;
+import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.concurrent.Future; // javadoc
 
@@ -48,7 +47,7 @@ import java.util.concurrent.Future; // javadoc
  * blocked on IO. The file descriptor will remain closed and subsequent access
  * to {@link NIOFSDirectory} will throw a {@link ClosedChannelException}. If
  * your application uses either {@link Thread#interrupt()} or
- * {@link Future#cancel(boolean)} you should use {@link SimpleFSDirectory} in
+ * {@link Future#cancel(boolean)} you should use {@code RAFDirectory} in
  * favor of {@link NIOFSDirectory}.</font>
  * </p>
  */
@@ -57,57 +56,35 @@ public class NIOFSDirectory extends FSDirectory {
   /** Create a new NIOFSDirectory for the named location.
    * 
    * @param path the path of the directory
-   * @param lockFactory the lock factory to use, or null for the default
-   * ({@link NativeFSLockFactory});
+   * @param lockFactory the lock factory to use
    * @throws IOException if there is a low-level I/O error
    */
-  public NIOFSDirectory(File path, LockFactory lockFactory) throws IOException {
+  public NIOFSDirectory(Path path, LockFactory lockFactory) throws IOException {
     super(path, lockFactory);
   }
 
-  /** Create a new NIOFSDirectory for the named location and {@link NativeFSLockFactory}.
+  /** Create a new NIOFSDirectory for the named location and {@link FSLockFactory#getDefault()}.
    *
    * @param path the path of the directory
    * @throws IOException if there is a low-level I/O error
    */
-  public NIOFSDirectory(File path) throws IOException {
-    super(path, null);
+  public NIOFSDirectory(Path path) throws IOException {
+    this(path, FSLockFactory.getDefault());
   }
 
   /** Creates an IndexInput for the file with the given name. */
   @Override
   public IndexInput openInput(String name, IOContext context) throws IOException {
     ensureOpen();
-    File path = new File(getDirectory(), name);
-    FileChannel fc = FileChannel.open(path.toPath(), StandardOpenOption.READ);
+    Path path = getDirectory().resolve(name);
+    FileChannel fc = FileChannel.open(path, StandardOpenOption.READ);
     return new NIOFSIndexInput("NIOFSIndexInput(path=\"" + path + "\")", fc, context);
   }
   
-  @Override
-  public IndexInputSlicer createSlicer(final String name,
-      final IOContext context) throws IOException {
-    ensureOpen();
-    final File path = new File(getDirectory(), name);
-    final FileChannel descriptor = FileChannel.open(path.toPath(), StandardOpenOption.READ);
-    return new Directory.IndexInputSlicer() {
-
-      @Override
-      public void close() throws IOException {
-        descriptor.close();
-      }
-
-      @Override
-      public IndexInput openSlice(String sliceDescription, long offset, long length) {
-        return new NIOFSIndexInput("NIOFSIndexInput(" + sliceDescription + " in path=\"" + path + "\" slice=" + offset + ":" + (offset+length) + ")", descriptor, offset,
-            length, BufferedIndexInput.bufferSize(context));
-      }
-    };
-  }
-
   /**
    * Reads bytes with {@link FileChannel#read(ByteBuffer, long)}
    */
-  protected static class NIOFSIndexInput extends BufferedIndexInput {
+  static final class NIOFSIndexInput extends BufferedIndexInput {
     /**
      * The maximum chunk size for reads of 16384 bytes.
      */
@@ -153,6 +130,14 @@ public class NIOFSDirectory extends FSDirectory {
       return clone;
     }
     
+    @Override
+    public IndexInput slice(String sliceDescription, long offset, long length) throws IOException {
+      if (offset < 0 || length < 0 || offset + length > this.length()) {
+        throw new IllegalArgumentException("slice() " + sliceDescription + " out of bounds: "  + this);
+      }
+      return new NIOFSIndexInput(sliceDescription, channel, off + offset, length, getBufferSize());
+    }
+
     @Override
     public final long length() {
       return end - off;

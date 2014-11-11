@@ -26,14 +26,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 
+import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
 import org.apache.solr.client.solrj.SolrServer;
 import org.apache.solr.client.solrj.impl.BinaryRequestWriter;
 import org.apache.solr.client.solrj.impl.BinaryResponseParser;
 import org.apache.solr.client.solrj.impl.ConcurrentUpdateSolrServer;
-import org.apache.solr.client.solrj.impl.HttpClientUtil;
 import org.apache.solr.common.SolrException;
-import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.update.SolrCmdDistributor.Error;
 import org.apache.solr.update.processor.DistributedUpdateProcessor;
 import org.apache.solr.update.processor.DistributingUpdateProcessorFactory;
@@ -45,18 +44,13 @@ public class StreamingSolrServers {
   
   private HttpClient httpClient;
   
-  private Map<String,ConcurrentUpdateSolrServer> solrServers = new HashMap<String,ConcurrentUpdateSolrServer>();
+  private Map<String,ConcurrentUpdateSolrServer> solrServers = new HashMap<>();
   private List<Error> errors = Collections.synchronizedList(new ArrayList<Error>());
 
   private ExecutorService updateExecutor;
 
   public StreamingSolrServers(UpdateShardHandler updateShardHandler) {
     this.updateExecutor = updateShardHandler.getUpdateExecutor();
-    
-    ModifiableSolrParams params = new ModifiableSolrParams();
-    params.set(HttpClientUtil.PROP_FOLLOW_REDIRECTS, false);
-    params.set(HttpClientUtil.PROP_CONNECTION_TIMEOUT, 30000);
-    params.set(HttpClientUtil.PROP_USE_RETRY, false);
     
     httpClient = updateShardHandler.getHttpClient();
   }
@@ -76,6 +70,7 @@ public class StreamingSolrServers {
       server = new ConcurrentUpdateSolrServer(url, httpClient, 100, 1, updateExecutor, true) {
         @Override
         public void handleError(Throwable ex) {
+          req.trackRequestResult(null, false);
           log.error("error", ex);
           Error error = new Error();
           error.e = (Exception) ex;
@@ -85,11 +80,15 @@ public class StreamingSolrServers {
           error.req = req;
           errors.add(error);
         }
+        @Override
+        public void onSuccess(HttpResponse resp) {
+          req.trackRequestResult(resp, true);
+        }
       };
       server.setParser(new BinaryResponseParser());
       server.setRequestWriter(new BinaryRequestWriter());
       server.setPollQueueTime(0);
-      Set<String> queryParams = new HashSet<String>(2);
+      Set<String> queryParams = new HashSet<>(2);
       queryParams.add(DistributedUpdateProcessor.DISTRIB_FROM);
       queryParams.add(DistributingUpdateProcessorFactory.DISTRIB_UPDATE_PARAM);
       server.setQueryParams(queryParams);
@@ -123,5 +122,9 @@ public class StreamingSolrServers {
 
   public HttpClient getHttpClient() {
     return httpClient;
+  }
+  
+  public ExecutorService getUpdateExecutor() {
+    return updateExecutor;
   }
 }

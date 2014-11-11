@@ -89,8 +89,8 @@ public class FuzzyQuery extends MultiTermQuery {
     if (prefixLength < 0) {
       throw new IllegalArgumentException("prefixLength cannot be negative.");
     }
-    if (maxExpansions < 0) {
-      throw new IllegalArgumentException("maxExpansions cannot be negative.");
+    if (maxExpansions <= 0) {
+      throw new IllegalArgumentException("maxExpansions must be positive.");
     }
     
     this.term = term;
@@ -137,6 +137,14 @@ public class FuzzyQuery extends MultiTermQuery {
    */
   public int getPrefixLength() {
     return prefixLength;
+  }
+  
+  /**
+   * Returns true if transpositions should be treated as a primitive edit operation. 
+   * If this is false, comparisons will implement the classic Levenshtein algorithm.
+   */
+  public boolean getTranspositions() {
+    return transpositions;
   }
 
   @Override

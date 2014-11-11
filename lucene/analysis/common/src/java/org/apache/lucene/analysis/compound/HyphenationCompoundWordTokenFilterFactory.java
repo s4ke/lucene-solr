@@ -17,6 +17,7 @@ package org.apache.lucene.analysis.compound;
  * limitations under the License.
  */
 
+import org.apache.lucene.analysis.TokenFilter;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.compound.hyphenation.HyphenationTree;
 import org.apache.lucene.analysis.util.CharArraySet;
@@ -28,6 +29,8 @@ import org.apache.lucene.util.IOUtils;
 import java.util.Map;
 import java.io.IOException;
 import java.io.InputStream;
+
+import org.apache.lucene.util.Version;
 import org.xml.sax.InputSource;
 
 /**
@@ -103,7 +106,7 @@ public class HyphenationCompoundWordTokenFilterFactory extends TokenFilterFactor
   }
   
   @Override
-  public HyphenationCompoundWordTokenFilter create(TokenStream input) {
-    return new HyphenationCompoundWordTokenFilter(luceneMatchVersion, input, hyphenator, dictionary, minWordSize, minSubwordSize, maxSubwordSize, onlyLongestMatch);
+  public TokenFilter create(TokenStream input) {
+    return new HyphenationCompoundWordTokenFilter(input, hyphenator, dictionary, minWordSize, minSubwordSize, maxSubwordSize, onlyLongestMatch);
   }
 }

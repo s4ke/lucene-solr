@@ -22,7 +22,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.index.DirectoryReader;
-import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.StoredDocument;
@@ -79,18 +79,16 @@ public class TestStressLucene extends TestRTGBase {
 
     final AtomicInteger numCommitting = new AtomicInteger();
 
-    List<Thread> threads = new ArrayList<Thread>();
+    List<Thread> threads = new ArrayList<>();
 
 
     final FieldType idFt = new FieldType();
-    idFt.setIndexed(true);
     idFt.setStored(true);
     idFt.setOmitNorms(true);
     idFt.setTokenized(false);
-    idFt.setIndexOptions(FieldInfo.IndexOptions.DOCS_ONLY);
+    idFt.setIndexOptions(IndexOptions.DOCS);
 
     final FieldType ft2 = new FieldType();
-    ft2.setIndexed(false);
     ft2.setStored(true);
 
 
@@ -101,11 +99,11 @@ public class TestStressLucene extends TestRTGBase {
 
 
     // RAMDirectory dir = new RAMDirectory();
-    // final IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(TEST_VERSION_CURRENT, new WhitespaceAnalyzer(TEST_VERSION_CURRENT)));
+    // final IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(new WhitespaceAnalyzer()));
 
     Directory dir = newDirectory();
 
-    final RandomIndexWriter writer = new RandomIndexWriter(random(), dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())));
+    final RandomIndexWriter writer = new RandomIndexWriter(random(), dir, newIndexWriterConfig(new MockAnalyzer(random())));
     writer.setDoRandomForceMergeAssert(false);
 
     // writer.commit();
@@ -143,7 +141,7 @@ public class TestStressLucene extends TestRTGBase {
                   if (reopenLock != null) reopenLock.lock();
 
                   synchronized(globalLock) {
-                    newCommittedModel = new HashMap<Integer,DocInfo>(model);  // take a snapshot
+                    newCommittedModel = new HashMap<>(model);  // take a snapshot
                     version = snapshotCount++;
                     oldReader = reader;
                     oldReader.incRef();  // increment the reference since we will use this for reopening

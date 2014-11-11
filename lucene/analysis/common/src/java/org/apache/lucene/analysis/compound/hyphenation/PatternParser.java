@@ -26,7 +26,6 @@ import org.xml.sax.helpers.DefaultHandler;
 import org.xml.sax.Attributes;
 
 // Java
-import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 
@@ -89,17 +88,6 @@ public class PatternParser extends DefaultHandler {
    */
   public void parse(String filename) throws IOException {
     parse(new InputSource(filename));
-  }
-
-  /**
-   * Parses a hyphenation pattern file.
-   * 
-   * @param file the pattern file
-   * @throws IOException In case of an exception while parsing
-   */
-  public void parse(File file) throws IOException {
-    InputSource src = new InputSource(file.toURI().toASCIIString());
-    parse(src);
   }
 
   /**
@@ -188,7 +176,7 @@ public class PatternParser extends DefaultHandler {
   }
 
   protected ArrayList<Object> normalizeException(ArrayList<?> ex) {
-    ArrayList<Object> res = new ArrayList<Object>();
+    ArrayList<Object> res = new ArrayList<>();
     for (int i = 0; i < ex.size(); i++) {
       Object item = ex.get(i);
       if (item instanceof String) {
@@ -287,7 +275,7 @@ public class PatternParser extends DefaultHandler {
       currElement = ELEM_PATTERNS;
     } else if (local.equals("exceptions")) {
       currElement = ELEM_EXCEPTIONS;
-      exception = new ArrayList<Object>();
+      exception = new ArrayList<>();
     } else if (local.equals("hyphen")) {
       if (token.length() > 0) {
         exception.add(token.toString());

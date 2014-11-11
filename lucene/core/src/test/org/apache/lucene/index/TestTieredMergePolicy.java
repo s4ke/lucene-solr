@@ -21,14 +21,17 @@ import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
-public class TestTieredMergePolicy extends LuceneTestCase {
+public class TestTieredMergePolicy extends BaseMergePolicyTestCase {
+
+  public MergePolicy mergePolicy() {
+    return newTieredMergePolicy();
+  }
 
   public void testForceMergeDeletes() throws Exception {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     TieredMergePolicy tmp = newTieredMergePolicy();
     conf.setMergePolicy(tmp);
     conf.setMaxBufferedDocs(4);
@@ -71,7 +74,7 @@ public class TestTieredMergePolicy extends LuceneTestCase {
         System.out.println("TEST: iter=" + iter);
       }
       Directory dir = newDirectory();
-      IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+      IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
       conf.setMergeScheduler(new SerialMergeScheduler());
       TieredMergePolicy tmp = newTieredMergePolicy();
       conf.setMergePolicy(tmp);
@@ -81,7 +84,7 @@ public class TestTieredMergePolicy extends LuceneTestCase {
 
       IndexWriter w = new IndexWriter(dir, conf);
       int maxCount = 0;
-      final int numDocs = _TestUtil.nextInt(random(), 20, 100);
+      final int numDocs = TestUtil.nextInt(random(), 20, 100);
       for(int i=0;i<numDocs;i++) {
         Document doc = new Document();
         doc.add(newTextField("content", "aaa " + (i%4), Field.Store.NO));
@@ -94,7 +97,7 @@ public class TestTieredMergePolicy extends LuceneTestCase {
       w.flush(true, true);
 
       int segmentCount = w.getSegmentCount();
-      int targetCount = _TestUtil.nextInt(random(), 1, segmentCount);
+      int targetCount = TestUtil.nextInt(random(), 1, segmentCount);
       if (VERBOSE) {
         System.out.println("TEST: merge to " + targetCount + " segs (current count=" + segmentCount + ")");
       }
@@ -108,14 +111,13 @@ public class TestTieredMergePolicy extends LuceneTestCase {
 
   public void testForceMergeDeletesMaxSegSize() throws Exception {
     final Directory dir = newDirectory();
-    final IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    final IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     final TieredMergePolicy tmp = new TieredMergePolicy();
     tmp.setMaxMergedSegmentMB(0.01);
     tmp.setForceMergeDeletesPctAllowed(0.0);
     conf.setMergePolicy(tmp);
 
-    final RandomIndexWriter w = new RandomIndexWriter(random(), dir, conf);
-    w.setDoRandomForceMerge(false);
+    final IndexWriter w = new IndexWriter(dir, conf);
 
     final int numDocs = atLeast(200);
     for(int i=0;i<numDocs;i++) {
@@ -208,5 +210,34 @@ public class TestTieredMergePolicy extends LuceneTestCase {
     }
     
     // TODO: Add more checks for other non-double setters!
+  }
+
+  // LUCENE-5668
+  public void testUnbalancedMergeSelection() throws Exception {
+    Directory dir = newDirectory();
+    IndexWriterConfig iwc = new IndexWriterConfig(new MockAnalyzer(random()));
+    TieredMergePolicy tmp = (TieredMergePolicy) iwc.getMergePolicy();
+    tmp.setFloorSegmentMB(0.00001);
+    // We need stable sizes for each segment:
+    iwc.setCodec(TestUtil.getDefaultCodec());
+    iwc.setMergeScheduler(new SerialMergeScheduler());
+    iwc.setMaxBufferedDocs(100);
+    iwc.setRAMBufferSizeMB(-1);
+    IndexWriter w = new IndexWriter(dir, iwc);
+    for(int i=0;i<15000*RANDOM_MULTIPLIER;i++) {
+      Document doc = new Document();
+      doc.add(newTextField("id", random().nextLong() + "" + random().nextLong(), Field.Store.YES));
+      w.addDocument(doc);
+    }
+    IndexReader r = DirectoryReader.open(w, true);
+
+    // Make sure TMP always merged equal-number-of-docs segments:
+    for(LeafReaderContext ctx : r.leaves()) {
+      int numDocs = ctx.reader().numDocs();
+      assertTrue("got numDocs=" + numDocs, numDocs == 100 || numDocs == 1000 || numDocs == 10000);
+    }
+    r.close();
+    w.close();
+    dir.close();
   }
 }

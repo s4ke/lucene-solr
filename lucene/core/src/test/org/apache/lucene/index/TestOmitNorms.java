@@ -27,7 +27,7 @@ import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 public class TestOmitNorms extends LuceneTestCase {
   // Tests whether the DocumentWriter correctly enable the
@@ -35,7 +35,7 @@ public class TestOmitNorms extends LuceneTestCase {
   public void testOmitNorms() throws Exception {
     Directory ram = newDirectory();
     Analyzer analyzer = new MockAnalyzer(random());
-    IndexWriter writer = new IndexWriter(ram, newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer));
+    IndexWriter writer = new IndexWriter(ram, newIndexWriterConfig(analyzer));
     Document d = new Document();
         
     // this field will have norms
@@ -82,9 +82,9 @@ public class TestOmitNorms extends LuceneTestCase {
     Analyzer analyzer = new MockAnalyzer(random());
     IndexWriter writer = new IndexWriter(
         ram,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer).
-            setMaxBufferedDocs(3).
-            setMergePolicy(newLogMergePolicy(2))
+        newIndexWriterConfig(analyzer)
+           .setMaxBufferedDocs(3)
+           .setMergePolicy(newLogMergePolicy(2))
     );
     Document d = new Document();
         
@@ -137,9 +137,9 @@ public class TestOmitNorms extends LuceneTestCase {
     Analyzer analyzer = new MockAnalyzer(random());
     IndexWriter writer = new IndexWriter(
         ram,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, analyzer).
-            setMaxBufferedDocs(10).
-            setMergePolicy(newLogMergePolicy(2))
+        newIndexWriterConfig(analyzer)
+            .setMaxBufferedDocs(10)
+            .setMergePolicy(newLogMergePolicy(2))
     );
     Document d = new Document();
         
@@ -189,8 +189,9 @@ public class TestOmitNorms extends LuceneTestCase {
   public void testNoNrmFile() throws Throwable {
     Directory ram = newDirectory();
     Analyzer analyzer = new MockAnalyzer(random());
-    IndexWriter writer = new IndexWriter(ram, newIndexWriterConfig(
-            TEST_VERSION_CURRENT, analyzer).setMaxBufferedDocs(3).setMergePolicy(newLogMergePolicy()));
+    IndexWriter writer = new IndexWriter(ram, newIndexWriterConfig(analyzer)
+                                                .setMaxBufferedDocs(3)
+                                                .setMergePolicy(newLogMergePolicy()));
     LogMergePolicy lmp = (LogMergePolicy) writer.getConfig().getMergePolicy();
     lmp.setMergeFactor(2);
     lmp.setNoCFSRatio(0.0);
@@ -267,7 +268,8 @@ public class TestOmitNorms extends LuceneTestCase {
    */
   NumericDocValues getNorms(String field, Field f1, Field f2) throws IOException {
     Directory dir = newDirectory();
-    IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy());
+    IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()))
+                              .setMergePolicy(newLogMergePolicy());
     RandomIndexWriter riw = new RandomIndexWriter(random(), dir, iwc);
     
     // add f1
@@ -281,7 +283,7 @@ public class TestOmitNorms extends LuceneTestCase {
     riw.addDocument(d);
     
     // add a mix of f1's and f2's
-    int numExtraDocs = _TestUtil.nextInt(random(), 1, 1000);
+    int numExtraDocs = TestUtil.nextInt(random(), 1, 1000);
     for (int i = 0; i < numExtraDocs; i++) {
       d = new Document();
       d.add(random().nextBoolean() ? f1 : f2);

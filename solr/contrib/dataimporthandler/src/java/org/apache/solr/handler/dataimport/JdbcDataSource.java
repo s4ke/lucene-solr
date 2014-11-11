@@ -18,15 +18,19 @@ package org.apache.solr.handler.dataimport;
 
 import static org.apache.solr.handler.dataimport.DataImportHandlerException.wrapAndThrow;
 import static org.apache.solr.handler.dataimport.DataImportHandlerException.SEVERE;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.naming.InitialContext;
 import javax.naming.NamingException;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.sql.*;
 import java.util.*;
 import java.util.concurrent.Callable;
+import java.util.concurrent.TimeUnit;
 
 /**
  * <p> A DataSource implementation which can fetch data using JDBC. </p> <p/> <p> Refer to <a
@@ -47,7 +51,7 @@ public class JdbcDataSource extends
 
   private Connection conn;
 
-  private Map<String, Integer> fieldNameVsType = new HashMap<String, Integer>();
+  private Map<String, Integer> fieldNameVsType = new HashMap<>();
 
   private boolean convertType = false;
 
@@ -132,7 +136,7 @@ public class JdbcDataSource extends
         LOG.info("Creating a connection for entity "
                 + context.getEntityAttribute(DataImporter.NAME) + " with URL: "
                 + url);
-        long start = System.currentTimeMillis();
+        long start = System.nanoTime();
         Connection c = null;
 
         if (jndiName != null) {
@@ -163,7 +167,7 @@ public class JdbcDataSource extends
           }
         }
         LOG.info("Time taken for getConnection(): "
-            + (System.currentTimeMillis() - start));
+            + TimeUnit.MILLISECONDS.convert(System.nanoTime() - start, TimeUnit.NANOSECONDS));
         return c;
       }
 
@@ -243,7 +247,7 @@ public class JdbcDataSource extends
 
   private List<String> readFieldNames(ResultSetMetaData metaData)
           throws SQLException {
-    List<String> colNames = new ArrayList<String>();
+    List<String> colNames = new ArrayList<>();
     int count = metaData.getColumnCount();
     for (int i = 0; i < count; i++) {
       colNames.add(metaData.getColumnLabel(i + 1));
@@ -268,12 +272,12 @@ public class JdbcDataSource extends
         stmt.setFetchSize(batchSize);
         stmt.setMaxRows(maxRows);
         LOG.debug("Executing SQL: " + query);
-        long start = System.currentTimeMillis();
+        long start = System.nanoTime();
         if (stmt.execute(query)) {
           resultSet = stmt.getResultSet();
         }
         LOG.trace("Time taken for sql :"
-                + (System.currentTimeMillis() - start));
+                + TimeUnit.MILLISECONDS.convert(System.nanoTime() - start, TimeUnit.NANOSECONDS));
         colNames = readFieldNames(resultSet.getMetaData());
       } catch (Exception e) {
         wrapAndThrow(SEVERE, e, "Unable to execute query: " + query);
@@ -307,12 +311,18 @@ public class JdbcDataSource extends
     private Map<String, Object> getARow() {
       if (resultSet == null)
         return null;
-      Map<String, Object> result = new HashMap<String, Object>();
+      Map<String, Object> result = new HashMap<>();
       for (String colName : colNames) {
         try {
           if (!convertType) {
-            // Use underlying database's type information
-            result.put(colName, resultSet.getObject(colName));
+            // Use underlying database's type information except for BigDecimal and BigInteger
+            // which cannot be serialized by JavaBin/XML. See SOLR-6165
+            Object value = resultSet.getObject(colName);
+            if (value instanceof BigDecimal || value instanceof BigInteger) {
+              result.put(colName, value.toString());
+            } else {
+              result.put(colName, value);
+            }
             continue;
           }
 
@@ -386,12 +396,12 @@ public class JdbcDataSource extends
   }
 
   private Connection getConnection() throws Exception {
-    long currTime = System.currentTimeMillis();
+    long currTime = System.nanoTime();
     if (currTime - connLastUsed > CONN_TIME_OUT) {
       synchronized (this) {
         Connection tmpConn = factory.call();
         closeConnection();
-        connLastUsed = System.currentTimeMillis();
+        connLastUsed = System.nanoTime();
         return conn = tmpConn;
       }
 
@@ -440,7 +450,7 @@ public class JdbcDataSource extends
     }
   }
 
-  private static final long CONN_TIME_OUT = 10 * 1000; // 10 seconds
+  private static final long CONN_TIME_OUT = TimeUnit.NANOSECONDS.convert(10, TimeUnit.SECONDS);
 
   private static final int FETCH_SIZE = 500;
 

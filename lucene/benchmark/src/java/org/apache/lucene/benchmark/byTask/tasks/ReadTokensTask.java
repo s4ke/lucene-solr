@@ -72,7 +72,7 @@ public class ReadTokensTask extends PerfTask {
     List<Field> fields = doc.getFields();
     Analyzer analyzer = getRunData().getAnalyzer();
     int tokenCount = 0;
-    for(final IndexableField field : fields) {
+    for(final Field field : fields) {
       if (!field.fieldType().tokenized() ||
           field instanceof IntField ||
           field instanceof LongField ||
@@ -81,7 +81,7 @@ public class ReadTokensTask extends PerfTask {
         continue;
       }
       
-      final TokenStream stream = field.tokenStream(analyzer);
+      final TokenStream stream = field.tokenStream(analyzer, null);
       // reset the TokenStream to the first token
       stream.reset();
 

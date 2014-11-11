@@ -18,8 +18,8 @@ package org.apache.lucene.util;
  */
 
 import java.lang.reflect.Field;
-import java.util.Collections;
-import org.apache.lucene.LucenePackage;
+import java.util.StringTokenizer;
+
 
 /**
  * Some useful constants.
@@ -32,6 +32,7 @@ public final class Constants {
   public static final String JVM_VENDOR = System.getProperty("java.vm.vendor");
   public static final String JVM_VERSION = System.getProperty("java.vm.version");
   public static final String JVM_NAME = System.getProperty("java.vm.name");
+  public static final String JVM_SPEC_VERSION = System.getProperty("java.specification.version");
 
   /** The value of <tt>System.getProperty("java.version")</tt>. **/
   public static final String JAVA_VERSION = System.getProperty("java.version");
@@ -52,18 +53,21 @@ public final class Constants {
   public static final String OS_ARCH = System.getProperty("os.arch");
   public static final String OS_VERSION = System.getProperty("os.version");
   public static final String JAVA_VENDOR = System.getProperty("java.vendor");
-
-  /** @deprecated With Lucene 5.0, we are always on Java 7 */
-  @Deprecated
-  public static final boolean JRE_IS_MINIMUM_JAVA7 =
-    new Boolean(true).booleanValue(); // prevent inlining in foreign class files
-
-  public static final boolean JRE_IS_MINIMUM_JAVA8;
   
+  private static final int JVM_MAJOR_VERSION;
+  private static final int JVM_MINOR_VERSION;
+ 
   /** True iff running on a 64bit JVM */
   public static final boolean JRE_IS_64BIT;
   
   static {
+    final StringTokenizer st = new StringTokenizer(JVM_SPEC_VERSION, ".");
+    JVM_MAJOR_VERSION = Integer.parseInt(st.nextToken());
+    if (st.hasMoreTokens()) {
+      JVM_MINOR_VERSION = Integer.parseInt(st.nextToken());
+    } else {
+      JVM_MINOR_VERSION = 0;
+    }
     boolean is64Bit = false;
     try {
       final Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
@@ -87,48 +91,23 @@ public final class Constants {
       }
     }
     JRE_IS_64BIT = is64Bit;
-    
-    // this method only exists in Java 8:
-    boolean v8 = true;
-    try {
-      Collections.class.getMethod("emptySortedSet");
-    } catch (NoSuchMethodException nsme) {
-      v8 = false;
-    }
-    JRE_IS_MINIMUM_JAVA8 = v8;
-  }
-
-  // this method prevents inlining the final version constant in compiled classes,
-  // see: http://www.javaworld.com/community/node/3400
-  private static String ident(final String s) {
-    return s.toString();
   }
   
-  // NOTE: we track per-segment version as a String with the "X.Y" format, e.g.
-  // "4.0", "3.1", "3.0". Therefore when we change this constant, we should keep
-  // the format.
-  /**
-   * This is the internal Lucene version, recorded into each segment.
-   */
-  public static final String LUCENE_MAIN_VERSION = ident("5.0");
+  public static final boolean JRE_IS_MINIMUM_JAVA8 = JVM_MAJOR_VERSION > 1 || (JVM_MAJOR_VERSION == 1 && JVM_MINOR_VERSION >= 8);
+  public static final boolean JRE_IS_MINIMUM_JAVA9 = JVM_MAJOR_VERSION > 1 || (JVM_MAJOR_VERSION == 1 && JVM_MINOR_VERSION >= 9);
 
   /**
-   * This is the Lucene version for display purposes.
+   * This is the internal Lucene version, including bugfix versions, recorded into each segment.
+   * @deprecated Use {@link Version#LATEST}
    */
-  public static final String LUCENE_VERSION;
-  static {
-    Package pkg = LucenePackage.get();
-    String v = (pkg == null) ? null : pkg.getImplementationVersion();
-    if (v == null) {
-      String parts[] = LUCENE_MAIN_VERSION.split("\\.");
-      if (parts.length == 4) {
-        // alpha/beta
-        assert parts[2].equals("0");
-        v = parts[0] + "." + parts[1] + "-SNAPSHOT";
-      } else {
-        v = LUCENE_MAIN_VERSION + "-SNAPSHOT";
-      }
-    }
-    LUCENE_VERSION = ident(v);
-  }
+  @Deprecated
+  public static final String LUCENE_MAIN_VERSION = Version.LATEST.toString();
+  
+  /**
+   * Don't use this constant because the name is not self-describing!
+   * @deprecated Use {@link Version#LATEST}
+   */
+  @Deprecated
+  public static final String LUCENE_VERSION = Version.LATEST.toString();
+  
 }

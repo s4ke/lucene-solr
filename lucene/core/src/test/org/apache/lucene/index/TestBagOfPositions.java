@@ -28,12 +28,11 @@ import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * Simple test that adds numeric terms, where each term has the 
@@ -43,12 +42,12 @@ import org.apache.lucene.util._TestUtil;
 @SuppressCodecs({"Direct", "Memory"}) // at night this makes like 200k/300k docs and will make Direct's heart beat!
 public class TestBagOfPositions extends LuceneTestCase {
   public void test() throws Exception {
-    List<String> postingsList = new ArrayList<String>();
+    List<String> postingsList = new ArrayList<>();
     int numTerms = atLeast(300);
-    final int maxTermsPerDoc = _TestUtil.nextInt(random(), 10, 20);
-    boolean isSimpleText = "SimpleText".equals(_TestUtil.getPostingsFormat("field"));
+    final int maxTermsPerDoc = TestUtil.nextInt(random(), 10, 20);
+    boolean isSimpleText = "SimpleText".equals(TestUtil.getPostingsFormat("field"));
 
-    IndexWriterConfig iwc = newIndexWriterConfig(random(), TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+    IndexWriterConfig iwc = newIndexWriterConfig(random(), new MockAnalyzer(random()));
 
     if ((isSimpleText || iwc.getMergePolicy() instanceof MockRandomMergePolicy) && (TEST_NIGHTLY || RANDOM_MULTIPLIER > 1)) {
       // Otherwise test can take way too long (> 2 hours)
@@ -66,13 +65,13 @@ public class TestBagOfPositions extends LuceneTestCase {
     }
     Collections.shuffle(postingsList, random());
 
-    final ConcurrentLinkedQueue<String> postings = new ConcurrentLinkedQueue<String>(postingsList);
+    final ConcurrentLinkedQueue<String> postings = new ConcurrentLinkedQueue<>(postingsList);
 
-    Directory dir = newFSDirectory(_TestUtil.getTempDir("bagofpositions"));
+    Directory dir = newFSDirectory(createTempDir("bagofpositions"));
 
     final RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwc);
 
-    int threadCount = _TestUtil.nextInt(random(), 1, 5);
+    int threadCount = TestUtil.nextInt(random(), 1, 5);
     if (VERBOSE) {
       System.out.println("config: " + iw.w.getConfig());
       System.out.println("threadCount=" + threadCount);
@@ -87,7 +86,7 @@ public class TestBagOfPositions extends LuceneTestCase {
     if (options == 0) {
       fieldType.setIndexOptions(IndexOptions.DOCS_AND_FREQS); // we dont actually need positions
       fieldType.setStoreTermVectors(true); // but enforce term vectors when we do this so we check SOMETHING
-    } else if (options == 1 && !doesntSupportOffsets.contains(_TestUtil.getPostingsFormat("field"))) {
+    } else if (options == 1) {
       fieldType.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
     }
     // else just positions
@@ -134,7 +133,7 @@ public class TestBagOfPositions extends LuceneTestCase {
     iw.forceMerge(1);
     DirectoryReader ir = iw.getReader();
     assertEquals(1, ir.leaves().size());
-    AtomicReader air = ir.leaves().get(0).reader();
+    LeafReader air = ir.leaves().get(0).reader();
     Terms terms = air.terms("field");
     // numTerms-1 because there cannot be a term 0 with 0 postings:
     assertEquals(numTerms-1, terms.size());

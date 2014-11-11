@@ -27,7 +27,7 @@ import java.util.Map;
 import java.io.IOException;
 
 /** 
- * Factory for {@link DictionaryCompoundWordTokenFilter}. 
+ * Factory for {@link DictionaryCompoundWordTokenFilter}.
  * <pre class="prettyprint">
  * &lt;fieldType name="text_dictcomp" class="solr.TextField" positionIncrementGap="100"&gt;
  *   &lt;analyzer&gt;
@@ -67,8 +67,10 @@ public class DictionaryCompoundWordTokenFilterFactory extends TokenFilterFactory
   @Override
   public TokenStream create(TokenStream input) {
     // if the dictionary is null, it means it was empty
-    return dictionary == null ? input : new DictionaryCompoundWordTokenFilter
-        (luceneMatchVersion, input, dictionary, minWordSize, minSubwordSize, maxSubwordSize, onlyLongestMatch);
+    if (dictionary == null) {
+      return input;
+    }
+    return new DictionaryCompoundWordTokenFilter(input, dictionary, minWordSize, minSubwordSize, maxSubwordSize, onlyLongestMatch);
   }
 }
 

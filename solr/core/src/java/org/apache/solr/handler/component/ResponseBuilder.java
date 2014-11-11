@@ -34,12 +34,14 @@ import org.apache.solr.search.DocListAndSet;
 import org.apache.solr.search.QParser;
 import org.apache.solr.search.SolrIndexSearcher;
 import org.apache.solr.search.SortSpec;
+import org.apache.solr.search.RankQuery;
 import org.apache.solr.search.grouping.GroupingSpecification;
 import org.apache.solr.search.grouping.distributed.command.QueryCommandResult;
 
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.Set;
 
@@ -55,8 +57,10 @@ public class ResponseBuilder
   public SolrQueryResponse rsp;
   public boolean doHighlights;
   public boolean doFacets;
+  public boolean doExpand;
   public boolean doStats;
   public boolean doTerms;
+  public MergeStrategy mergeFieldHandler;
 
   private boolean needDocList = false;
   private boolean needDocSet = false;
@@ -72,6 +76,10 @@ public class ResponseBuilder
   private GroupingSpecification groupingSpec;
   private CursorMark cursorMark;
   private CursorMark nextCursorMark;
+
+  private List<MergeStrategy> mergeStrategies;
+  private RankQuery rankQuery;
+
 
   private DocListAndSet results = null;
   private NamedList<Object> debugInfo = null;
@@ -128,7 +136,7 @@ public class ResponseBuilder
   public int shards_start = -1;
   public List<ShardRequest> outgoing;  // requests to be sent
   public List<ShardRequest> finished;  // requests that have received responses from all shards
-
+  public String shortCircuitedURL;
 
   public int getShardNum(String shard) {
     for (int i = 0; i < shards.length; i++) {
@@ -157,6 +165,7 @@ public class ResponseBuilder
   // returned sequence.
   // Only valid after STAGE_EXECUTE_QUERY has completed.
 
+  public boolean onePassDistributedQuery;
 
   public FacetComponent.FacetInfo _facetInfo;
   /* private... components that don't own these shouldn't use them */
@@ -166,12 +175,12 @@ public class ResponseBuilder
   SimpleOrderedMap<List<NamedList<Object>>> _pivots;
 
   // Context fields for grouping
-  public final Map<String, Collection<SearchGroup<BytesRef>>> mergedSearchGroups = new HashMap<String, Collection<SearchGroup<BytesRef>>>();
-  public final Map<String, Integer> mergedGroupCounts = new HashMap<String, Integer>();
-  public final Map<String, Map<SearchGroup<BytesRef>, Set<String>>> searchGroupToShards = new HashMap<String, Map<SearchGroup<BytesRef>, Set<String>>>();
-  public final Map<String, TopGroups<BytesRef>> mergedTopGroups = new HashMap<String, TopGroups<BytesRef>>();
-  public final Map<String, QueryCommandResult> mergedQueryCommandResults = new HashMap<String, QueryCommandResult>();
-  public final Map<Object, SolrDocument> retrievedDocuments = new HashMap<Object, SolrDocument>();
+  public final Map<String, Collection<SearchGroup<BytesRef>>> mergedSearchGroups = new HashMap<>();
+  public final Map<String, Integer> mergedGroupCounts = new HashMap<>();
+  public final Map<String, Map<SearchGroup<BytesRef>, Set<String>>> searchGroupToShards = new HashMap<>();
+  public final Map<String, TopGroups<BytesRef>> mergedTopGroups = new HashMap<>();
+  public final Map<String, QueryCommandResult> mergedQueryCommandResults = new HashMap<>();
+  public final Map<Object, SolrDocument> retrievedDocuments = new HashMap<>();
   public int totalHitCount; // Hit count used when distributed grouping is performed.
   // Used for timeAllowed parameter. First phase elapsed time is subtracted from the time allowed for the second phase.
   public int firstPhaseElapsedTime;
@@ -183,14 +192,14 @@ public class ResponseBuilder
   public void addDebugInfo( String name, Object val )
   {
     if( debugInfo == null ) {
-      debugInfo = new SimpleOrderedMap<Object>();
+      debugInfo = new SimpleOrderedMap<>();
     }
     debugInfo.add( name, val );
   }
 
   public void addDebug(Object val, String... path) {
     if( debugInfo == null ) {
-      debugInfo = new SimpleOrderedMap<Object>();
+      debugInfo = new SimpleOrderedMap<>();
     }
 
     NamedList<Object> target = debugInfo;
@@ -198,7 +207,7 @@ public class ResponseBuilder
       String elem = path[i];
       NamedList<Object> newTarget = (NamedList<Object>)debugInfo.get(elem);
       if (newTarget == null) {
-        newTarget = new SimpleOrderedMap<Object>();
+        newTarget = new SimpleOrderedMap<>();
         target.add(elem, newTarget);
       }
       target = newTarget;
@@ -228,7 +237,27 @@ public class ResponseBuilder
     debugResults = dbg;
     debugTrack = dbg;
   }
-  
+
+  public void addMergeStrategy(MergeStrategy mergeStrategy) {
+    if(mergeStrategies == null) {
+      mergeStrategies = new ArrayList();
+    }
+
+    mergeStrategies.add(mergeStrategy);
+  }
+
+  public List<MergeStrategy> getMergeStrategies() {
+    return this.mergeStrategies;
+  }
+
+  public void setRankQuery(RankQuery rankQuery) {
+    this.rankQuery = rankQuery;
+  }
+
+  public void setResponseDocs(SolrDocumentList _responseDocs) {
+    this._responseDocs = _responseDocs;
+  }
+
   public boolean isDebugTrack() {
     return debugTrack;
   }
@@ -387,7 +416,7 @@ public class ResponseBuilder
    */
   public SolrIndexSearcher.QueryCommand getQueryCommand() {
     SolrIndexSearcher.QueryCommand cmd = new SolrIndexSearcher.QueryCommand();
-    cmd.setQuery(getQuery())
+    cmd.setQuery(wrap(getQuery()))
             .setFilterList(getFilters())
             .setSort(getSortSpec().getSort())
             .setOffset(getSortSpec().getOffset())
@@ -396,6 +425,14 @@ public class ResponseBuilder
             .setNeedDocSet(isNeedDocSet())
             .setCursorMark(getCursorMark());
     return cmd;
+  }
+
+  Query wrap(Query q) {
+    if(this.rankQuery != null) {
+      return this.rankQuery.wrap(q);
+    } else {
+      return q;
+    }
   }
 
   /**

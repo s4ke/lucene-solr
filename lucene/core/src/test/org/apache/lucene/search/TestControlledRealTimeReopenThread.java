@@ -18,6 +18,7 @@ package org.apache.lucene.search;
  */
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -27,13 +28,17 @@ import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexCommit;
 import org.apache.lucene.index.IndexDocument;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.KeepOnlyLastCommitDeletionPolicy;
 import org.apache.lucene.index.NoMergePolicy;
 import org.apache.lucene.index.RandomIndexWriter;
+import org.apache.lucene.index.SnapshotDeletionPolicy;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.ThreadedIndexingAndSearchingTestCase;
 import org.apache.lucene.index.TrackingIndexWriter;
@@ -58,7 +63,7 @@ public class TestControlledRealTimeReopenThread extends ThreadedIndexingAndSearc
   private ControlledRealTimeReopenThread<IndexSearcher> nrtDeletesThread;
   private ControlledRealTimeReopenThread<IndexSearcher> nrtNoDeletesThread;
 
-  private final ThreadLocal<Long> lastGens = new ThreadLocal<Long>();
+  private final ThreadLocal<Long> lastGens = new ThreadLocal<>();
   private boolean warmCalled;
 
   public void testControlledRealTimeReopenThread() throws Exception {
@@ -225,13 +230,13 @@ public class TestControlledRealTimeReopenThread extends ThreadedIndexingAndSearc
     nrtNoDeletes = new SearcherManager(writer, false, sf);
     nrtDeletes = new SearcherManager(writer, true, sf);
                          
-    nrtDeletesThread = new ControlledRealTimeReopenThread<IndexSearcher>(genWriter, nrtDeletes, maxReopenSec, minReopenSec);
+    nrtDeletesThread = new ControlledRealTimeReopenThread<>(genWriter, nrtDeletes, maxReopenSec, minReopenSec);
     nrtDeletesThread.setName("NRTDeletes Reopen Thread");
     nrtDeletesThread.setPriority(Math.min(Thread.currentThread().getPriority()+2, Thread.MAX_PRIORITY));
     nrtDeletesThread.setDaemon(true);
     nrtDeletesThread.start();
 
-    nrtNoDeletesThread = new ControlledRealTimeReopenThread<IndexSearcher>(genWriter, nrtNoDeletes, maxReopenSec, minReopenSec);
+    nrtNoDeletesThread = new ControlledRealTimeReopenThread<>(genWriter, nrtNoDeletes, maxReopenSec, minReopenSec);
     nrtNoDeletesThread.setName("NRTNoDeletes Reopen Thread");
     nrtNoDeletesThread.setPriority(Math.min(Thread.currentThread().getPriority()+2, Thread.MAX_PRIORITY));
     nrtNoDeletesThread.setDaemon(true);
@@ -296,8 +301,8 @@ public class TestControlledRealTimeReopenThread extends ThreadedIndexingAndSearc
    * LUCENE-3528 - NRTManager hangs in certain situations 
    */
   public void testThreadStarvationNoDeleteNRTReader() throws IOException, InterruptedException {
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
-    conf.setMergePolicy(random().nextBoolean() ? NoMergePolicy.COMPOUND_FILES : NoMergePolicy.NO_COMPOUND_FILES);
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
+    conf.setMergePolicy(NoMergePolicy.INSTANCE);
     Directory d = newDirectory();
     final CountDownLatch latch = new CountDownLatch(1);
     final CountDownLatch signal = new CountDownLatch(1);
@@ -336,7 +341,7 @@ public class TestControlledRealTimeReopenThread extends ThreadedIndexingAndSearc
     } finally {
       manager.release(searcher);
     }
-    final ControlledRealTimeReopenThread<IndexSearcher> thread = new ControlledRealTimeReopenThread<IndexSearcher>(writer, manager, 0.01, 0.01);
+    final ControlledRealTimeReopenThread<IndexSearcher> thread = new ControlledRealTimeReopenThread<>(writer, manager, 0.01, 0.01);
     thread.start(); // start reopening
     if (VERBOSE) {
       System.out.println("waiting now for generation " + lastGen);
@@ -364,7 +369,8 @@ public class TestControlledRealTimeReopenThread extends ThreadedIndexingAndSearc
     }
     thread.close();
     thread.join();
-    IOUtils.close(manager, _writer, d);
+    _writer.close();
+    IOUtils.close(manager, d);
   }
   
   public static class LatchedIndexWriter extends IndexWriter {
@@ -414,6 +420,7 @@ public class TestControlledRealTimeReopenThread extends ThreadedIndexingAndSearc
 
     try {
       new SearcherManager(w.w, false, theEvilOne);
+      fail("didn't hit expected exception");
     } catch (IllegalStateException ise) {
       // expected
     }
@@ -424,7 +431,7 @@ public class TestControlledRealTimeReopenThread extends ThreadedIndexingAndSearc
 
   public void testListenerCalled() throws Exception {
     Directory dir = newDirectory();
-    IndexWriter iw = new IndexWriter(dir, new IndexWriterConfig(TEST_VERSION_CURRENT, null));
+    IndexWriter iw = new IndexWriter(dir, new IndexWriterConfig(null));
     final AtomicBoolean afterRefreshCalled = new AtomicBoolean(false);
     SearcherManager sm = new SearcherManager(iw, true, new SearcherFactory());
     sm.addListener(new ReferenceManager.RefreshListener() {
@@ -443,6 +450,87 @@ public class TestControlledRealTimeReopenThread extends ThreadedIndexingAndSearc
     assertFalse(afterRefreshCalled.get());
     sm.maybeRefreshBlocking();
     assertTrue(afterRefreshCalled.get());
+    sm.close();
+    iw.close();
+    dir.close();
+  }
+
+  // Relies on wall clock time, so it can easily false-fail when the machine is otherwise busy:
+  @AwaitsFix(bugUrl = "https://issues.apache.org/jira/browse/LUCENE-5737")
+  // LUCENE-5461
+  public void testCRTReopen() throws Exception {
+    //test behaving badly
+
+    //should be high enough
+    int maxStaleSecs = 20;
+
+    //build crap data just to store it.
+    String s = "        abcdefghijklmnopqrstuvwxyz     ";
+    char[] chars = s.toCharArray();
+    StringBuilder builder = new StringBuilder(2048);
+    for (int i = 0; i < 2048; i++) {
+      builder.append(chars[random().nextInt(chars.length)]);
+    }
+    String content = builder.toString();
+
+    final SnapshotDeletionPolicy sdp = new SnapshotDeletionPolicy(new KeepOnlyLastCommitDeletionPolicy());
+    final Directory dir = new NRTCachingDirectory(newFSDirectory(createTempDir("nrt")), 5, 128);
+    IndexWriterConfig config = new IndexWriterConfig(new MockAnalyzer(random()));
+    config.setCommitOnClose(true);
+    config.setIndexDeletionPolicy(sdp);
+    config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
+    final IndexWriter iw = new IndexWriter(dir, config);
+    SearcherManager sm = new SearcherManager(iw, true, new SearcherFactory());
+    final TrackingIndexWriter tiw = new TrackingIndexWriter(iw);
+    ControlledRealTimeReopenThread<IndexSearcher> controlledRealTimeReopenThread =
+      new ControlledRealTimeReopenThread<>(tiw, sm, maxStaleSecs, 0);
+
+    controlledRealTimeReopenThread.setDaemon(true);
+    controlledRealTimeReopenThread.start();
+
+    List<Thread> commitThreads = new ArrayList<>();
+
+    for (int i = 0; i < 500; i++) {
+      if (i > 0 && i % 50 == 0) {
+        Thread commitThread =  new Thread(new Runnable() {
+            @Override
+            public void run() {
+              try {
+                iw.commit();
+                IndexCommit ic = sdp.snapshot();
+                for (String name : ic.getFileNames()) {
+                  //distribute, and backup
+                  //System.out.println(names);
+                  assertTrue(slowFileExists(dir, name));
+                }
+              } catch (Exception e) {
+                throw new RuntimeException(e);
+              }
+            }
+          });
+        commitThread.start();
+        commitThreads.add(commitThread);
+      }
+      Document d = new Document();
+      d.add(new TextField("count", i + "", Field.Store.NO));
+      d.add(new TextField("content", content, Field.Store.YES));
+      long start = System.currentTimeMillis();
+      long l = tiw.addDocument(d);
+      controlledRealTimeReopenThread.waitForGeneration(l);
+      long wait = System.currentTimeMillis() - start;
+      assertTrue("waited too long for generation " + wait,
+                 wait < (maxStaleSecs *1000));
+      IndexSearcher searcher = sm.acquire();
+      TopDocs td = searcher.search(new TermQuery(new Term("count", i + "")), 10);
+      sm.release(searcher);
+      assertEquals(1, td.totalHits);
+    }
+
+    for(Thread commitThread : commitThreads) {
+      commitThread.join();
+    }
+
+    controlledRealTimeReopenThread.close();
     sm.close();
     iw.close();
     dir.close();

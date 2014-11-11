@@ -17,20 +17,22 @@ package org.apache.lucene.codecs.blockterms;
  * limitations under the License.
  */
 
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.CorruptIndexException;
-import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.SegmentReadState;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.PagedBytes;
 import org.apache.lucene.util.packed.MonotonicBlockPackedReader;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
-import java.util.Comparator;
+import java.util.List;
 import java.io.IOException;
 
 import org.apache.lucene.index.IndexFileNames;
@@ -53,63 +55,64 @@ public class FixedGapTermsIndexReader extends TermsIndexReaderBase {
   private final int packedIntsVersion;
   private final int blocksize;
 
-  private final Comparator<BytesRef> termComp;
-
   private final static int PAGED_BYTES_BITS = 15;
 
   // all fields share this single logical byte[]
-  private final PagedBytes termBytes = new PagedBytes(PAGED_BYTES_BITS);
-  private PagedBytes.Reader termBytesReader;
+  private final PagedBytes.Reader termBytesReader;
 
-  final HashMap<FieldInfo,FieldIndexData> fields = new HashMap<FieldInfo,FieldIndexData>();
+  final HashMap<String,FieldIndexData> fields = new HashMap<>();
   
-  // start of the field info data
-  private long dirOffset;
-  
-  public FixedGapTermsIndexReader(Directory dir, FieldInfos fieldInfos, String segment, Comparator<BytesRef> termComp, String segmentSuffix, IOContext context)
-    throws IOException {
-
-    this.termComp = termComp;
+  public FixedGapTermsIndexReader(SegmentReadState state) throws IOException {
+    final PagedBytes termBytes = new PagedBytes(PAGED_BYTES_BITS);
     
-    final IndexInput in = dir.openInput(IndexFileNames.segmentFileName(segment, segmentSuffix, FixedGapTermsIndexWriter.TERMS_INDEX_EXTENSION), context);
+    String fileName = IndexFileNames.segmentFileName(state.segmentInfo.name, 
+                                                     state.segmentSuffix, 
+                                                     FixedGapTermsIndexWriter.TERMS_INDEX_EXTENSION);
+    final IndexInput in = state.directory.openInput(fileName, state.context);
     
     boolean success = false;
 
     try {
       
-      readHeader(in);
+      CodecUtil.checkIndexHeader(in, FixedGapTermsIndexWriter.CODEC_NAME,
+                                       FixedGapTermsIndexWriter.VERSION_CURRENT, 
+                                       FixedGapTermsIndexWriter.VERSION_CURRENT,
+                                       state.segmentInfo.getId(), state.segmentSuffix);
+      
+      CodecUtil.checksumEntireFile(in);
+      
       indexInterval = in.readVInt();
       if (indexInterval < 1) {
-        throw new CorruptIndexException("invalid indexInterval: " + indexInterval + " (resource=" + in + ")");
+        throw new CorruptIndexException("invalid indexInterval: " + indexInterval, in);
       }
       packedIntsVersion = in.readVInt();
       blocksize = in.readVInt();
       
-      seekDir(in, dirOffset);
+      seekDir(in);
 
       // Read directory
       final int numFields = in.readVInt();     
       if (numFields < 0) {
-        throw new CorruptIndexException("invalid numFields: " + numFields + " (resource=" + in + ")");
+        throw new CorruptIndexException("invalid numFields: " + numFields, in);
       }
       //System.out.println("FGR: init seg=" + segment + " div=" + indexDivisor + " nF=" + numFields);
       for(int i=0;i<numFields;i++) {
         final int field = in.readVInt();
         final long numIndexTerms = in.readVInt(); // TODO: change this to a vLong if we fix writer to support > 2B index terms
         if (numIndexTerms < 0) {
-          throw new CorruptIndexException("invalid numIndexTerms: " + numIndexTerms + " (resource=" + in + ")");
+          throw new CorruptIndexException("invalid numIndexTerms: " + numIndexTerms, in);
         }
         final long termsStart = in.readVLong();
         final long indexStart = in.readVLong();
         final long packedIndexStart = in.readVLong();
         final long packedOffsetsStart = in.readVLong();
         if (packedIndexStart < indexStart) {
-          throw new CorruptIndexException("invalid packedIndexStart: " + packedIndexStart + " indexStart: " + indexStart + "numIndexTerms: " + numIndexTerms + " (resource=" + in + ")");
+          throw new CorruptIndexException("invalid packedIndexStart: " + packedIndexStart + " indexStart: " + indexStart + "numIndexTerms: " + numIndexTerms, in);
         }
-        final FieldInfo fieldInfo = fieldInfos.fieldInfo(field);
-        FieldIndexData previous = fields.put(fieldInfo, new FieldIndexData(in, indexStart, termsStart, packedIndexStart, packedOffsetsStart, numIndexTerms));
+        final FieldInfo fieldInfo = state.fieldInfos.fieldInfo(field);
+        FieldIndexData previous = fields.put(fieldInfo.name, new FieldIndexData(in, termBytes, indexStart, termsStart, packedIndexStart, packedOffsetsStart, numIndexTerms));
         if (previous != null) {
-          throw new CorruptIndexException("duplicate field: " + fieldInfo.name + " (resource=" + in + ")");
+          throw new CorruptIndexException("duplicate field: " + fieldInfo.name, in);
         }
       }
       success = true;
@@ -121,11 +124,6 @@ public class FixedGapTermsIndexReader extends TermsIndexReaderBase {
       }
       termBytesReader = termBytes.freeze(true);
     }
-  }
-
-  private void readHeader(IndexInput input) throws IOException {
-    CodecUtil.checkHeader(input, FixedGapTermsIndexWriter.CODEC_NAME,
-      FixedGapTermsIndexWriter.VERSION_CURRENT, FixedGapTermsIndexWriter.VERSION_CURRENT);
   }
 
   private class IndexEnum extends FieldIndexEnum {
@@ -154,7 +152,7 @@ public class FixedGapTermsIndexReader extends TermsIndexReaderBase {
         final int length = (int) (fieldIndex.termOffsets.get(1+mid) - offset);
         termBytesReader.fillSlice(term, fieldIndex.termBytesStart + offset, length);
 
-        int delta = termComp.compare(target, term);
+        int delta = target.compareTo(term);
         if (delta < 0) {
           hi = mid - 1;
         } else if (delta > 0) {
@@ -216,7 +214,7 @@ public class FixedGapTermsIndexReader extends TermsIndexReaderBase {
     return true;
   }
 
-  private final class FieldIndexData {
+  private final class FieldIndexData implements Accountable {
     // where this field's terms begin in the packed byte[]
     // data
     final long termBytesStart;
@@ -230,7 +228,7 @@ public class FixedGapTermsIndexReader extends TermsIndexReaderBase {
     final long numIndexTerms;
     final long termsStart;
     
-    public FieldIndexData(IndexInput in, long indexStart, long termsStart, long packedIndexStart, long packedOffsetsStart, long numIndexTerms) throws IOException {
+    public FieldIndexData(IndexInput in, PagedBytes termBytes, long indexStart, long termsStart, long packedIndexStart, long packedOffsetsStart, long numIndexTerms) throws IOException {
       
       this.termsStart = termsStart;
       termBytesStart = termBytes.getPointer();
@@ -248,44 +246,69 @@ public class FixedGapTermsIndexReader extends TermsIndexReaderBase {
         termBytes.copy(clone, numTermBytes);
         
         // records offsets into main terms dict file
-        termsDictOffsets = new MonotonicBlockPackedReader(clone, packedIntsVersion, blocksize, numIndexTerms, false);
+        termsDictOffsets = MonotonicBlockPackedReader.of(clone, packedIntsVersion, blocksize, numIndexTerms, false);
         
         // records offsets into byte[] term data
-        termOffsets = new MonotonicBlockPackedReader(clone, packedIntsVersion, blocksize, 1+numIndexTerms, false);
+        termOffsets = MonotonicBlockPackedReader.of(clone, packedIntsVersion, blocksize, 1+numIndexTerms, false);
       } finally {
         clone.close();
       }
     }
     
-    /** Returns approximate RAM bytes used */
+    @Override
     public long ramBytesUsed() {
       return ((termOffsets!=null)? termOffsets.ramBytesUsed() : 0) + 
           ((termsDictOffsets!=null)? termsDictOffsets.ramBytesUsed() : 0);
+    }
+
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      List<Accountable> resources = new ArrayList<>();
+      if (termOffsets != null) {
+        resources.add(Accountables.namedAccountable("term lengths", termOffsets));
+      }
+      if (termsDictOffsets != null) {
+        resources.add(Accountables.namedAccountable("offsets", termsDictOffsets));
+      }
+      return Collections.unmodifiableList(resources);
+    }
+
+    @Override
+    public String toString() {
+      return "FixedGapTermIndex(indexterms=" + numIndexTerms + ")";
     }
   }
 
   @Override
   public FieldIndexEnum getFieldEnum(FieldInfo fieldInfo) {
-    return new IndexEnum(fields.get(fieldInfo));
+    return new IndexEnum(fields.get(fieldInfo.name));
   }
 
   @Override
   public void close() throws IOException {}
 
-  private void seekDir(IndexInput input, long dirOffset) throws IOException {
-    input.seek(input.length() - 8);
-    dirOffset = input.readLong();
+  private void seekDir(IndexInput input) throws IOException {
+    input.seek(input.length() - CodecUtil.footerLength() - 8);
+    long dirOffset = input.readLong();
     input.seek(dirOffset);
   }
 
   @Override
   public long ramBytesUsed() {
-    long sizeInBytes = ((termBytes!=null) ? termBytes.ramBytesUsed() : 0) + 
-        ((termBytesReader!=null)? termBytesReader.ramBytesUsed() : 0);
-    
+    long sizeInBytes = ((termBytesReader!=null)? termBytesReader.ramBytesUsed() : 0);
     for(FieldIndexData entry : fields.values()) {
       sizeInBytes += entry.ramBytesUsed();
     }
     return sizeInBytes;
+  }
+
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Accountables.namedAccountables("field", fields);
+  }
+
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(fields=" + fields.size() + ",interval=" + indexInterval + ")";
   }
 }
